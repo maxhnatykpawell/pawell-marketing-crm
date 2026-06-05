@@ -1,0 +1,6 @@
+{
+  "name": "Kanban Board",
+  "description": "A collaborative Trello-like board with cards, subtasks, deadlines, assigning users, comments, and file attachments.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
