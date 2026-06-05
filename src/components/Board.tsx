@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../App';
 import BoardList from './BoardList';
-import { Plus, Trash2, DownloadCloud } from 'lucide-react';
+import { Plus, Trash2, DownloadCloud, FolderKanban } from 'lucide-react';
 import TrelloImportModal from './TrelloImportModal';
 
 export default function Board() {
-  const { state, addList, activeBoardId, setActiveBoardId, addBoard, deleteBoard, confirmAction } = useAppContext();
+  const { state, addList, activeBoardId, setActiveBoardId, activeProjectId, setActiveProjectId, addBoard, deleteBoard, confirmAction } = useAppContext();
   const [isAddingList, setIsAddingList] = useState(false);
   const [newListTitle, setNewListTitle] = useState('');
   const [isAddingBoard, setIsAddingBoard] = useState(false);
@@ -13,6 +13,7 @@ export default function Board() {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   const boards = state.boards || [];
+  const projects = state.projects || [];
   
   const currentBoardLists = activeBoardId 
     ? state.lists.filter(l => l.boardId === activeBoardId || (!l.boardId && boards.length > 0 && boards[0].id === activeBoardId)) 
@@ -84,11 +85,36 @@ export default function Board() {
         )}
         <button 
           onClick={() => setIsImportModalOpen(true)} 
-          className="flex items-center ml-auto px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg transition text-sm font-medium"
+          className="flex items-center ml-auto px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg transition text-sm font-medium shrink-0"
         >
           <DownloadCloud className="w-4 h-4 mr-2" /> Імпорт з Trello
         </button>
       </div>
+
+      {/* Project tabs */}
+      {projects.length > 0 && (
+        <div className="flex items-center gap-2 mb-4 w-full overflow-x-auto hidden-scrollbar pb-1">
+          <div className="flex items-center text-sm font-semibold text-gray-500 mr-2 shrink-0">
+            <FolderKanban className="w-4 h-4 mr-1.5" /> Фільтр:
+          </div>
+          <button
+            onClick={() => setActiveProjectId(null)}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition shrink-0 ${!activeProjectId ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+          >
+            Усі задачі
+          </button>
+          {projects.map(p => (
+            <button
+              key={p.id}
+              onClick={() => setActiveProjectId(p.id)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition shrink-0 flex items-center gap-2 ${activeProjectId === p.id ? 'bg-gray-800 text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}
+            >
+              <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: p.color }} />
+              {p.title}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="flex-1 overflow-x-auto overflow-y-hidden pb-4 custom-scrollbar">
         <div className="flex items-start space-x-6 h-full w-max shrink-0">

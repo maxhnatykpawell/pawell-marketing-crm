@@ -24,6 +24,7 @@ export default function BoardCard({ card }: Props) {
   const attachmentCount = card.attachments?.length || 0;
 
   const cardTags = state.tags?.filter(t => card.tagIds?.includes(t.id)) || [];
+  const project = state.projects?.find(p => p.id === card.projectId);
 
   const isOverdue = card.deadline && new Date(card.deadline) < new Date() && card.listId !== state.lists[state.lists.length - 1]?.id; // basic logic, last list is done
 
@@ -35,8 +36,11 @@ export default function BoardCard({ card }: Props) {
           e.dataTransfer.setData('cardId', card.id);
         }}
         onClick={() => setIsModalOpen(true)}
-        className="bg-white rounded-lg shadow-sm hover:shadow-md border border-gray-200 border-b-gray-300 cursor-pointer overflow-hidden group hover:ring-1 hover:ring-blue-500/50 transition-all"
+        className="bg-white rounded-lg shadow-sm hover:shadow-md border border-gray-200 border-b-gray-300 cursor-pointer overflow-hidden group hover:ring-1 hover:ring-blue-500/50 transition-all flex flex-col"
       >
+        {project && (
+          <div className="h-1 w-full shrink-0" style={{ backgroundColor: project.color }} title={`Проєкт: ${project.title}`} />
+        )}
         <div className="p-3">
           {cardTags.length > 0 && (
             <div className="flex flex-wrap gap-1 mb-2">

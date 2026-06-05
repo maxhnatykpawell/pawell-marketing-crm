@@ -17,9 +17,18 @@ export interface User {
   name: string;
   avatar: string;
   role?: string;
+  email?: string;
   operationalDuties?: string;
   weeklySchedule?: Record<string, string>;
   goals?: string;
+}
+
+export interface AuthUser {
+  userId: string;
+  email: string;
+  role: 'admin' | 'member';
+  name: string;
+  avatar: string;
 }
 
 export interface Subtask {
@@ -55,6 +64,7 @@ export interface Card {
   attachments: Attachment[];
   tagIds?: string[];
   order: number;
+  projectId?: string | null;
 }
 
 export interface List {
@@ -108,6 +118,19 @@ export interface BoardItem {
   title: string;
 }
 
+export type ProjectStatus = 'planning' | 'active' | 'on-hold' | 'completed';
+
+export interface Project {
+  id: string;
+  title: string;
+  description?: string;
+  color: string;
+  status: ProjectStatus;
+  managerIds: string[];
+  deadline?: string | null;
+  createdAt: string;
+}
+
 export interface AppState {
   users: User[];
   metrics?: Metric[];
@@ -120,4 +143,6 @@ export interface AppState {
   contentPlanStatuses?: string[];
   contentPlanColumns?: ContentPlanColumn[];
   events?: EventItem[];
+  projects?: Project[];
+  lastModified?: string;
 }

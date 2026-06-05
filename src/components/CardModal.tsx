@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { Card, Subtask, Comment } from '../types';
 import { useAppContext } from '../App';
 import { uploadFile } from '../api';
-import { X, Calendar, AlignLeft, CheckSquare, MessageSquare, Paperclip, User as UserIcon, Trash2, Link as LinkIcon } from 'lucide-react';
+import { X, Calendar, AlignLeft, CheckSquare, MessageSquare, Paperclip, User as UserIcon, Trash2, Link as LinkIcon, FolderKanban } from 'lucide-react';
 import { format } from 'date-fns';
 import TagPicker from './TagPicker';
 import { v4 as uuidv4 } from 'uuid';
@@ -342,6 +342,23 @@ export default function CardModal({ card, onClose }: Props) {
                     <option value="">Unassigned</option>
                     {state.users.map(u => (
                       <option key={u.id} value={u.id}>{u.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="mb-6">
+                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Проєкт</h4>
+                <div className="bg-gray-50 rounded-lg p-1 border border-gray-200 flex items-center">
+                  <FolderKanban className="w-4 h-4 ml-2 text-gray-500 shrink-0" />
+                  <select 
+                    value={card.projectId || ''} 
+                    onChange={e => handleUpdate({ projectId: e.target.value || null })}
+                    className="w-full bg-transparent text-sm p-2 outline-none cursor-pointer"
+                  >
+                    <option value="">Без проєкту</option>
+                    {(state.projects || []).map(p => (
+                      <option key={p.id} value={p.id}>{p.title}</option>
                     ))}
                   </select>
                 </div>

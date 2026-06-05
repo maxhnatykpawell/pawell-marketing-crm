@@ -11,7 +11,7 @@ interface Props {
 }
 
 export default function BoardList({ list }: Props) {
-  const { state, addCard, deleteList, moveCard } = useAppContext();
+  const { state, addCard, deleteList, moveCard, activeProjectId } = useAppContext();
   const [isAdding, setIsAdding] = useState(false);
   const [newCardTitle, setNewCardTitle] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
@@ -20,7 +20,7 @@ export default function BoardList({ list }: Props) {
 
   // Filter and sort cards
   const cards = state.cards
-    .filter(c => c.listId === list.id)
+    .filter(c => c.listId === list.id && (!activeProjectId || c.projectId === activeProjectId))
     .sort((a, b) => a.order - b.order);
 
   const handleAddCard = (e: React.FormEvent) => {

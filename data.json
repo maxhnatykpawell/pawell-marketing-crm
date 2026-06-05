@@ -1,0 +1,214 @@
+{
+  "users": [
+    {
+      "id": "u1",
+      "name": "Max Hnatyk",
+      "avatar": "https://ui-avatars.com/api/?name=Max+Hnatyk&background=random",
+      "email": "admin@pawell.com"
+    },
+    {
+      "id": "u2",
+      "name": "Alice Smith",
+      "avatar": "https://ui-avatars.com/api/?name=Alice+Smith&background=random"
+    },
+    {
+      "id": "u3",
+      "name": "Bob Johnson",
+      "avatar": "https://ui-avatars.com/api/?name=Bob+Johnson&background=random"
+    }
+  ],
+  "metrics": [
+    {
+      "id": "m1",
+      "title": "Охоплення аудиторії",
+      "value": "124.5K",
+      "trend": "+12%",
+      "trendPositive": true
+    },
+    {
+      "id": "m2",
+      "title": "Лідів (MQL)",
+      "value": "840",
+      "trend": "+5%",
+      "trendPositive": true
+    },
+    {
+      "id": "m3",
+      "title": "Бюджет використано",
+      "value": "$4,250",
+      "trend": "-2%",
+      "trendPositive": false
+    },
+    {
+      "id": "m4",
+      "title": "Вартість ліда (CPA)",
+      "value": "$5.05",
+      "trend": "-8%",
+      "trendPositive": true
+    }
+  ],
+  "boards": [
+    {
+      "id": "b1",
+      "title": "Основна дошка"
+    }
+  ],
+  "lists": [
+    {
+      "id": "l1",
+      "title": "To Do",
+      "order": 0,
+      "boardId": "b1"
+    },
+    {
+      "id": "l2",
+      "title": "In Progress",
+      "order": 1,
+      "boardId": "b1"
+    },
+    {
+      "id": "l3",
+      "title": "Done",
+      "order": 2,
+      "boardId": "b1"
+    }
+  ],
+  "tags": [
+    {
+      "id": "t1",
+      "name": "Bug",
+      "color": "#ef4444"
+    },
+    {
+      "id": "t2",
+      "name": "Feature",
+      "color": "#3b82f6"
+    },
+    {
+      "id": "t3",
+      "name": "Urgent",
+      "color": "#f97316"
+    }
+  ],
+  "cards": [
+    {
+      "id": "093ebec1-cd30-4728-bacd-5d17329df75d",
+      "listId": "l1",
+      "title": "задача",
+      "description": "",
+      "deadline": null,
+      "assigneeId": "u1",
+      "subtasks": [],
+      "comments": [],
+      "attachments": [],
+      "order": 0
+    },
+    {
+      "id": "e3b34e84-802a-488f-a5e9-57985bc1bc58",
+      "listId": "l3",
+      "title": "нова задача",
+      "description": "",
+      "deadline": null,
+      "assigneeId": null,
+      "subtasks": [],
+      "comments": [],
+      "attachments": [],
+      "order": 1,
+      "tagIds": [
+        "t1"
+      ]
+    }
+  ],
+  "contentPlans": [],
+  "contentPlanChannels": [
+    {
+      "name": "Instagram",
+      "color": "#fce7f3"
+    },
+    {
+      "name": "Telegram",
+      "color": "#e0f2fe"
+    },
+    {
+      "name": "LinkedIn",
+      "color": "#dbeafe"
+    },
+    {
+      "name": "YouTube",
+      "color": "#fee2e2"
+    },
+    {
+      "name": "TikTok",
+      "color": "#f1f5f9"
+    },
+    {
+      "name": "Blog",
+      "color": "#fef3c7"
+    },
+    {
+      "name": "Facebook",
+      "color": "#e0e7ff"
+    }
+  ],
+  "contentPlanStatuses": [
+    "Ідея",
+    "В роботі",
+    "На погодженні",
+    "Заплановано",
+    "Опубліковано",
+    "Відхилено"
+  ],
+  "contentPlanColumns": [
+    {
+      "id": "focus",
+      "title": "Фокус на 2 тижні / Тема",
+      "visible": true
+    },
+    {
+      "id": "channel",
+      "title": "Канал",
+      "visible": true
+    },
+    {
+      "id": "description",
+      "title": "Короткий опис",
+      "visible": true
+    },
+    {
+      "id": "assignee",
+      "title": "Відповідальний",
+      "visible": true
+    },
+    {
+      "id": "status",
+      "title": "Статус",
+      "visible": true
+    },
+    {
+      "id": "tags",
+      "title": "Теги",
+      "visible": true
+    },
+    {
+      "id": "publishDate",
+      "title": "Дата",
+      "visible": true
+    },
+    {
+      "id": "engagement",
+      "title": "Охоплення/Взаємодія",
+      "visible": true
+    }
+  ],
+  "events": [
+    {
+      "title": "Раз",
+      "description": "",
+      "startDate": "2026-06-26T00:00:00.000Z",
+      "endDate": "2026-06-28T00:00:00.000Z",
+      "assigneeIds": [],
+      "websiteUrl": "",
+      "id": "05f8747c-1cdb-445e-9fea-719d6c070b2e"
+    }
+  ]
+}
