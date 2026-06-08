@@ -6,6 +6,8 @@ import { v4 as uuidv4 } from 'uuid';
 import TagPicker from './TagPicker';
 import ContentPlanSettings from './ContentPlanSettings';
 import ChannelPicker from './ChannelPicker';
+import ContentPlanImportModal from './ContentPlanImportModal';
+import { DownloadCloud } from 'lucide-react';
 
 const DEFAULT_CHANNELS = [
   { name: 'Instagram', color: '#fce7f3' },
@@ -41,6 +43,7 @@ const DEFAULT_COLUMNS = [
 export default function ContentPlanView() {
   const { state, addContentPlan, updateContentPlan, deleteContentPlan, confirmAction } = useAppContext();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   
   const rawChannels = state.contentPlanChannels || DEFAULT_CHANNELS;
   const channels = rawChannels.map(ch => typeof ch === 'string' ? { name: ch, color: DEFAULT_CHANNEL_COLORS[ch] || '#f3f4f6' } : ch);
@@ -77,6 +80,13 @@ export default function ContentPlanView() {
       <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50 flex-shrink-0">
         <h2 className="text-lg font-semibold text-gray-800">Контент-план</h2>
         <div className="flex items-center space-x-3">
+          <button
+            onClick={() => setIsImportModalOpen(true)}
+            className="flex items-center px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition"
+          >
+            <DownloadCloud className="w-4 h-4 mr-2" />
+            Імпорт CSV
+          </button>
           <button
             onClick={() => setIsSettingsOpen(true)}
             className="flex items-center px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition"
@@ -234,6 +244,9 @@ export default function ContentPlanView() {
 
       {isSettingsOpen && (
         <ContentPlanSettings onClose={() => setIsSettingsOpen(false)} />
+      )}
+      {isImportModalOpen && (
+        <ContentPlanImportModal onClose={() => setIsImportModalOpen(false)} />
       )}
     </div>
   );

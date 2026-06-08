@@ -38,6 +38,7 @@ interface AppContextType {
   addContentPlan: (item: Omit<ContentPlanItem, 'id'>) => void;
   updateContentPlan: (id: string, updates: Partial<ContentPlanItem>) => void;
   deleteContentPlan: (id: string) => void;
+  importContentPlans: (plans: Omit<ContentPlanItem, 'id'>[]) => void;
   updateSettings: (updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule'>>) => void;
   addEvent: (item: Omit<EventItem, 'id'>) => void;
   updateEvent: (id: string, updates: Partial<EventItem>) => void;
@@ -371,8 +372,17 @@ export default function App() {
 
   const deleteContentPlan = useCallback((id: string) => {
     if (!state) return;
-    setState(prev => prev ? { ...prev, contentPlans: (prev.contentPlans || []).filter(cp => cp.id !== id) } : prev);
+    setState(prev => prev ? { ...prev, contentPlans: prev.contentPlans?.filter(cp => cp.id !== id) || [] } : prev);
     deleteEntity('contentPlans', id).catch(console.error);
+  }, [state]);
+
+  const importContentPlans = useCallback((plans: Omit<ContentPlanItem, 'id'>[]) => {
+    if (!state) return;
+    const newItems = plans.map(p => ({ ...p, id: uuidv4() }));
+    setState(prev => prev ? { ...prev, contentPlans: [...(prev.contentPlans || []), ...newItems] } : prev);
+    newItems.forEach(item => {
+      createEntity('contentPlans', item).catch(console.error);
+    });
   }, [state]);
 
   const updateSettings = useCallback((updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule'>>) => {
@@ -543,7 +553,7 @@ export default function App() {
       state, currentUser, logout,
       moveCard, addCard, updateCard, deleteCard, addList, deleteList, moveList,
       addTag, deleteTag, updateTag, addUser, updateUser, deleteUser,
-      addContentPlan, updateContentPlan, deleteContentPlan, updateSettings,
+      addContentPlan, updateContentPlan, deleteContentPlan, importContentPlans, updateSettings,
       addEvent, updateEvent, deleteEvent, addProject, updateProject, deleteProject, addBoard, deleteBoard,
       activeBoardId, setActiveBoardId, activeEventId, setActiveEventId, activeProjectId, setActiveProjectId,
       activeView, setActiveView, updateMetric, importTrelloBoard, confirmAction
