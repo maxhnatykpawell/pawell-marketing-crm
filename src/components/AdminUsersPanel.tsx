@@ -204,6 +204,21 @@ export default function AdminUsersPanel() {
                           </button>
                         )}
 
+                        {!hasAccess && !isEditingThis && (
+                          <button
+                            onClick={() => handleInvite(user.id)}
+                            disabled={inviteLoading === user.id}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition disabled:opacity-60"
+                          >
+                            {inviteLoading === user.id ? (
+                              <div className="w-3.5 h-3.5 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin" />
+                            ) : (
+                              <Link className="w-3.5 h-3.5" />
+                            )}
+                            Запросити
+                          </button>
+                        )}
+
                         {hasAccess && (
                           <button
                             onClick={() => handleReset(user.id)}
