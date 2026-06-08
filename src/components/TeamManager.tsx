@@ -91,7 +91,7 @@ export default function TeamManager({ onClose }: { onClose: () => void }) {
               const isOverloaded = totalHours > maxHours;
               const progressPercent = Math.min(100, (totalHours / maxHours) * 100);
 
-              const totalStoryPoints = userCardsThisMonth.reduce((sum, c) => sum + (c.storyPoints || 0), 0);
+              const totalStoryPoints = userCardsThisMonth.filter(c => c.isCompleted).reduce((sum, c) => sum + (c.storyPoints || 0), 0);
 
               return (
                 <div key={u.id} className="flex flex-col bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:border-gray-300 transition">

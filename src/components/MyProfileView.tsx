@@ -51,7 +51,7 @@ export default function MyProfileView() {
   };
 
   const myCardsThisMonth = myCards.filter(c => isThisMonth(c.deadline));
-  const myTotalStoryPoints = myCardsThisMonth.reduce((sum, c) => sum + (c.storyPoints || 0), 0);
+  const myTotalStoryPoints = myCardsThisMonth.filter(c => c.isCompleted).reduce((sum, c) => sum + (c.storyPoints || 0), 0);
 
   const getDeadlineStatus = (deadline: string | null) => {
     if (!deadline) return null;
