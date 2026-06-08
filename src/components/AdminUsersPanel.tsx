@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../App';
-import { changePassword, setUserCredentials, resetUserPassword, getAuthList } from '../api';
+import { changePassword, setUserCredentials, resetUserPassword, getAuthList, generateInviteToken } from '../api';
 import {
   Shield, User as UserIcon, Mail, Lock, Key, RefreshCw,
   Check, X, AlertCircle, Eye, EyeOff, ChevronDown, ChevronUp,
-  Copy, CheckCheck, Plus, Edit3
+  Copy, CheckCheck, Plus, Edit3, Link
 } from 'lucide-react';
 
 interface AuthEntry { userId: string; email: string; role: string; }
@@ -23,6 +23,9 @@ export default function AdminUsersPanel() {
   const [tempPassword, setTempPassword] = useState<{ userId: string; pass: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [resetLoading, setResetLoading] = useState<string | null>(null);
+  
+  const [inviteLoading, setInviteLoading] = useState<string | null>(null);
+  const [inviteLink, setInviteLink] = useState<{ userId: string; link: string } | null>(null);
 
   const loadAuthList = async () => {
     setLoadingList(true);
@@ -78,10 +81,26 @@ export default function AdminUsersPanel() {
       const { tempPassword: pass } = await resetUserPassword(userId);
       setTempPassword({ userId, pass });
       setCopied(false);
+      setInviteLink(null);
     } catch (err: any) {
       alert(err.message || 'Помилка скидання');
     } finally {
       setResetLoading(null);
+    }
+  };
+
+  const handleInvite = async (userId: string) => {
+    setInviteLoading(userId);
+    try {
+      const token = await generateInviteToken(userId);
+      const link = `${window.location.origin}?invite=${token}`;
+      setInviteLink({ userId, link });
+      setCopied(false);
+      setTempPassword(null);
+    } catch (err: any) {
+      alert(err.message || 'Помилка генерації запрошення');
+    } finally {
+      setInviteLoading(null);
     }
   };
 
@@ -170,6 +189,21 @@ export default function AdminUsersPanel() {
                           {isEditingThis ? 'Скасувати' : hasAccess ? 'Змінити' : 'Дати доступ'}
                         </button>
 
+                        {!hasAccess && !isEditingThis && (
+                          <button
+                            onClick={() => handleInvite(user.id)}
+                            disabled={inviteLoading === user.id}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition disabled:opacity-60"
+                          >
+                            {inviteLoading === user.id ? (
+                              <div className="w-3.5 h-3.5 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin" />
+                            ) : (
+                              <Link className="w-3.5 h-3.5" />
+                            )}
+                            Запросити
+                          </button>
+                        )}
+
                         {hasAccess && (
                           <button
                             onClick={() => handleReset(user.id)}
@@ -188,21 +222,43 @@ export default function AdminUsersPanel() {
 
                     {/* Temp password result */}
                     {tempForThis && (
-                      <div className="mt-3 flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-                        <Key className="w-4 h-4 text-amber-600 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs text-amber-700 font-semibold">Тимчасовий пароль:</p>
-                          <p className="text-sm font-mono font-bold text-amber-800 mt-0.5">{tempForThis}</p>
+                      <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs text-amber-800 font-medium">Новий тимчасовий пароль згенеровано.</p>
+                          <p className="text-sm font-mono font-bold text-amber-900 mt-1 tracking-wider bg-white px-2 py-1 rounded border border-amber-200 inline-block">
+                            {tempForThis}
+                          </p>
+                          <p className="text-[10px] text-amber-600 mt-1">Обов'язково скопіюйте і передайте його користувачу!</p>
                         </div>
                         <button
                           onClick={() => copyToClipboard(tempForThis)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-100 hover:bg-amber-200 text-amber-800 transition"
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-amber-300 rounded text-xs font-semibold text-amber-700 hover:bg-amber-50 transition"
                         >
-                          {copied ? <CheckCheck className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          {copied ? <CheckCheck className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                           {copied ? 'Скопійовано' : 'Копіювати'}
                         </button>
-                        <button onClick={() => setTempPassword(null)} className="text-amber-400 hover:text-amber-600">
-                          <X className="w-4 h-4" />
+                      </div>
+                    )}
+
+                    {/* Invite Link Notification */}
+                    {inviteLink?.userId === user.id && (
+                      <div className="mt-3 bg-indigo-50 border border-indigo-200 rounded-lg p-3 flex items-start justify-between gap-3 animate-in fade-in slide-in-from-top-2">
+                        <div className="flex-1 overflow-hidden">
+                          <p className="text-xs text-indigo-800 font-medium mb-1 flex items-center gap-1.5">
+                            <Link className="w-3.5 h-3.5" />
+                            Посилання-запрошення готове
+                          </p>
+                          <p className="text-xs font-mono text-indigo-900 bg-white px-2 py-1.5 rounded border border-indigo-200 truncate" title={inviteLink.link}>
+                            {inviteLink.link}
+                          </p>
+                          <p className="text-[10px] text-indigo-600 mt-1">Надішліть це посилання користувачу. Він сам встановить свій email та пароль.</p>
+                        </div>
+                        <button
+                          onClick={() => copyToClipboard(inviteLink.link)}
+                          className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-white border border-indigo-300 rounded text-xs font-semibold text-indigo-700 hover:bg-indigo-100 transition mt-6"
+                        >
+                          {copied ? <CheckCheck className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                          {copied ? 'Скопійовано' : 'Копіювати'}
                         </button>
                       </div>
                     )}

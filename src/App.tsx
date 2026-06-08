@@ -12,6 +12,7 @@ import TeamRegulationsView from './components/TeamRegulationsView';
 import DashboardView from './components/DashboardView';
 import MyProfileView from './components/MyProfileView';
 import LoginPage from './components/LoginPage';
+import InvitePage from './components/InvitePage';
 import ProjectsView from './components/ProjectsView';
 import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban } from 'lucide-react';
 
@@ -500,7 +501,18 @@ export default function App() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   if (!authChecked || loading) return <LoadingScreen />;
-  if (!currentUser) return <LoginPage onLogin={handleLogin} />;
+  
+  // Check for invite token
+  const urlParams = new URLSearchParams(window.location.search);
+  const inviteToken = urlParams.get('invite');
+  
+  if (!currentUser) {
+    if (inviteToken) {
+      return <InvitePage token={inviteToken} onSuccess={handleLogin} />;
+    }
+    return <LoginPage onLogin={handleLogin} />;
+  }
+  
   if (!state) return <LoadingScreen />;
 
   const navItems: { view: ActiveView; label: string; Icon: any }[] = [

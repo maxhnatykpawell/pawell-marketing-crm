@@ -69,7 +69,34 @@ export const resetUserPassword = async (userId: string): Promise<{ tempPassword:
 
 export const getAuthList = async (): Promise<{ userId: string; email: string; role: string }[]> => {
   const res = await fetch('/api/auth/list', { headers: authHeaders() });
-  if (!res.ok) throw new Error('Failed to fetch auth list');
+  if (!res.ok) throw new Error('Failed to load auth list');
+  return res.json();
+};
+
+export const generateInviteToken = async (userId: string): Promise<string> => {
+  const res = await fetch('/api/auth/invite', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ userId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to generate invite');
+  }
+  const data = await res.json();
+  return data.token;
+};
+
+export const acceptInvite = async (token: string, email: string, password: string): Promise<{ token: string; user: AuthUser }> => {
+  const res = await fetch('/api/auth/accept-invite', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, email, password }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to accept invite');
+  }
   return res.json();
 };
 

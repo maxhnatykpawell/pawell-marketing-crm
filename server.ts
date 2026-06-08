@@ -502,6 +502,56 @@ async function startServer() {
     res.json(authDb.credentials.map(c => ({ userId: c.userId, email: c.email, role: c.role })));
   });
 
+  app.post('/api/auth/invite', requireAuth, requireAdmin, async (req, res) => {
+    const { userId } = req.body;
+    if (!userId) { res.status(400).json({ error: 'userId обов\'язковий' }); return; }
+    const appState = await getDb();
+    const user = appState.users?.find((u: any) => u.id === userId);
+    if (!user) { res.status(404).json({ error: 'Користувача не знайдено' }); return; }
+    
+    // Create an invite token valid for 7 days
+    const token = jwt.sign({ inviteUserId: userId }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token });
+  });
+
+  app.post('/api/auth/accept-invite', async (req, res) => {
+    const { token, email, password } = req.body;
+    if (!token || !email || !password) { res.status(400).json({ error: 'Усі поля обов\'язкові' }); return; }
+    if (password.length < 6) { res.status(400).json({ error: 'Пароль мінімум 6 символів' }); return; }
+    
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as { inviteUserId: string };
+      const userId = decoded.inviteUserId;
+      
+      const appState = await getDb();
+      const user = appState.users?.find((u: any) => u.id === userId);
+      if (!user) { res.status(404).json({ error: 'Користувача не знайдено' }); return; }
+      
+      const authDb = await getAuthDb();
+      const emailExists = authDb.credentials.find(c => c.email.toLowerCase() === email.toLowerCase() && c.userId !== userId);
+      if (emailExists) { res.status(409).json({ error: 'Цей email вже використовується' }); return; }
+      
+      const passwordHash = await bcrypt.hash(password, 10);
+      const newCred: AuthCredential = { userId, email, passwordHash, role: 'member' };
+      const existingIdx = authDb.credentials.findIndex(c => c.userId === userId);
+      if (existingIdx >= 0) authDb.credentials[existingIdx] = newCred;
+      else authDb.credentials.push(newCred);
+      
+      await saveAuthDb(authDb);
+      
+      // Update user object email in db
+      user.email = email;
+      await saveDb(appState);
+      
+      // Automatically log them in
+      const payload: JWTPayload = { userId: newCred.userId, email: newCred.email, role: newCred.role };
+      const authToken = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+      res.json({ token: authToken, user: { userId: newCred.userId, email: newCred.email, role: newCred.role, name: user.name, avatar: user.avatar } });
+    } catch (e) {
+      res.status(400).json({ error: 'Недійсне або прострочене посилання' });
+    }
+  });
+
   // ── App State Routes ─────────────────────────────────────────────────────────
 
   app.get('/api/state', requireAuth, async (req, res) => {
