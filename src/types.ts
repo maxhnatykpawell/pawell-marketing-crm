@@ -59,6 +59,7 @@ export interface Card {
   description: string;
   deadline: string | null;
   assigneeId: string | null;
+  isCompleted?: boolean;
   subtasks: Subtask[];
   comments: Comment[];
   attachments: Attachment[];

@@ -8,6 +8,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import fs from 'fs';
 import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
+
 import cron from 'node-cron';
 import { GoogleGenAI } from '@google/genai';
 import bcrypt from 'bcryptjs';
@@ -320,10 +321,11 @@ async function generateAndSendDailyReport(state: any) {
   const isSoon = (d?: string) => { if (!d) return false; const x = new Date(d); x.setHours(0,0,0,0); const diff = Math.ceil((x.getTime() - today.getTime()) / 86400000); return diff > 0 && diff <= 3; };
 
   const allTasks = state.cards || [];
-  const tasksToday = allTasks.filter((c: any) => isToday(c.deadline));
-  const tasksOverdue = allTasks.filter((c: any) => isOverdue(c.deadline));
-  const tasksSoon = allTasks.filter((c: any) => isSoon(c.deadline));
+  const tasksToday = allTasks.filter((c: any) => !c.isCompleted && isToday(c.deadline));
+  const tasksOverdue = allTasks.filter((c: any) => !c.isCompleted && isOverdue(c.deadline));
+  const tasksSoon = allTasks.filter((c: any) => !c.isCompleted && isSoon(c.deadline));
   const urgentTasks = allTasks.filter((c: any) => {
+    if (c.isCompleted) return false;
     if (!isToday(c.deadline) && !isOverdue(c.deadline) && !isSoon(c.deadline)) return false;
     const tags = state.tags || [];
     const cardTags = c.tagIds?.map((id: string) => tags.find((t: any) => t.id === id)?.name?.toLowerCase()).filter(Boolean) || [];
@@ -392,7 +394,7 @@ function setupTelegramCron() {
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   app.use(express.json({ limit: '50mb' }));
 

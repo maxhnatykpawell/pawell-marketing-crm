@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Card } from '../types';
 import { useAppContext } from '../App';
-import { Calendar, AlignLeft, CheckSquare, MessageSquare, Paperclip, Clock, Sparkles } from 'lucide-react';
+import { Calendar, AlignLeft, CheckSquare, MessageSquare, Paperclip, Clock, Sparkles, Check } from 'lucide-react';
 import { format } from 'date-fns';
 import CardModal from './CardModal';
 import { cn } from '../utils';
@@ -12,7 +12,7 @@ interface Props {
 }
 
 export default function BoardCard({ card }: Props) {
-  const { state } = useAppContext();
+  const { state, updateCard } = useAppContext();
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   const assignee = card.assigneeId ? state.users.find(u => u.id === card.assigneeId) : null;
@@ -58,7 +58,24 @@ export default function BoardCard({ card }: Props) {
           )}
 
           <div className="flex justify-between items-start gap-2 mb-2">
-            <h4 className="text-sm font-medium text-gray-800 leading-snug break-words flex-1 group-hover:text-blue-700 transition-colors">
+            <div 
+              className="mt-0.5 cursor-pointer"
+              onClick={(e) => {
+                e.stopPropagation();
+                updateCard(card.id, { isCompleted: !card.isCompleted });
+              }}
+            >
+              <div className={cn(
+                "w-4 h-4 rounded border flex items-center justify-center transition-colors",
+                card.isCompleted ? "bg-green-500 border-green-500" : "border-gray-300 hover:border-green-400"
+              )}>
+                {card.isCompleted && <Check className="w-3 h-3 text-white" />}
+              </div>
+            </div>
+            <h4 className={cn(
+              "text-sm font-medium leading-snug break-words flex-1 transition-colors",
+              card.isCompleted ? "text-gray-400 line-through" : "text-gray-800 group-hover:text-blue-700"
+            )}>
               {card.title}
             </h4>
           </div>

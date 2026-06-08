@@ -2,10 +2,11 @@ import React, { useState, useRef } from 'react';
 import { Card, Subtask, Comment } from '../types';
 import { useAppContext } from '../App';
 import { uploadFile, reviewPlanWithAI } from '../api';
-import { X, Calendar, AlignLeft, CheckSquare, MessageSquare, Paperclip, User as UserIcon, Trash2, Link as LinkIcon, FolderKanban, Clock, Sparkles } from 'lucide-react';
+import { X, Calendar, AlignLeft, CheckSquare, MessageSquare, Paperclip, User as UserIcon, Trash2, Link as LinkIcon, FolderKanban, Clock, Sparkles, Check } from 'lucide-react';
 import { format } from 'date-fns';
 import TagPicker from './TagPicker';
 import { v4 as uuidv4 } from 'uuid';
+import { cn } from '../utils';
 
 interface Props {
   card: Card;
@@ -158,9 +159,23 @@ export default function CardModal({ card, onClose }: Props) {
               )}
             </p>
           </div>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-full transition">
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleUpdate({ isCompleted: !card.isCompleted })}
+              className={cn(
+                "flex items-center px-3 py-1.5 text-sm font-semibold rounded-lg transition-colors border",
+                card.isCompleted 
+                  ? "bg-green-50 text-green-700 border-green-200 hover:bg-green-100" 
+                  : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:text-gray-900"
+              )}
+            >
+              <Check className={cn("w-4 h-4 mr-1.5", card.isCompleted ? "text-green-600" : "text-gray-400")} />
+              {card.isCompleted ? 'Виконано' : 'Позначити виконаним'}
+            </button>
+            <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-full transition">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Content */}
