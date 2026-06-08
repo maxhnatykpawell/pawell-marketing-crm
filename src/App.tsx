@@ -485,12 +485,25 @@ export default function App() {
           else { const newId = uuidv4(); trelloLabelMap[l.id] = newId; newTags.push({ id: newId, name: labelName, color: l.color ? (trelloColorToHex[l.color] || '#3b82f6') : '#3b82f6' }); }
         });
       }
+      const checklistsByCard: Record<string, any[]> = {};
+      if (data.checklists) {
+        data.checklists.forEach((cl: any) => {
+          if (!checklistsByCard[cl.idCard]) checklistsByCard[cl.idCard] = [];
+          if (cl.checkItems) {
+            checklistsByCard[cl.idCard].push(...cl.checkItems.map((item: any) => ({
+              id: uuidv4(),
+              title: item.name,
+              completed: item.state === 'complete'
+            })));
+          }
+        });
+      }
       const newCards: Card[] = data.cards.filter((c: any) => !c.closed && listIdMap[c.idList]).map((c: any, i: number) => ({
         id: uuidv4(), listId: listIdMap[c.idList], title: c.name, description: c.desc || '',
         deadline: c.due ? new Date(c.due).toISOString().split('T')[0] : null,
         assigneeId: (c.idMembers && c.idMembers.length > 0) ? (trelloMemberMap[c.idMembers[0]] || null) : null,
         tagIds: (c.idLabels && c.idLabels.length > 0) ? c.idLabels.map((idL: string) => trelloLabelMap[idL]).filter(Boolean) : [],
-        subtasks: [], comments: [], attachments: [], order: i,
+        subtasks: checklistsByCard[c.id] || [], comments: [], attachments: [], order: i,
       }));
       saveState({ ...state, users: [...existingUsers, ...newUsers], tags: [...existingTags, ...newTags], boards: [...(state.boards || []), newBoard], lists: [...state.lists, ...newLists], cards: [...state.cards, ...newCards] });
       setActiveBoardId(boardId);
