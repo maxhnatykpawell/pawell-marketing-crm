@@ -361,6 +361,10 @@ async function generateAndSendDailyReport(state: any) {
     if (!tasksToday.length && !eventsToday.length && !contentToday.length && !tasksOverdue.length) messageText = 'На сьогодні немає задач. Гарного дня!';
   }
 
+  if (messageText.length > 4000) {
+    messageText = messageText.substring(0, 4000) + '\n\n... (Текст обрізано, бо він перевищує ліміти Telegram)';
+  }
+
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
