@@ -36,7 +36,10 @@ export default function DashboardView() {
   const handleTestNotification = async () => {
     setIsSendingReport(true);
     try {
-      const response = await fetch('/api/test-notification', { method: 'POST' });
+      const response = await fetch('/api/test-notification', { 
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` }
+      });
       const data = await response.json();
       if (data.success) {
         alert('ШІ-звіт успішно згенеровано та надіслано в Telegram!');
