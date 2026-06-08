@@ -308,7 +308,7 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
 
 async function generateAndSendDailyReport(state: any) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = '-5182383955';
+  const chatId = process.env.TELEGRAM_CHAT_ID || '-5182383955';
   const geminiApiKey = process.env.GEMINI_API_KEY;
 
   if (!token || !chatId) { return { success: false, error: 'missing_telegram_credentials' }; }
@@ -362,11 +362,16 @@ async function generateAndSendDailyReport(state: any) {
   }
 
   try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text: messageText, parse_mode: 'Markdown' })
     });
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('Telegram API rejected message:', errText);
+      return { success: false, error: 'Telegram API Error' };
+    }
     return { success: true };
   } catch (e) { return { success: false, error: 'request_failed' }; }
 }
