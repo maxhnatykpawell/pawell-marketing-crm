@@ -11,7 +11,7 @@ interface Props {
 }
 
 export default function BoardList({ list }: Props) {
-  const { state, addCard, deleteList, moveCard, moveList, activeProjectId } = useAppContext();
+  const { state, addCard, deleteList, clearList, moveCard, moveList, activeProjectId, confirmAction } = useAppContext();
   const [isAdding, setIsAdding] = useState(false);
   const [newCardTitle, setNewCardTitle] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
@@ -79,11 +79,25 @@ export default function BoardList({ list }: Props) {
               <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
               <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-20">
                 <button
-                  onClick={() => { deleteList(list.id); setMenuOpen(false); }}
+                  onClick={() => { 
+                    setMenuOpen(false);
+                    confirmAction('Видалити всі задачі в цій колонці?', () => clearList(list.id));
+                  }}
                   className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center"
                 >
                   <Trash2 className="w-4 h-4 mr-2" />
-                  Delete List
+                  Видалити всі задачі
+                </button>
+                <div className="h-px bg-gray-100 my-1"></div>
+                <button
+                  onClick={() => { 
+                    setMenuOpen(false);
+                    confirmAction('Ви впевнені, що хочете видалити колонку та всі її задачі?', () => deleteList(list.id));
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Видалити колонку
                 </button>
               </div>
             </>

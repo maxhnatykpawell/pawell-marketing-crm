@@ -26,6 +26,7 @@ interface AppContextType {
   addCard: (listId: string, title: string) => void;
   updateCard: (cardId: string, updates: Partial<Card>) => void;
   deleteCard: (cardId: string) => void;
+  clearList: (listId: string) => void;
   addList: (title: string) => void;
   deleteList: (listId: string) => void;
   moveList: (draggedListId: string, targetListId: string) => void;
@@ -252,6 +253,13 @@ export default function App() {
     if (!state) return;
     setState(prev => prev ? { ...prev, cards: prev.cards.filter(c => c.id !== cardId) } : prev);
     deleteEntity('cards', cardId).catch(console.error);
+  }, [state]);
+
+  const clearList = useCallback((listId: string) => {
+    if (!state) return;
+    const cardsToDelete = state.cards.filter(c => c.listId === listId);
+    setState(prev => prev ? { ...prev, cards: prev.cards.filter(c => c.listId !== listId) } : prev);
+    cardsToDelete.forEach(c => deleteEntity('cards', c.id).catch(console.error));
   }, [state]);
 
   const addList = useCallback((title: string) => {
@@ -551,7 +559,7 @@ export default function App() {
   return (
     <AppContext.Provider value={{
       state, currentUser, logout,
-      moveCard, addCard, updateCard, deleteCard, addList, deleteList, moveList,
+      moveCard, addCard, updateCard, deleteCard, clearList, addList, deleteList, moveList,
       addTag, deleteTag, updateTag, addUser, updateUser, deleteUser,
       addContentPlan, updateContentPlan, deleteContentPlan, importContentPlans, updateSettings,
       addEvent, updateEvent, deleteEvent, addProject, updateProject, deleteProject, addBoard, deleteBoard,
