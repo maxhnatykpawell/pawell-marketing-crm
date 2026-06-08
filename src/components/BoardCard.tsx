@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Card } from '../types';
 import { useAppContext } from '../App';
-import { Calendar, AlignLeft, CheckSquare, MessageSquare, Paperclip } from 'lucide-react';
+import { Calendar, AlignLeft, CheckSquare, MessageSquare, Paperclip, Clock, Sparkles } from 'lucide-react';
 import { format } from 'date-fns';
 import CardModal from './CardModal';
 import { cn } from '../utils';
@@ -103,6 +103,22 @@ export default function BoardCard({ card }: Props) {
                 <div className="flex items-center">
                   <Paperclip className="w-3.5 h-3.5 mr-1" />
                   {attachmentCount}
+                </div>
+              )}
+
+              {card.storyPoints && (
+                <div className="flex items-center text-yellow-700 bg-yellow-50 px-1.5 py-0.5 rounded font-medium ml-1" title="Story Points">
+                  <Sparkles className="w-3 h-3 mr-1" />
+                  {card.storyPoints} SP
+                </div>
+              )}
+
+              {card.estimatedMinutes && (
+                <div className="flex items-center text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-medium ml-1">
+                  <Clock className="w-3 h-3 mr-1" />
+                  {card.estimatedMinutes >= 60 
+                    ? `${Math.floor(card.estimatedMinutes / 60)}h ${card.estimatedMinutes % 60 > 0 ? `${card.estimatedMinutes % 60}m` : ''}`
+                    : `${card.estimatedMinutes}m`}
                 </div>
               )}
             </div>

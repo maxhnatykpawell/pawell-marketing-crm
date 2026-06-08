@@ -9,13 +9,17 @@ import {
   User as UserIcon, Mail, FileText, Clock,
   CheckCircle2, AlertCircle, Lock, Eye, EyeOff, Check,
   LogOut, Calendar, Edit2, ArrowRight, Kanban,
-  ChevronRight, Tag, CheckSquare, MessageSquare, Paperclip
+  ChevronRight, Tag, CheckSquare, MessageSquare, Paperclip,
+  Settings, Sparkles
 } from 'lucide-react';
 
 export default function MyProfileView() {
   const { state, currentUser, logout, updateUser, setActiveBoardId, setActiveView } = useAppContext();
 
   const user = state.users.find(u => u.id === currentUser?.userId);
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<'overview' | 'settings'>('overview');
 
   // Card modal
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
@@ -38,6 +42,16 @@ export default function MyProfileView() {
 
   const now = new Date();
   now.setHours(0, 0, 0, 0);
+
+  const isThisMonth = (dateString: string | null) => {
+    if (!dateString) return false;
+    const date = new Date(dateString);
+    const nowD = new Date();
+    return date.getMonth() === nowD.getMonth() && date.getFullYear() === nowD.getFullYear();
+  };
+
+  const myCardsThisMonth = myCards.filter(c => isThisMonth(c.deadline));
+  const myTotalStoryPoints = myCardsThisMonth.reduce((sum, c) => sum + (c.storyPoints || 0), 0);
 
   const getDeadlineStatus = (deadline: string | null) => {
     if (!deadline) return null;
@@ -198,6 +212,9 @@ export default function MyProfileView() {
                 <Kanban className="w-5 h-5 text-blue-600" />
                 Мої задачі
                 <span className="text-xs bg-blue-100 text-blue-700 font-semibold px-2 py-0.5 rounded-full">{myCards.length}</span>
+                <span className="text-xs bg-yellow-100 text-yellow-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <Sparkles className="w-3 h-3" /> {myTotalStoryPoints} SP (місяць)
+                </span>
                 {overdueCount > 0 && (
                   <span className="text-xs bg-red-100 text-red-700 font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
                     <AlertCircle className="w-3 h-3" />{overdueCount} протерміновано

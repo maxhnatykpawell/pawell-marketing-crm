@@ -106,3 +106,50 @@ export const uploadFile = async (file: File): Promise<Attachment> => {
   if (!res.ok) throw new Error('Failed to upload file');
   return res.json();
 };
+
+export const estimateTaskTime = async (title: string, description: string): Promise<number> => {
+  const res = await fetch('/api/estimate-time', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ title, description }),
+  });
+  if (!res.ok) return 60; // default fallback
+  const data = await res.json();
+  return data.estimatedMinutes || 60;
+};
+
+export const reviewPlanWithAI = async (title: string, description: string, subtasks: any[]): Promise<{ explanation: string, newSubtasks: string[], storyPoints: number }> => {
+  const res = await fetch('/api/review-plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ title, description, subtasks }),
+  });
+  if (!res.ok) throw new Error('Failed to review plan');
+  return res.json();
+};
+
+export const createEntity = async (type: string, data: any): Promise<void> => {
+  const res = await fetch(`/api/entity/${type}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`Failed to create ${type}`);
+};
+
+export const updateEntity = async (type: string, id: string, updates: any): Promise<void> => {
+  const res = await fetch(`/api/entity/${type}/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) throw new Error(`Failed to update ${type}`);
+};
+
+export const deleteEntity = async (type: string, id: string): Promise<void> => {
+  const res = await fetch(`/api/entity/${type}/${id}`, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+  });
+  if (!res.ok) throw new Error(`Failed to delete ${type}`);
+};

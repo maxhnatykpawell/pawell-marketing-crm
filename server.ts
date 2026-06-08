@@ -102,25 +102,78 @@ const INITIAL_APP_STATE = {
   lastModified: new Date().toISOString(),
 };
 
-// ── State DB ──────────────────────────────────────────────────────────────────
+const ATOMIC_COLLECTIONS = ['users', 'lists', 'cards', 'tags', 'contentPlans', 'events', 'projects', 'metrics', 'boards'];
+const SETTINGS_DOC = 'settings';
+
+async function updateLastModified() {
+  const db = initFirebase();
+  if (db) {
+    try {
+      await db.collection(CRM_COLLECTION).doc('status').set({ lastModified: new Date().toISOString() });
+    } catch (err) {
+      console.error('Failed to update status', err);
+    }
+  }
+}
 
 async function getDb(): Promise<any> {
   const db = initFirebase();
   if (db) {
-    const doc = await db.collection(CRM_COLLECTION).doc(STATE_DOC).get();
-    if (doc.exists) return doc.data();
-    // First time: check if local file exists for migration
-    if (fs.existsSync(dbFile)) {
-      console.log('📦 Migrating local data.json → Firestore...');
-      const localData = JSON.parse(fs.readFileSync(dbFile, 'utf-8'));
-      const dataWithTs = { ...localData, lastModified: new Date().toISOString() };
-      await db.collection(CRM_COLLECTION).doc(STATE_DOC).set(dataWithTs);
-      console.log('✅ Migration complete. Local file kept as backup.');
-      return dataWithTs;
+    const stateDocRef = db.collection(CRM_COLLECTION).doc(STATE_DOC);
+    const stateDoc = await stateDocRef.get();
+    
+    if (stateDoc.exists) {
+      console.log('📦 Migrating legacy state doc to atomic collections...');
+      const legacyData = stateDoc.data() as any;
+      
+      const settings = {
+        contentPlanChannels: legacyData.contentPlanChannels || INITIAL_APP_STATE.contentPlanChannels,
+        contentPlanStatuses: legacyData.contentPlanStatuses || INITIAL_APP_STATE.contentPlanStatuses,
+        contentPlanColumns: legacyData.contentPlanColumns || INITIAL_APP_STATE.contentPlanColumns
+      };
+      await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).set(settings);
+      
+      for (const colName of ATOMIC_COLLECTIONS) {
+        const items = legacyData[colName] || [];
+        for (let i = 0; i < items.length; i += 400) {
+          const batch = db.batch();
+          const chunk = items.slice(i, i + 400);
+          for (const item of chunk) {
+            if (!item.id) continue;
+            const ref = db.collection('crm_' + colName).doc(item.id);
+            batch.set(ref, item);
+          }
+          await batch.commit();
+        }
+      }
+      
+      await db.collection(CRM_COLLECTION).doc('state_backup_legacy').set(legacyData);
+      await stateDocRef.delete();
+      console.log('✅ Migration to atomic collections complete.');
     }
-    // Fresh start
-    await db.collection(CRM_COLLECTION).doc(STATE_DOC).set(INITIAL_APP_STATE);
-    return INITIAL_APP_STATE;
+    
+    const state: any = {};
+    const settingsDoc = await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).get();
+    if (settingsDoc.exists) {
+      Object.assign(state, settingsDoc.data());
+    } else {
+      Object.assign(state, {
+        contentPlanChannels: INITIAL_APP_STATE.contentPlanChannels,
+        contentPlanStatuses: INITIAL_APP_STATE.contentPlanStatuses,
+        contentPlanColumns: INITIAL_APP_STATE.contentPlanColumns
+      });
+    }
+    
+    for (const colName of ATOMIC_COLLECTIONS) {
+      try {
+        const snap = await db.collection('crm_' + colName).get();
+        state[colName] = snap.docs.map(d => d.data());
+      } catch (e) {
+        state[colName] = [];
+      }
+    }
+    
+    return state;
   }
 
   // Fallback: local file
@@ -130,12 +183,27 @@ async function getDb(): Promise<any> {
 }
 
 async function saveDb(data: any): Promise<void> {
-  const payload = { ...data, lastModified: new Date().toISOString() };
   const db = initFirebase();
   if (db) {
-    await db.collection(CRM_COLLECTION).doc(STATE_DOC).set(payload);
+    // With atomic updates, saveDb is rarely called for full state, but we can implement it as a fallback sync
+    const settings = {
+      contentPlanChannels: data.contentPlanChannels || [],
+      contentPlanStatuses: data.contentPlanStatuses || [],
+      contentPlanColumns: data.contentPlanColumns || []
+    };
+    await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).set(settings);
+    
+    for (const colName of ATOMIC_COLLECTIONS) {
+      const items = data[colName] || [];
+      for (const item of items) {
+        if (!item.id) continue;
+        await db.collection('crm_' + colName).doc(item.id).set(item);
+      }
+    }
     return;
   }
+  
+  const payload = { ...data, lastModified: new Date().toISOString() };
   fs.writeFileSync(dbFile, JSON.stringify(payload, null, 2));
 }
 
@@ -309,7 +377,7 @@ function setupTelegramCron() {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT || 3000;
 
   app.use(express.json({ limit: '50mb' }));
 
@@ -413,6 +481,28 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  app.get('/api/state', requireAuth, async (req, res) => {
+    try {
+      const state = await getDb();
+      res.json(state);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get('/api/status', requireAuth, async (req, res) => {
+    try {
+      const db = initFirebase();
+      if (db) {
+        const doc = await db.collection(CRM_COLLECTION).doc('status').get();
+        if (doc.exists) {
+          return res.json({ lastModified: doc.data()?.lastModified || new Date().toISOString() });
+        }
+      }
+      res.json({ lastModified: new Date().toISOString() });
+    } catch (e: any) {
+      res.json({ lastModified: new Date().toISOString() });
+    }
+  });
+
   app.post('/api/test-notification', requireAuth, async (req, res) => {
     try {
       const state = await getDb();
@@ -437,6 +527,145 @@ async function startServer() {
   app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
     if (!req.file) { res.status(400).json({ error: 'No file uploaded' }); return; }
     res.json({ id: req.file.filename, name: req.file.originalname, url: `/uploads/${encodeURIComponent(req.file.filename)}` });
+  });
+
+  app.post('/api/estimate-time', requireAuth, async (req, res) => {
+    const { title, description } = req.body;
+    if (!title) { res.status(400).json({ error: 'Title is required' }); return; }
+    
+    const geminiApiKey = process.env.GEMINI_API_KEY;
+    if (!geminiApiKey) {
+      // Fallback if no AI is configured
+      return res.json({ estimatedMinutes: 60 });
+    }
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+      const prompt = `You are a productivity AI. Estimate the time in minutes it takes to complete the following task.
+Title: ${title}
+Description: ${description || 'No description provided.'}
+
+Reply ONLY with a number representing the estimated minutes. Do not include any text, punctuation, or explanation. For example: 45`;
+      
+      const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+      const text = response.text || '';
+      const match = text.match(/\d+/);
+      const minutes = match ? parseInt(match[0], 10) : 60;
+      
+      res.json({ estimatedMinutes: minutes });
+    } catch (err) {
+      console.error('Gemini estimation error:', err);
+      res.json({ estimatedMinutes: 60 });
+    }
+  });
+
+  app.post('/api/entity/:type', requireAuth, async (req, res) => {
+    try {
+      const { type } = req.params;
+      const data = req.body;
+      const db = initFirebase();
+      if (db) {
+        if (!data.id) return res.status(400).json({ error: 'Missing ID' });
+        await db.collection('crm_' + type).doc(data.id).set(data);
+      } else {
+        // Fallback for local files: read, append, save
+        const state = await getDb();
+        if (!state[type]) state[type] = [];
+        state[type].push(data);
+        await saveDb(state);
+      }
+      await updateLastModified();
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.put('/api/entity/:type/:id', requireAuth, async (req, res) => {
+    try {
+      const { type, id } = req.params;
+      const updates = req.body;
+      const db = initFirebase();
+      if (db) {
+        await db.collection('crm_' + type).doc(id).set(updates, { merge: true });
+      } else {
+        const state = await getDb();
+        if (state[type]) {
+          state[type] = state[type].map((item: any) => item.id === id ? { ...item, ...updates } : item);
+          await saveDb(state);
+        }
+      }
+      await updateLastModified();
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete('/api/entity/:type/:id', requireAuth, async (req, res) => {
+    try {
+      const { type, id } = req.params;
+      const db = initFirebase();
+      if (db) {
+        await db.collection('crm_' + type).doc(id).delete();
+      } else {
+        const state = await getDb();
+        if (state[type]) {
+          state[type] = state[type].filter((item: any) => item.id !== id);
+          await saveDb(state);
+        }
+      }
+      await updateLastModified();
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/review-plan', requireAuth, async (req, res) => {
+    const { title, description, subtasks } = req.body;
+    if (!title) { res.status(400).json({ error: 'Title is required' }); return; }
+    
+    const geminiApiKey = process.env.GEMINI_API_KEY;
+    if (!geminiApiKey) {
+      return res.status(500).json({ error: 'Gemini API key is not configured' });
+    }
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+      const prompt = `Ти — мудрий і досвідчений менеджер проектів та маркетолог. Твоя мета — перевірити повноту задачі та оцінити її складність.
+Користувач надав назву задачі, її опис та список підзадач (кроків), які він збирається виконати. 
+Проаналізуй їх. Чи є "білі плями"? Чи не надто узагальнені кроки? Які важливі проміжні етапи пропущено (наприклад, погодження бюджету, аналітика, тестування, узгодження з іншим відділом тощо)?
+
+Також, оціни загальну складність задачі (включаючи нові кроки) у Story Points (SP) від 1 до 5 за такими критеріями:
+- 1 SP: Займає до 1 години. Рутинна, повністю зрозуміла задача без ризиків.
+- 2 SP: Займає 1–3 години. Потребує трохи фокусу, алгоритм дій відомий.
+- 3 SP: Займає 4–8 годин (до 1 дня). Потребує аналітики, креативу або узгоджень.
+- 4 SP: Займає 2–3 дні. Багатоетапна задача, залежить від інших, висока складність.
+- 5 SP: Займає від тижня. Висока невизначеність, стратегічна важливість (Епік).
+
+Задача: ${title}
+Опис: ${description || 'Не вказано'}
+Існуючі підзадачі:
+${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).join('\n') : 'Немає жодної підзадачі'}
+
+ОБОВ'ЯЗКОВО поверни відповідь у форматі JSON (БЕЗ жодних Markdown-розміток, тільки чистий JSON), з ТРЬОМА полями:
+1. "explanation" (рядок) — твій коментар як мудрого менеджера. Що не так, які білі плями знайдено.
+2. "newSubtasks" (масив рядків) — список НОВИХ конкретних підзадач. В кінці кожної підзадачі обов'язково вказуй у дужках очікуваний результат, наприклад: "(результат - документ)".
+3. "storyPoints" (число) — твоя оцінка задачі (від 1 до 5) згідно з критеріями.
+
+Приклад виводу:
+{
+  "explanation": "Чудовий старт, але ви пропустили етап дослідження конкурентів та погодження бюджету.",
+  "newSubtasks": ["Зробити зріз по 3 головних конкурентах (результат - таблиця порівняння)"],
+  "storyPoints": 3
+}`;
+      
+      const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+      const text = response.text || '{}';
+      // Очищення тексту від можливих маркдаун-тегів (на випадок, якщо ШІ їх все ж додасть)
+      const cleanText = text.replace(/```json\n?|\n?```/gi, '').trim();
+      const result = JSON.parse(cleanText);
+      
+      res.json(result);
+    } catch (err) {
+      console.error('Gemini review error:', err);
+      res.status(500).json({ error: 'Failed to analyze plan' });
+    }
   });
 
   // ── Vite / Static ────────────────────────────────────────────────────────────

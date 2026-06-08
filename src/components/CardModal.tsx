@@ -1,8 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { Card, Subtask, Comment } from '../types';
 import { useAppContext } from '../App';
-import { uploadFile } from '../api';
-import { X, Calendar, AlignLeft, CheckSquare, MessageSquare, Paperclip, User as UserIcon, Trash2, Link as LinkIcon, FolderKanban } from 'lucide-react';
+import { uploadFile, reviewPlanWithAI } from '../api';
+import { X, Calendar, AlignLeft, CheckSquare, MessageSquare, Paperclip, User as UserIcon, Trash2, Link as LinkIcon, FolderKanban, Clock, Sparkles } from 'lucide-react';
 import { format } from 'date-fns';
 import TagPicker from './TagPicker';
 import { v4 as uuidv4 } from 'uuid';
@@ -24,6 +24,40 @@ export default function CardModal({ card, onClose }: Props) {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [newCommentText, setNewCommentText] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [isReviewing, setIsReviewing] = useState(false);
+
+  const handleReviewPlan = async () => {
+    if (!card.title) return;
+    setIsReviewing(true);
+    try {
+      const { explanation, newSubtasks, storyPoints } = await reviewPlanWithAI(card.title, card.description || '', card.subtasks || []);
+      
+      const newSubtaskObjects: Subtask[] = newSubtasks.map((st: string) => ({
+        id: uuidv4(),
+        title: st,
+        completed: false
+      }));
+
+      const newComment: Comment = {
+        id: uuidv4(),
+        authorId: state.users[0].id, // current user id for now, but prefixed to show AI
+        text: `🤖 **Мудрий Менеджер (AI):**\n\nОцінка задачі: **${storyPoints} SP**\n\n${explanation}`,
+        createdAt: new Date().toISOString()
+      };
+
+      updateCard(card.id, {
+        subtasks: [...(card.subtasks || []), ...newSubtaskObjects],
+        comments: [...(card.comments || []), newComment],
+        storyPoints: storyPoints
+      });
+      
+    } catch (err) {
+      console.error('Failed to review plan', err);
+      alert('Помилка при зверненні до ШІ. Перевірте API ключ.');
+    } finally {
+      setIsReviewing(false);
+    }
+  };
 
   const handleUpdate = (updates: Partial<Card>) => {
     updateCard(card.id, updates);
@@ -115,7 +149,14 @@ export default function CardModal({ card, onClose }: Props) {
               onChange={e => setTitle(e.target.value)}
               onBlur={handleTitleBlur}
             />
-            <p className="text-sm text-gray-500 mt-1 pl-1">in list <span className="font-medium underline decoration-gray-300">{list?.title}</span></p>
+            <p className="text-sm text-gray-500 mt-1 pl-1">
+              in list <span className="font-medium underline decoration-gray-300">{list?.title}</span>
+              {card.storyPoints && (
+                <span className="ml-3 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
+                  <Sparkles className="w-3 h-3 mr-1" /> {card.storyPoints} SP
+                </span>
+              )}
+            </p>
           </div>
           <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-full transition">
             <X className="w-5 h-5" />
@@ -146,9 +187,19 @@ export default function CardModal({ card, onClose }: Props) {
 
               {/* Subtasks */}
               <div>
-                <div className="flex items-center text-gray-700 font-semibold mb-3">
-                  <CheckSquare className="w-5 h-5 mr-3 text-gray-400" />
-                  Subtasks
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center text-gray-700 font-semibold">
+                    <CheckSquare className="w-5 h-5 mr-3 text-gray-400" />
+                    Subtasks
+                  </div>
+                  <button 
+                    onClick={handleReviewPlan} 
+                    disabled={isReviewing}
+                    className="flex items-center text-xs font-semibold px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-md transition disabled:opacity-50 disabled:cursor-not-allowed border border-indigo-100 shadow-sm"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+                    {isReviewing ? 'ШІ думає...' : 'ШІ: Знайти білі плями'}
+                  </button>
                 </div>
                 <div className="ml-8 space-y-3">
                   {/* Progress bar */}
@@ -374,6 +425,22 @@ export default function CardModal({ card, onClose }: Props) {
                     onChange={e => handleUpdate({ deadline: e.target.value ? new Date(e.target.value).toISOString() : null })}
                     className="w-full bg-transparent text-sm p-2 outline-none cursor-pointer text-gray-700"
                   />
+                </div>
+              </div>
+
+              <div className="mb-6">
+                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Час виконання (AI/Ручний)</h4>
+                <div className="bg-gray-50 rounded-lg p-1 border border-gray-200 flex items-center">
+                  <Clock className="w-4 h-4 ml-2 text-gray-500 shrink-0" />
+                  <input 
+                    type="number" 
+                    min="0"
+                    placeholder="Хвилин"
+                    value={card.estimatedMinutes || ''}
+                    onChange={e => handleUpdate({ estimatedMinutes: e.target.value ? parseInt(e.target.value, 10) : undefined })}
+                    className="w-full bg-transparent text-sm p-2 outline-none text-gray-700"
+                  />
+                  <span className="text-xs text-gray-400 mr-2 shrink-0">хв</span>
                 </div>
               </div>
               

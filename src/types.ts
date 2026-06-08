@@ -65,6 +65,8 @@ export interface Card {
   tagIds?: string[];
   order: number;
   projectId?: string | null;
+  estimatedMinutes?: number;
+  storyPoints?: number;
 }
 
 export interface List {
