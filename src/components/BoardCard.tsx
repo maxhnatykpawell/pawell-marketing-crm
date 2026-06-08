@@ -33,6 +33,7 @@ export default function BoardCard({ card }: Props) {
       <div 
         draggable
         onDragStart={(e) => {
+          e.stopPropagation();
           e.dataTransfer.setData('cardId', card.id);
         }}
         onClick={() => setIsModalOpen(true)}

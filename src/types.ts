@@ -147,5 +147,6 @@ export interface AppState {
   contentPlanColumns?: ContentPlanColumn[];
   events?: EventItem[];
   projects?: Project[];
+  aiReportSchedule?: string;
   lastModified?: string;
 }

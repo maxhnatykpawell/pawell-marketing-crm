@@ -11,7 +11,7 @@ interface Props {
 }
 
 export default function BoardList({ list }: Props) {
-  const { state, addCard, deleteList, moveCard, activeProjectId } = useAppContext();
+  const { state, addCard, deleteList, moveCard, moveList, activeProjectId } = useAppContext();
   const [isAdding, setIsAdding] = useState(false);
   const [newCardTitle, setNewCardTitle] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
@@ -34,17 +34,30 @@ export default function BoardList({ list }: Props) {
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragOver(false);
+    
     const cardId = e.dataTransfer.getData('cardId');
     if (cardId) {
       moveCard(cardId, list.id);
+      return;
+    }
+    
+    const draggedListId = e.dataTransfer.getData('listId');
+    if (draggedListId && draggedListId !== list.id) {
+      moveList(draggedListId, list.id);
     }
   };
 
   return (
     <div 
+      draggable
+      onDragStart={(e) => {
+        // Only set data if not dragging a card (handled by stopPropagation in Card)
+        e.dataTransfer.setData('listId', list.id);
+      }}
       className={cn(
-        "w-80 shrink-0 bg-gray-100 rounded-xl flex flex-col max-h-full border border-transparent transition duration-200 shadow-sm",
+        "w-80 shrink-0 bg-gray-100 rounded-xl flex flex-col max-h-full border border-transparent transition duration-200 shadow-sm cursor-grab active:cursor-grabbing",
         isDragOver && "bg-blue-50/70 border-blue-300 shadow-md ring-2 ring-blue-500/20"
       )}
       onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}

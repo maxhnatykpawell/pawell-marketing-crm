@@ -131,7 +131,8 @@ async function getDb(): Promise<any> {
       const settings = {
         contentPlanChannels: legacyData.contentPlanChannels || INITIAL_APP_STATE.contentPlanChannels,
         contentPlanStatuses: legacyData.contentPlanStatuses || INITIAL_APP_STATE.contentPlanStatuses,
-        contentPlanColumns: legacyData.contentPlanColumns || INITIAL_APP_STATE.contentPlanColumns
+        contentPlanColumns: legacyData.contentPlanColumns || INITIAL_APP_STATE.contentPlanColumns,
+        aiReportSchedule: legacyData.aiReportSchedule || '0 8 * * *'
       };
       await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).set(settings);
       
@@ -162,7 +163,8 @@ async function getDb(): Promise<any> {
       Object.assign(state, {
         contentPlanChannels: INITIAL_APP_STATE.contentPlanChannels,
         contentPlanStatuses: INITIAL_APP_STATE.contentPlanStatuses,
-        contentPlanColumns: INITIAL_APP_STATE.contentPlanColumns
+        contentPlanColumns: INITIAL_APP_STATE.contentPlanColumns,
+        aiReportSchedule: '0 8 * * *'
       });
     }
     
@@ -191,7 +193,8 @@ async function saveDb(data: any): Promise<void> {
     const settings = {
       contentPlanChannels: data.contentPlanChannels || [],
       contentPlanStatuses: data.contentPlanStatuses || [],
-      contentPlanColumns: data.contentPlanColumns || []
+      contentPlanColumns: data.contentPlanColumns || [],
+      aiReportSchedule: data.aiReportSchedule || '0 8 * * *'
     };
     await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).set(settings);
     
@@ -382,14 +385,25 @@ async function generateAndSendDailyReport(state: any) {
   } catch (e) { return { success: false, error: 'request_failed' }; }
 }
 
-function setupTelegramCron() {
-  cron.schedule('0 8 * * *', async () => {
-    const state = await getDb();
-    generateAndSendDailyReport(state);
-  });
-  console.log('📅 Telegram daily cron scheduled (08:00).');
-}
+let currentCronTask: any = null;
 
+function setupTelegramCron(scheduleExpr: string = '0 8 * * *') {
+  if (currentCronTask) {
+    currentCronTask.stop();
+  }
+  
+  if (!scheduleExpr) return;
+  
+  try {
+    currentCronTask = cron.schedule(scheduleExpr, async () => {
+      const state = await getDb();
+      generateAndSendDailyReport(state);
+    });
+    console.log(`📅 Telegram daily cron scheduled (${scheduleExpr}).`);
+  } catch (err) {
+    console.error(`❌ Invalid cron expression: ${scheduleExpr}`, err);
+  }
+}
 // ── Main Server ───────────────────────────────────────────────────────────────
 
 async function startServer() {
@@ -405,7 +419,8 @@ async function startServer() {
   // Init Firebase & bootstrap
   initFirebase();
   await bootstrapAdmin();
-  setupTelegramCron();
+  const initialState = await getDb();
+  setupTelegramCron(initialState.aiReportSchedule || '0 8 * * *');
 
   // ── Auth Routes ──────────────────────────────────────────────────────────────
 
@@ -494,7 +509,14 @@ async function startServer() {
   });
 
   app.post('/api/state', requireAuth, async (req, res) => {
+    const oldState = await getDb();
     await saveDb(req.body);
+    
+    // Check if schedule changed
+    if (req.body.aiReportSchedule && req.body.aiReportSchedule !== oldState.aiReportSchedule) {
+      setupTelegramCron(req.body.aiReportSchedule);
+    }
+    
     res.json({ success: true });
   });
 

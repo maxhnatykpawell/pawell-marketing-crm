@@ -27,6 +27,7 @@ interface AppContextType {
   deleteCard: (cardId: string) => void;
   addList: (title: string) => void;
   deleteList: (listId: string) => void;
+  moveList: (draggedListId: string, targetListId: string) => void;
   addTag: (tag: Omit<Tag, 'id'>) => void;
   deleteTag: (tagId: string) => void;
   updateTag: (tagId: string, updates: Partial<Tag>) => void;
@@ -36,7 +37,7 @@ interface AppContextType {
   addContentPlan: (item: Omit<ContentPlanItem, 'id'>) => void;
   updateContentPlan: (id: string, updates: Partial<ContentPlanItem>) => void;
   deleteContentPlan: (id: string) => void;
-  updateSettings: (updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns'>>) => void;
+  updateSettings: (updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule'>>) => void;
   addEvent: (item: Omit<EventItem, 'id'>) => void;
   updateEvent: (id: string, updates: Partial<EventItem>) => void;
   deleteEvent: (id: string) => void;
@@ -267,6 +268,35 @@ export default function App() {
     state.cards.filter(c => c.listId === listId).forEach(c => deleteEntity('cards', c.id).catch(console.error));
   }, [state]);
 
+  const moveList = useCallback((draggedListId: string, targetListId: string) => {
+    if (!state) return;
+    
+    const draggedList = state.lists.find(l => l.id === draggedListId);
+    if (!draggedList) return;
+    const boardId = draggedList.boardId;
+    
+    let boardLists = state.lists.filter(l => l.boardId === boardId).sort((a, b) => a.order - b.order);
+    
+    const dragIdx = boardLists.findIndex(l => l.id === draggedListId);
+    const dropIdx = boardLists.findIndex(l => l.id === targetListId);
+    if (dragIdx === -1 || dropIdx === -1 || dragIdx === dropIdx) return;
+    
+    const [removed] = boardLists.splice(dragIdx, 1);
+    boardLists.splice(dropIdx, 0, removed);
+    
+    const updatedLists = boardLists.map((l, idx) => ({ ...l, order: idx }));
+    
+    setState(prev => {
+      if (!prev) return prev;
+      const otherLists = prev.lists.filter(l => l.boardId !== boardId);
+      return { ...prev, lists: [...otherLists, ...updatedLists] };
+    });
+    
+    updatedLists.forEach(l => {
+      updateEntity('lists', l.id, { order: l.order }).catch(console.error);
+    });
+  }, [state]);
+
   const addTag = useCallback((tag: Omit<Tag, 'id'>) => {
     if (!state) return;
     const newTag = { ...tag, id: uuidv4() };
@@ -344,7 +374,7 @@ export default function App() {
     deleteEntity('contentPlans', id).catch(console.error);
   }, [state]);
 
-  const updateSettings = useCallback((updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns'>>) => {
+  const updateSettings = useCallback((updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule'>>) => {
     if (!state) return;
     saveState({ ...state, ...updates }); // settings are grouped in saveState logic
   }, [state, saveState]);
@@ -486,7 +516,7 @@ export default function App() {
   return (
     <AppContext.Provider value={{
       state, currentUser, logout,
-      moveCard, addCard, updateCard, deleteCard, addList, deleteList,
+      moveCard, addCard, updateCard, deleteCard, addList, deleteList, moveList,
       addTag, deleteTag, updateTag, addUser, updateUser, deleteUser,
       addContentPlan, updateContentPlan, deleteContentPlan, updateSettings,
       addEvent, updateEvent, deleteEvent, addProject, updateProject, deleteProject, addBoard, deleteBoard,

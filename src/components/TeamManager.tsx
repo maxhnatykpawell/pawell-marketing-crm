@@ -3,6 +3,7 @@ import { useAppContext } from '../App';
 import { Users, Plus, X, Edit2, Trash2, Sparkles } from 'lucide-react';
 import { User } from '../types';
 import AdminUsersPanel from './AdminUsersPanel';
+import AdminSettingsPanel from './AdminSettingsPanel';
 
 export default function TeamManager({ onClose }: { onClose: () => void }) {
   const { state, addUser, updateUser, deleteUser, confirmAction } = useAppContext();
@@ -189,6 +190,7 @@ export default function TeamManager({ onClose }: { onClose: () => void }) {
 
           {/* Admin panel (only visible to admins) */}
           <AdminUsersPanel />
+          <AdminSettingsPanel />
         </div>
       </div>
     </div>
