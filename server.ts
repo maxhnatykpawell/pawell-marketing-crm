@@ -47,8 +47,9 @@ function initFirebase(): admin.firestore.Firestore | null {
 
 // ── Storage Abstraction ───────────────────────────────────────────────────────
 
-const dbFile = path.join(process.cwd(), 'data.json');
-const authFile = path.join(process.cwd(), 'auth.json');
+const DATA_DIR = process.env.DATA_DIR || process.cwd();
+const dbFile = path.join(DATA_DIR, 'data.json');
+const authFile = path.join(DATA_DIR, 'auth.json');
 const CRM_COLLECTION = 'crm';
 const STATE_DOC = 'state';
 const AUTH_DOC = 'auth';
@@ -204,7 +205,9 @@ async function saveDb(data: any): Promise<void> {
   }
   
   const payload = { ...data, lastModified: new Date().toISOString() };
-  fs.writeFileSync(dbFile, JSON.stringify(payload, null, 2));
+  const tmpFile = dbFile + '.tmp';
+  fs.writeFileSync(tmpFile, JSON.stringify(payload, null, 2));
+  fs.renameSync(tmpFile, dbFile);
 }
 
 // ── Auth DB ───────────────────────────────────────────────────────────────────
@@ -243,7 +246,9 @@ async function saveAuthDb(authData: AuthDbType): Promise<void> {
     await db.collection(CRM_COLLECTION).doc(AUTH_DOC).set(authData);
     return;
   }
-  fs.writeFileSync(authFile, JSON.stringify(authData, null, 2));
+  const tmpFile = authFile + '.tmp';
+  fs.writeFileSync(tmpFile, JSON.stringify(authData, null, 2));
+  fs.renameSync(tmpFile, authFile);
 }
 
 // ── JWT Config ────────────────────────────────────────────────────────────────
