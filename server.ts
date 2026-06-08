@@ -324,6 +324,7 @@ async function generateAndSendDailyReport(state: any) {
   const tasksOverdue = allTasks.filter((c: any) => isOverdue(c.deadline));
   const tasksSoon = allTasks.filter((c: any) => isSoon(c.deadline));
   const urgentTasks = allTasks.filter((c: any) => {
+    if (!isToday(c.deadline) && !isOverdue(c.deadline) && !isSoon(c.deadline)) return false;
     const tags = state.tags || [];
     const cardTags = c.tagIds?.map((id: string) => tags.find((t: any) => t.id === id)?.name?.toLowerCase()).filter(Boolean) || [];
     return cardTags.some((t: string) => t.includes('urgent') || t.includes('важливо') || t.includes('терміново'));
