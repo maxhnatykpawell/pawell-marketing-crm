@@ -323,7 +323,9 @@ async function generateAndSendDailyReport(state: any) {
   const isOverdue = (d?: string) => { if (!d) return false; const x = new Date(d); x.setHours(0,0,0,0); return x.getTime() < today.getTime(); };
   const isSoon = (d?: string) => { if (!d) return false; const x = new Date(d); x.setHours(0,0,0,0); const diff = Math.ceil((x.getTime() - today.getTime()) / 86400000); return diff > 0 && diff <= 3; };
 
-  const allTasks = state.cards || [];
+  const lists = state.lists || [];
+  const excludedListIds = lists.filter((l: any) => l.excludeFromAI).map((l: any) => l.id);
+  const allTasks = (state.cards || []).filter((c: any) => !excludedListIds.includes(c.listId));
   const tasksToday = allTasks.filter((c: any) => !c.isCompleted && isToday(c.deadline));
   const tasksOverdue = allTasks.filter((c: any) => !c.isCompleted && isOverdue(c.deadline));
   const tasksSoon = allTasks.filter((c: any) => !c.isCompleted && isSoon(c.deadline));

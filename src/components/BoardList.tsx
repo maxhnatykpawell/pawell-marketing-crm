@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { List } from '../types';
 import { useAppContext } from '../App';
 import BoardCard from './BoardCard';
-import { Plus, MoreHorizontal, Trash2 } from 'lucide-react';
+import { Plus, MoreHorizontal, Trash2, Eye, EyeOff, CheckSquare, X, Check } from 'lucide-react';
 import { cn } from '../utils';
 
 interface Props {
@@ -14,12 +14,14 @@ interface Props {
 }
 
 export default function BoardList({ list, filterAssigneeId, filterTagId, filterOverdue }: Props) {
-  const { state, addCard, deleteList, clearList, moveCard, moveList, activeProjectId, confirmAction } = useAppContext();
+  const { state, addCard, deleteList, clearList, moveCard, moveList, activeProjectId, confirmAction, updateList, updateCard, deleteCard } = useAppContext();
   const [isAdding, setIsAdding] = useState(false);
   const [newCardTitle, setNewCardTitle] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [limit, setLimit] = useState(10);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
 
   // Filter and sort cards
   const cards = state.cards
@@ -76,9 +78,64 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
       onDragLeave={() => setIsDragOver(false)}
       onDrop={handleDrop}
     >
-      <div className="px-4 py-3 flex items-center justify-between group">
-        <h3 className="font-semibold text-gray-800 tracking-tight">{list.title}</h3>
-        <div className="relative">
+      {selectionMode ? (
+        <div className="px-4 py-3 flex items-center justify-between bg-blue-50 border-b border-blue-100 rounded-t-xl min-h-[48px]">
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setSelectedCardIds(selectedCardIds.length === cards.length ? [] : cards.map(c => c.id))}
+              className="text-blue-600 font-medium text-sm flex items-center hover:text-blue-800 transition"
+            >
+              <CheckSquare className="w-4 h-4 mr-1.5" />
+              {selectedCardIds.length === cards.length ? 'Зняти всі' : 'Вибрати всі'}
+            </button>
+            <span className="text-sm text-blue-800 font-semibold ml-2 bg-blue-100 px-2 py-0.5 rounded-full">{selectedCardIds.length}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <button 
+              onClick={() => {
+                if (selectedCardIds.length === 0) return;
+                selectedCardIds.forEach(id => updateCard(id, { isCompleted: true }));
+                setSelectionMode(false);
+                setSelectedCardIds([]);
+              }}
+              title="Позначити виконаними"
+              disabled={selectedCardIds.length === 0}
+              className="p-1.5 hover:bg-blue-200 text-blue-700 rounded transition disabled:opacity-50"
+            >
+              <Check className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={() => {
+                if (selectedCardIds.length === 0) return;
+                confirmAction(`Видалити вибрані задачі (${selectedCardIds.length})?`, () => {
+                  selectedCardIds.forEach(id => deleteCard(id));
+                  setSelectionMode(false);
+                  setSelectedCardIds([]);
+                });
+              }}
+              title="Видалити вибрані"
+              disabled={selectedCardIds.length === 0}
+              className="p-1.5 hover:bg-red-100 text-red-600 rounded transition disabled:opacity-50"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+            <div className="w-px h-4 bg-blue-200 mx-1"></div>
+            <button 
+              onClick={() => { setSelectionMode(false); setSelectedCardIds([]); }}
+              className="p-1.5 hover:bg-blue-200 text-blue-600 rounded transition"
+              title="Скасувати виділення"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="px-4 py-3 flex items-center justify-between group min-h-[48px]">
+          <h3 className="font-semibold text-gray-800 tracking-tight flex items-center gap-2">
+            {list.title}
+            {list.excludeFromAI && <EyeOff className="w-3.5 h-3.5 text-gray-400" title="Виключено зі звіту ШІ" />}
+          </h3>
+          <div className="relative">
           <button 
             onClick={() => setMenuOpen(!menuOpen)}
             className="p-1.5 hover:bg-gray-200 rounded-md text-gray-500 opacity-0 group-hover:opacity-100 transition"
@@ -89,7 +146,29 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
           {menuOpen && (
             <>
               <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-              <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-20">
+              <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-20">
+                <button
+                  onClick={() => { 
+                    setMenuOpen(false);
+                    setSelectionMode(true);
+                    setSelectedCardIds([]);
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center"
+                >
+                  <CheckSquare className="w-4 h-4 mr-2 text-gray-500" />
+                  Виділити задачі
+                </button>
+                <button
+                  onClick={() => { 
+                    setMenuOpen(false);
+                    updateList(list.id, { excludeFromAI: !list.excludeFromAI });
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center"
+                >
+                  {list.excludeFromAI ? <Eye className="w-4 h-4 mr-2 text-gray-500" /> : <EyeOff className="w-4 h-4 mr-2 text-gray-500" />}
+                  {list.excludeFromAI ? 'Включити в звіт ШІ' : 'Виключити зі звіту ШІ'}
+                </button>
+                <div className="h-px bg-gray-100 my-1"></div>
                 <button
                   onClick={() => { 
                     setMenuOpen(false);
@@ -115,11 +194,23 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
             </>
           )}
         </div>
-      </div>
+      )}
 
       <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-3 hidden-scrollbar h-full min-h-[50px]">
         {cards.slice(0, limit).map(card => (
-          <BoardCard key={card.id} card={card} />
+          <BoardCard 
+            key={card.id} 
+            card={card} 
+            selectionMode={selectionMode}
+            isSelected={selectedCardIds.includes(card.id)}
+            onToggleSelect={() => {
+              if (selectedCardIds.includes(card.id)) {
+                setSelectedCardIds(prev => prev.filter(id => id !== card.id));
+              } else {
+                setSelectedCardIds(prev => [...prev, card.id]);
+              }
+            }}
+          />
         ))}
         {cards.length > limit && (
           <button

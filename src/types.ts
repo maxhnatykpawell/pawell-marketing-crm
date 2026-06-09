@@ -75,6 +75,7 @@ export interface List {
   title: string;
   order: number;
   boardId?: string;
+  excludeFromAI?: boolean;
 }
 
 export interface ContentPlanItem {

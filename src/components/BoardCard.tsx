@@ -8,10 +8,13 @@ import { cn } from '../utils';
 
 interface Props {
   card: Card;
+  selectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: () => void;
   key?: React.Key;
 }
 
-export default function BoardCard({ card }: Props) {
+export default function BoardCard({ card, selectionMode, isSelected, onToggleSelect }: Props) {
   const { state, updateCard } = useAppContext();
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -36,9 +39,28 @@ export default function BoardCard({ card }: Props) {
           e.stopPropagation();
           e.dataTransfer.setData('cardId', card.id);
         }}
-        onClick={() => setIsModalOpen(true)}
-        className="bg-white rounded-lg shadow-sm hover:shadow-md border border-gray-200 border-b-gray-300 cursor-pointer overflow-hidden group hover:ring-1 hover:ring-blue-500/50 transition-all flex flex-col"
+        onClick={() => {
+          if (selectionMode && onToggleSelect) {
+            onToggleSelect();
+          } else {
+            setIsModalOpen(true);
+          }
+        }}
+        className={cn(
+          "rounded-lg shadow-sm hover:shadow-md border border-b-gray-300 cursor-pointer overflow-hidden group hover:ring-1 hover:ring-blue-500/50 transition-all flex flex-col relative",
+          isSelected ? "border-blue-500 ring-2 ring-blue-500 bg-blue-50/50" : "border-gray-200 bg-white"
+        )}
       >
+        {selectionMode && (
+          <div className="absolute top-2 right-2 z-10">
+            <div className={cn(
+              "w-4 h-4 rounded border flex items-center justify-center transition-colors",
+              isSelected ? "bg-blue-600 border-blue-600" : "bg-white border-gray-400"
+            )}>
+              {isSelected && <Check className="w-3 h-3 text-white" />}
+            </div>
+          </div>
+        )}
         {project && (
           <div className="h-1 w-full shrink-0" style={{ backgroundColor: project.color }} title={`Проєкт: ${project.title}`} />
         )}
