@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../App';
 import BoardList from './BoardList';
-import { Plus, Trash2, DownloadCloud, FolderKanban } from 'lucide-react';
+import { Plus, Trash2, DownloadCloud, FolderKanban, Filter } from 'lucide-react';
 import TrelloImportModal from './TrelloImportModal';
 
 export default function Board() {
@@ -11,6 +11,9 @@ export default function Board() {
   const [isAddingBoard, setIsAddingBoard] = useState(false);
   const [newBoardTitle, setNewBoardTitle] = useState('');
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [filterAssigneeId, setFilterAssigneeId] = useState<string | null>(null);
+  const [filterTagId, setFilterTagId] = useState<string | null>(null);
+  const [filterOverdue, setFilterOverdue] = useState(false);
 
   const boards = state.boards || [];
   const projects = state.projects || [];
@@ -116,10 +119,55 @@ export default function Board() {
         </div>
       )}
 
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-3 mb-4 w-full bg-white p-3 rounded-xl border border-gray-200 shadow-sm shrink-0">
+        <div className="flex items-center text-sm font-semibold text-gray-500 shrink-0">
+          <Filter className="w-4 h-4 mr-1.5" /> Фільтри:
+        </div>
+        
+        <select 
+          value={filterAssigneeId || ''} 
+          onChange={e => setFilterAssigneeId(e.target.value || null)}
+          className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:ring-blue-500 focus:border-blue-500 outline-none bg-gray-50"
+        >
+          <option value="">Усі виконавці</option>
+          {state.users.map(u => (
+            <option key={u.id} value={u.id}>{u.name}</option>
+          ))}
+        </select>
+
+        <select 
+          value={filterTagId || ''} 
+          onChange={e => setFilterTagId(e.target.value || null)}
+          className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:ring-blue-500 focus:border-blue-500 outline-none bg-gray-50"
+        >
+          <option value="">Усі теги</option>
+          {state.tags?.map(t => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
+        </select>
+
+        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none ml-2 hover:text-blue-600 transition">
+          <input 
+            type="checkbox" 
+            checked={filterOverdue} 
+            onChange={e => setFilterOverdue(e.target.checked)}
+            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+          />
+          Протерміновані
+        </label>
+      </div>
+
       <div className="flex-1 overflow-x-auto overflow-y-hidden pb-4 custom-scrollbar">
         <div className="flex items-start space-x-6 h-full w-max shrink-0">
           {sortedLists.map(list => (
-            <BoardList key={list.id} list={list} />
+            <BoardList 
+              key={list.id} 
+              list={list} 
+              filterAssigneeId={filterAssigneeId}
+              filterTagId={filterTagId}
+              filterOverdue={filterOverdue}
+            />
           ))}
           
           <div className="w-80 shrink-0">

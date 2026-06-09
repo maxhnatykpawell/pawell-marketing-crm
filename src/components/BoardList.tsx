@@ -7,10 +7,13 @@ import { cn } from '../utils';
 
 interface Props {
   list: List;
+  filterAssigneeId?: string | null;
+  filterTagId?: string | null;
+  filterOverdue?: boolean;
   key?: React.Key;
 }
 
-export default function BoardList({ list }: Props) {
+export default function BoardList({ list, filterAssigneeId, filterTagId, filterOverdue }: Props) {
   const { state, addCard, deleteList, clearList, moveCard, moveList, activeProjectId, confirmAction } = useAppContext();
   const [isAdding, setIsAdding] = useState(false);
   const [newCardTitle, setNewCardTitle] = useState('');
@@ -21,6 +24,15 @@ export default function BoardList({ list }: Props) {
   // Filter and sort cards
   const cards = state.cards
     .filter(c => c.listId === list.id && (!activeProjectId || c.projectId === activeProjectId))
+    .filter(c => {
+      if (filterAssigneeId && c.assigneeId !== filterAssigneeId) return false;
+      if (filterTagId && (!c.tagIds || !c.tagIds.includes(filterTagId))) return false;
+      if (filterOverdue) {
+        const isOverdue = c.deadline && new Date(c.deadline) < new Date() && c.listId !== state.lists[state.lists.length - 1]?.id && !c.isCompleted;
+        if (!isOverdue) return false;
+      }
+      return true;
+    })
     .sort((a, b) => a.order - b.order);
 
   const handleAddCard = (e: React.FormEvent) => {

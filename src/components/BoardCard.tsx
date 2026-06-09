@@ -26,7 +26,7 @@ export default function BoardCard({ card }: Props) {
   const cardTags = state.tags?.filter(t => card.tagIds?.includes(t.id)) || [];
   const project = state.projects?.find(p => p.id === card.projectId);
 
-  const isOverdue = card.deadline && new Date(card.deadline) < new Date() && card.listId !== state.lists[state.lists.length - 1]?.id; // basic logic, last list is done
+  const isOverdue = card.deadline && new Date(card.deadline) < new Date() && card.listId !== state.lists[state.lists.length - 1]?.id && !card.isCompleted; // basic logic, last list is done
 
   return (
     <>
