@@ -194,6 +194,7 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
             </>
           )}
         </div>
+      </div>
       )}
 
       <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-3 hidden-scrollbar h-full min-h-[50px]">
