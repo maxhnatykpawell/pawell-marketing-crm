@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { ReactFlow, Background, Controls, Edge, Node, Handle, Position } from '@xyflow/react';
+import { ReactFlow, Background, Controls, Edge, Node, Handle, Position, applyNodeChanges, NodeChange } from '@xyflow/react';
+import { useCallback, useEffect } from 'react';
 import '@xyflow/react/dist/style.css';
 import { useAppContext } from '../App';
 import { Process, ProcessNodeData, Project } from '../types';
@@ -61,7 +62,7 @@ const TrackerNode = ({ data, id }: { data: ProcessNodeData & { projects: Project
 const nodeTypes = { trackerNode: TrackerNode };
 
 export default function ProcessTracker({ process }: Props) {
-  const { state, updateProject, confirmAction } = useAppContext();
+  const { state, updateProject, updateProcess, confirmAction } = useAppContext();
   
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [addProjectModalOpen, setAddProjectModalOpen] = useState(false);
@@ -76,9 +77,10 @@ export default function ProcessTracker({ process }: Props) {
     setSelectedProject(project);
   };
 
-  // Map DB nodes to ReactFlow nodes
-  const nodes: Node[] = useMemo(() => {
-    return (process.nodes || []).map(n => ({
+  const [nodes, setNodes] = useState<Node[]>([]);
+
+  useEffect(() => {
+    setNodes((process.nodes || []).map(n => ({
       ...n,
       type: 'trackerNode',
       data: {
@@ -86,8 +88,20 @@ export default function ProcessTracker({ process }: Props) {
         projects: processProjects.filter(p => p.currentProcessNodeId === n.id),
         onProjectClick: handleProjectClick
       }
-    }));
+    })));
   }, [process.nodes, processProjects]);
+
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => setNodes((nds) => applyNodeChanges(changes, nds)),
+    []
+  );
+
+  const onNodeDragStop = useCallback((_: React.MouseEvent, node: Node) => {
+    const updatedNodes = process.nodes.map(n => 
+      n.id === node.id ? { ...n, position: node.position } : n
+    );
+    updateProcess(process.id, { nodes: updatedNodes as any });
+  }, [process.nodes, process.id, updateProcess]);
 
   const edges: Edge[] = process.edges || [];
 
@@ -181,10 +195,12 @@ export default function ProcessTracker({ process }: Props) {
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        onNodesChange={onNodesChange}
+        onNodeDragStop={onNodeDragStop}
         fitView
-        nodesDraggable={false}
+        nodesDraggable={true}
         nodesConnectable={false}
-        elementsSelectable={false}
+        elementsSelectable={true}
       >
         <Background color="#ccc" gap={16} />
         <Controls />
