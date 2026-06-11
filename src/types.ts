@@ -133,6 +133,44 @@ export interface Project {
   managerIds: string[];
   deadline?: string | null;
   createdAt: string;
+  processId?: string | null;
+  currentProcessNodeId?: string | null;
+  processEntryDates?: Record<string, string>;
+  completedRequirements?: Record<string, boolean>;
+}
+
+export interface ProcessRequirement {
+  id: string;
+  label: string;
+  type: 'checkbox';
+}
+
+export interface ProcessNodeData extends Record<string, unknown> {
+  label: string;
+  timeLimitDays?: number;
+  requirements: ProcessRequirement[];
+}
+
+export interface ProcessNode {
+  id: string;
+  type: string;
+  position: { x: number; y: number };
+  data: ProcessNodeData;
+}
+
+export interface ProcessEdge {
+  id: string;
+  source: string;
+  target: string;
+  label?: string;
+}
+
+export interface Process {
+  id: string;
+  title: string;
+  nodes: ProcessNode[];
+  edges: ProcessEdge[];
+  createdAt: string;
 }
 
 export interface AppState {
@@ -148,6 +186,7 @@ export interface AppState {
   contentPlanColumns?: ContentPlanColumn[];
   events?: EventItem[];
   projects?: Project[];
+  processes?: Process[];
   aiReportSchedule?: string;
   lastModified?: string;
 }

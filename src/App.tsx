@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Metric, Project } from './types';
+import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Metric, Project, Process } from './types';
 import { fetchState, syncState, getMe, estimateTaskTime, createEntity, updateEntity, deleteEntity } from './api';
 import { v4 as uuidv4 } from 'uuid';
 import Board from './components/Board';
@@ -14,9 +14,10 @@ import MyProfileView from './components/MyProfileView';
 import LoginPage from './components/LoginPage';
 import InvitePage from './components/InvitePage';
 import ProjectsView from './components/ProjectsView';
-import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban } from 'lucide-react';
+import ProcessTreeView from './components/ProcessTreeView';
+import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge } from 'lucide-react';
 
-type ActiveView = 'dashboard' | 'projects' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile';
+type ActiveView = 'dashboard' | 'projects' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile';
 
 interface AppContextType {
   state: AppState;
@@ -48,6 +49,9 @@ interface AppContextType {
   addProject: (project: Omit<Project, 'id' | 'createdAt'>) => void;
   updateProject: (id: string, updates: Partial<Project>) => void;
   deleteProject: (id: string) => void;
+  addProcess: (process: Omit<Process, 'id' | 'createdAt'>) => void;
+  updateProcess: (id: string, updates: Partial<Process>) => void;
+  deleteProcess: (id: string) => void;
   addBoard: (title: string) => void;
   deleteBoard: (id: string) => void;
   activeBoardId: string | null;
@@ -448,6 +452,25 @@ export default function App() {
     if (activeProjectId === id) setActiveProjectId(null);
   }, [state, activeProjectId]);
 
+  const addProcess = useCallback((process: Omit<Process, 'id' | 'createdAt'>) => {
+    if (!state) return;
+    const newProcess: Process = { ...process, id: uuidv4(), createdAt: new Date().toISOString() };
+    setState(prev => prev ? { ...prev, processes: [...(prev.processes || []), newProcess] } : prev);
+    createEntity('processes', newProcess).catch(console.error);
+  }, [state]);
+
+  const updateProcess = useCallback((id: string, updates: Partial<Process>) => {
+    if (!state) return;
+    setState(prev => prev ? { ...prev, processes: (prev.processes || []).map(p => p.id === id ? { ...p, ...updates } : p) } : prev);
+    updateEntity('processes', id, updates).catch(console.error);
+  }, [state]);
+
+  const deleteProcess = useCallback((id: string) => {
+    if (!state) return;
+    setState(prev => prev ? { ...prev, processes: (prev.processes || []).filter(p => p.id !== id) } : prev);
+    deleteEntity('processes', id).catch(console.error);
+  }, [state]);
+
   const addBoard = useCallback((title: string) => {
     if (!state) return;
     const newBoard = { id: uuidv4(), title };
@@ -556,6 +579,7 @@ export default function App() {
   const navItems: { view: ActiveView; label: string; Icon: any }[] = [
     { view: 'dashboard', label: 'Головна', Icon: BarChart },
     { view: 'projects', label: 'Проєкти', Icon: FolderKanban },
+    { view: 'processes', label: 'Процеси', Icon: GitMerge },
     { view: 'board', label: 'Дошка', Icon: Kanban },
     { view: 'content', label: 'Контент-план', Icon: Calendar },
     { view: 'events', label: 'Події', Icon: CalendarDays },
@@ -569,7 +593,7 @@ export default function App() {
       moveCard, addCard, updateCard, deleteCard, clearList, addList, deleteList, updateList, moveList,
       addTag, deleteTag, updateTag, addUser, updateUser, deleteUser,
       addContentPlan, updateContentPlan, deleteContentPlan, importContentPlans, updateSettings,
-      addEvent, updateEvent, deleteEvent, addProject, updateProject, deleteProject, addBoard, deleteBoard,
+      addEvent, updateEvent, deleteEvent, addProject, updateProject, deleteProject, addProcess, updateProcess, deleteProcess, addBoard, deleteBoard,
       activeBoardId, setActiveBoardId, activeEventId, setActiveEventId, activeProjectId, setActiveProjectId,
       activeView, setActiveView, updateMetric, importTrelloBoard, confirmAction
     }}>
@@ -644,6 +668,7 @@ export default function App() {
         <main className={`flex-1 p-6 h-[calc(100vh-73px)] ${activeView === 'board' ? 'overflow-hidden' : 'overflow-auto hidden-scrollbar'}`}>
           {activeView === 'dashboard' && <DashboardView />}
           {activeView === 'projects' && <ProjectsView />}
+          {activeView === 'processes' && <ProcessTreeView />}
           {activeView === 'board' && <Board />}
           {activeView === 'content' && <ContentPlanView />}
           {activeView === 'events' && <EventCalendarView />}

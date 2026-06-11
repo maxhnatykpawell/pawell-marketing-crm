@@ -100,11 +100,12 @@ const INITIAL_APP_STATE = {
     { id: 'publishDate', title: 'Дата', visible: true },
     { id: 'engagement', title: 'Охоплення/Взаємодія', visible: true }
   ],
+  processes: [],
   events: [],
   lastModified: new Date().toISOString(),
 };
 
-const ATOMIC_COLLECTIONS = ['users', 'lists', 'cards', 'tags', 'contentPlans', 'events', 'projects', 'metrics', 'boards'];
+const ATOMIC_COLLECTIONS = ['users', 'lists', 'cards', 'tags', 'contentPlans', 'events', 'projects', 'metrics', 'boards', 'processes'];
 const SETTINGS_DOC = 'settings';
 
 async function updateLastModified() {
