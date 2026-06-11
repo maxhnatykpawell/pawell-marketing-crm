@@ -103,7 +103,7 @@ export default function ProcessTracker({ process }: Props) {
     updateProcess(process.id, { nodes: updatedNodes as any });
   }, [process.nodes, process.id, updateProcess]);
 
-  const edges: Edge[] = process.edges || [];
+  const edges: Edge[] = (process.edges || []).map(e => ({ ...e, type: 'smoothstep' }));
 
   // Finding available next nodes
   const nextNodes = useMemo(() => {
@@ -111,6 +111,14 @@ export default function ProcessTracker({ process }: Props) {
     const outgoingEdges = edges.filter(e => e.source === selectedProject.currentProcessNodeId);
     const targetNodeIds = outgoingEdges.map(e => e.target);
     return process.nodes.filter(n => targetNodeIds.includes(n.id));
+  }, [selectedProject, edges, process.nodes]);
+
+  // Finding available previous nodes (for moving backward)
+  const previousNodes = useMemo(() => {
+    if (!selectedProject || !selectedProject.currentProcessNodeId) return [];
+    const incomingEdges = edges.filter(e => e.target === selectedProject.currentProcessNodeId);
+    const sourceNodeIds = incomingEdges.map(e => e.source);
+    return process.nodes.filter(n => sourceNodeIds.includes(n.id));
   }, [selectedProject, edges, process.nodes]);
 
   const currentNode = useMemo(() => {
@@ -197,6 +205,7 @@ export default function ProcessTracker({ process }: Props) {
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onNodeDragStop={onNodeDragStop}
+        defaultEdgeOptions={{ type: 'smoothstep' }}
         fitView
         nodesDraggable={true}
         nodesConnectable={false}
@@ -323,6 +332,25 @@ export default function ProcessTracker({ process }: Props) {
                 </div>
               )}
             </div>
+
+            {/* Previous Nodes */}
+            {previousNodes.length > 0 && (
+              <div>
+                <p className="text-sm font-semibold text-gray-700 mb-2 uppercase tracking-wider">Повернути назад</p>
+                <div className="space-y-2">
+                  {previousNodes.map(pn => (
+                    <button
+                      key={pn.id}
+                      onClick={() => moveProject(pn.id)}
+                      className="w-full flex justify-between items-center p-3 rounded-lg border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 transition shadow-sm"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                      <span className="font-medium">{pn.data.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="p-4 border-t border-gray-200">

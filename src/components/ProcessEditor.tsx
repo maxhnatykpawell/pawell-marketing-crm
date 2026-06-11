@@ -16,11 +16,12 @@ export default function ProcessEditor({ process }: Props) {
   const [nodes, setNodes] = useState<Node[]>(process.nodes as Node[]);
   const [edges, setEdges] = useState<Edge[]>(process.edges as Edge[]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
 
   // Sync state when process changes from outside
   useEffect(() => {
     setNodes(process.nodes as Node[]);
-    setEdges(process.edges as Edge[]);
+    setEdges((process.edges as Edge[]).map(e => ({ ...e, type: 'smoothstep' })));
   }, [process.id]); // only reset completely if process ID changes to avoid jumpiness
 
   // Debounced save to backend
@@ -42,7 +43,7 @@ export default function ProcessEditor({ process }: Props) {
   );
 
   const onConnect = useCallback(
-    (connection: Connection) => setEdges((eds) => addEdge(connection, eds)),
+    (connection: Connection) => setEdges((eds) => addEdge({ ...connection, type: 'smoothstep' }, eds)),
     []
   );
 
@@ -58,10 +59,17 @@ export default function ProcessEditor({ process }: Props) {
 
   const onNodeClick = (_: React.MouseEvent, node: Node) => {
     setSelectedNode(node);
+    setSelectedEdge(null);
+  };
+
+  const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
+    setSelectedEdge(edge);
+    setSelectedNode(null);
   };
 
   const onPaneClick = () => {
     setSelectedNode(null);
+    setSelectedEdge(null);
   };
 
   const updateSelectedNodeData = (updates: Partial<ProcessNodeData>) => {
@@ -109,7 +117,9 @@ export default function ProcessEditor({ process }: Props) {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onNodeClick={onNodeClick}
+        onEdgeClick={onEdgeClick}
         onPaneClick={onPaneClick}
+        defaultEdgeOptions={{ type: 'smoothstep' }}
         fitView
       >
         <Background color="#ccc" gap={16} />
@@ -192,6 +202,30 @@ export default function ProcessEditor({ process }: Props) {
               className="w-full flex justify-center items-center px-4 py-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition font-medium text-sm"
             >
               <Trash2 className="w-4 h-4 mr-2" /> Видалити етап
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Edge Settings Sidebar */}
+      {selectedEdge && (
+        <div className="absolute top-4 right-4 w-64 bg-white rounded-xl shadow-xl border border-gray-200 flex flex-col z-10">
+          <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50 rounded-t-xl">
+            <h3 className="font-bold text-gray-800">Налаштування зв'язку</h3>
+            <button onClick={() => setSelectedEdge(null)} className="text-gray-500 hover:text-gray-700">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="p-4">
+            <p className="text-sm text-gray-600 mb-4">Виділено зв'язок між етапами.</p>
+            <button
+              onClick={() => {
+                setEdges(eds => eds.filter(e => e.id !== selectedEdge.id));
+                setSelectedEdge(null);
+              }}
+              className="w-full flex justify-center items-center px-4 py-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition font-medium text-sm"
+            >
+              <Trash2 className="w-4 h-4 mr-2" /> Видалити зв'язок
             </button>
           </div>
         </div>
