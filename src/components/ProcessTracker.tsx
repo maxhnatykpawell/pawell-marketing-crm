@@ -22,7 +22,7 @@ const TrackerNode = ({ data, id }: { data: ProcessNodeData & { projects: Project
           {data.projects.length}
         </span>
       </div>
-      <div className="p-2 space-y-2 min-h-[50px] max-h-[300px] overflow-y-auto hidden-scrollbar">
+      <div className="p-2 space-y-2 min-h-[50px] max-h-[300px] overflow-y-auto hidden-scrollbar nodrag">
         {data.projects.length === 0 ? (
           <p className="text-xs text-gray-400 text-center py-2">Немає проєктів</p>
         ) : (
@@ -37,7 +37,7 @@ const TrackerNode = ({ data, id }: { data: ProcessNodeData & { projects: Project
             return (
               <div 
                 key={p.id} 
-                onClick={() => data.onProjectClick(p, id)}
+                onClick={(e) => { e.stopPropagation(); data.onProjectClick(p, id); }}
                 className={`p-2 rounded border cursor-pointer hover:shadow-md transition ${isOverdue ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'} shadow-sm`}
               >
                 <div className="flex items-center space-x-2">
