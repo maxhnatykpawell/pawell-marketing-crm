@@ -29,7 +29,7 @@ export default function ProcessTreeView() {
   };
 
   return (
-    <div className="flex h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+    <div className="flex flex-1 w-full h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
       {/* Sidebar */}
       <div className="w-64 border-r border-gray-200 bg-gray-50 flex flex-col shrink-0">
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">

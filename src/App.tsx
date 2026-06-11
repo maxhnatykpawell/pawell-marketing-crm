@@ -665,7 +665,7 @@ export default function App() {
         </header>
 
         {/* Main */}
-        <main className={`flex-1 p-6 h-[calc(100vh-73px)] ${activeView === 'board' ? 'overflow-hidden' : 'overflow-auto hidden-scrollbar'}`}>
+        <main className={`flex-1 p-6 h-[calc(100vh-73px)] flex flex-col ${['board', 'processes'].includes(activeView) ? 'overflow-hidden' : 'overflow-auto hidden-scrollbar'}`}>
           {activeView === 'dashboard' && <DashboardView />}
           {activeView === 'projects' && <ProjectsView />}
           {activeView === 'processes' && <ProcessTreeView />}
