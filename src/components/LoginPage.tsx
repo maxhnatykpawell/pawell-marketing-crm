@@ -65,10 +65,10 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             {/* Logo */}
             <div className="flex flex-col items-center mb-8">
               <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/30 mb-4">
-                <span className="text-white font-black text-2xl">K</span>
+                <span className="text-white font-black text-2xl">P</span>
               </div>
-              <h1 className="text-2xl font-bold text-white tracking-tight">Kanban Master</h1>
-              <p className="text-gray-400 text-sm mt-1.5">Маркетинговий CRM — вхід</p>
+              <h1 className="text-2xl font-bold text-white tracking-tight">PAWELL - Marketing Workspace</h1>
+              <p className="text-blue-100 mt-2">Управління задачами та проектами</p>
             </div>
 
             {/* Form */}
