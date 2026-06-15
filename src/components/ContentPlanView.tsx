@@ -354,7 +354,8 @@ export default function ContentPlanView() {
                   </button>
                 </td>
               </tr>
-            ))}
+              );
+            })}
             {(!activeGroup || activeGroup.plans.length === 0) && (
               <tr>
                 <td colSpan={9} className="px-4 py-8 text-center text-gray-400">
