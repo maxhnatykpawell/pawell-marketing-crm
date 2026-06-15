@@ -45,6 +45,10 @@ export default function ContentPlanView() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   
+  const [filterChannel, setFilterChannel] = useState<string>('all');
+  const [filterAssignee, setFilterAssignee] = useState<string>('all');
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+  
   const rawChannels = state.contentPlanChannels || DEFAULT_CHANNELS;
   const channels = rawChannels.map(ch => typeof ch === 'string' ? { name: ch, color: DEFAULT_CHANNEL_COLORS[ch] || '#f3f4f6' } : ch);
   const statuses = state.contentPlanStatuses || DEFAULT_STATUSES;
@@ -54,8 +58,26 @@ export default function ContentPlanView() {
   const isColVisible = (id: string) => columns.find(c => c.id === id)?.visible !== false;
   const colTitle = (id: string, defaultTitle: string) => columns.find(c => c.id === id)?.title || defaultTitle;
 
-  // Sort plans by date
-  const sortedPlans = [...(state.contentPlans || [])].sort((a, b) => {
+  // Filter and sort plans by date
+  const filteredPlans = (state.contentPlans || []).filter(plan => {
+    if (filterChannel !== 'all') {
+      const planChannels = plan.channels || (plan.channel ? [plan.channel] : []);
+      if (!planChannels.includes(filterChannel)) return false;
+    }
+    if (filterAssignee !== 'all') {
+      if (filterAssignee === 'unassigned') {
+        if (plan.assigneeId) return false;
+      } else {
+        if (plan.assigneeId !== filterAssignee) return false;
+      }
+    }
+    if (filterStatus !== 'all') {
+      if (plan.status !== filterStatus) return false;
+    }
+    return true;
+  });
+
+  const sortedPlans = [...filteredPlans].sort((a, b) => {
     if (!a.publishDate) return 1;
     if (!b.publishDate) return -1;
     return new Date(a.publishDate).getTime() - new Date(b.publishDate).getTime();
@@ -77,30 +99,83 @@ export default function ContentPlanView() {
 
   return (
     <div className="h-full flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-      <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50 flex-shrink-0">
-        <h2 className="text-lg font-semibold text-gray-800">Контент-план</h2>
-        <div className="flex items-center space-x-3">
-          <button
-            onClick={() => setIsImportModalOpen(true)}
-            className="flex items-center px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition"
+      <div className="px-6 py-4 border-b border-gray-200 flex flex-col gap-4 bg-gray-50 flex-shrink-0">
+        <div className="flex justify-between items-center">
+          <h2 className="text-lg font-semibold text-gray-800">Контент-план</h2>
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => setIsImportModalOpen(true)}
+              className="flex items-center px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition"
+            >
+              <DownloadCloud className="w-4 h-4 mr-2" />
+              Імпорт CSV
+            </button>
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className="flex items-center px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition"
+            >
+              <Settings className="w-4 h-4 mr-2" />
+              Налаштування
+            </button>
+            <button
+              onClick={handleAddRow}
+              className="flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Додати публікацію
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-sm font-medium text-gray-600">Фільтри:</span>
+          
+          <select 
+            value={filterChannel} 
+            onChange={(e) => setFilterChannel(e.target.value)}
+            className="text-sm bg-white border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 min-w-[140px]"
           >
-            <DownloadCloud className="w-4 h-4 mr-2" />
-            Імпорт CSV
-          </button>
-          <button
-            onClick={() => setIsSettingsOpen(true)}
-            className="flex items-center px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition"
+            <option value="all">Усі канали</option>
+            {channels.map(ch => (
+              <option key={ch.name} value={ch.name}>{ch.name}</option>
+            ))}
+          </select>
+
+          <select 
+            value={filterAssignee} 
+            onChange={(e) => setFilterAssignee(e.target.value)}
+            className="text-sm bg-white border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 min-w-[160px]"
           >
-            <Settings className="w-4 h-4 mr-2" />
-            Налаштування
-          </button>
-          <button
-            onClick={handleAddRow}
-            className="flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition"
+            <option value="all">Усі виконавці</option>
+            <option value="unassigned">Не призначено</option>
+            {state.users.map(u => (
+              <option key={u.id} value={u.id}>{u.name}</option>
+            ))}
+          </select>
+
+          <select 
+            value={filterStatus} 
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="text-sm bg-white border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 min-w-[140px]"
           >
-            <Plus className="w-4 h-4 mr-2" />
-            Додати публікацію
-          </button>
+            <option value="all">Усі статуси</option>
+            {statuses.map(st => (
+              <option key={st} value={st}>{st}</option>
+            ))}
+          </select>
+          
+          {(filterChannel !== 'all' || filterAssignee !== 'all' || filterStatus !== 'all') && (
+            <button 
+              onClick={() => {
+                setFilterChannel('all');
+                setFilterAssignee('all');
+                setFilterStatus('all');
+              }}
+              className="flex items-center text-sm text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1.5 rounded transition"
+            >
+              Скинути
+            </button>
+          )}
         </div>
       </div>
 
@@ -125,9 +200,14 @@ export default function ContentPlanView() {
               const mainChannel = rowChannels[0];
               const channelColor = mainChannel ? channels.find(c => c.name === mainChannel)?.color : undefined;
               const hasColor = channelColor && channelColor !== 'transparent';
+              const isPublished = plan.status === 'Опубліковано';
               
               return (
-              <tr key={plan.id} className="hover:bg-black/[0.03] group transition" style={{ backgroundColor: hasColor ? channelColor : undefined }}>
+              <tr 
+                key={plan.id} 
+                className={`hover:bg-black/[0.03] group transition ${isPublished ? 'opacity-60 bg-gray-100' : ''}`} 
+                style={isPublished ? undefined : { backgroundColor: hasColor ? channelColor : undefined }}
+              >
                 {isColVisible('focus') && (
                   <td className="px-4 py-2">
                     <input
@@ -135,7 +215,7 @@ export default function ContentPlanView() {
                       value={plan.focus}
                       onChange={(e) => updateContentPlan(plan.id, { focus: e.target.value })}
                       placeholder="..."
-                      className="w-full bg-transparent outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 rounded px-2 py-1 border border-transparent hover:border-gray-200 transition"
+                      className={`w-full bg-transparent outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 rounded px-2 py-1 border border-transparent hover:border-gray-200 transition ${isPublished ? 'line-through text-gray-500' : ''}`}
                     />
                   </td>
                 )}
