@@ -233,10 +233,12 @@ export default function App() {
 
   const addCard = useCallback((listId: string, title: string) => {
     if (!state) return;
+    const listCards = state.cards.filter(c => c.listId === listId);
+    const minOrder = listCards.length > 0 ? Math.min(...listCards.map(c => c.order)) : 0;
     const newCard: Card = {
       id: uuidv4(), listId, title, description: '', deadline: null,
       assigneeId: null, subtasks: [], comments: [], attachments: [],
-      order: state.cards.filter(c => c.listId === listId).length,
+      order: minOrder - 1,
       projectId: activeProjectId
     };
     setState(prev => prev ? { ...prev, cards: [...prev.cards, newCard] } : prev);
