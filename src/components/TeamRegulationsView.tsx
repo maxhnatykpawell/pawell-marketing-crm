@@ -8,9 +8,7 @@ const DAYS = [
   { key: 'tuesday', label: 'Вівторок', short: 'Вт' },
   { key: 'wednesday', label: 'Середа', short: 'Ср' },
   { key: 'thursday', label: 'Четвер', short: 'Чт' },
-  { key: 'friday', label: "П'ятниця", short: 'Пт' },
-  { key: 'saturday', label: 'Субота', short: 'Сб' },
-  { key: 'sunday', label: 'Неділя', short: 'Нд' }
+  { key: 'friday', label: "П'ятниця", short: 'Пт' }
 ];
 
 interface ScheduleBlock {
@@ -54,8 +52,9 @@ export default function TeamRegulationsView() {
   const [now, setNow] = useState(new Date());
   
   const dayOfWeekIndex = (now.getDay() + 6) % 7; 
-  const todayKey = DAYS[dayOfWeekIndex].key;
-  const todayLabel = DAYS[dayOfWeekIndex].label;
+  const safeIndex = dayOfWeekIndex >= 5 ? 0 : dayOfWeekIndex;
+  const todayKey = DAYS[safeIndex].key;
+  const todayLabel = DAYS[safeIndex].label;
 
   const [timelineDayKey, setTimelineDayKey] = useState<string>(todayKey);
   const [viewDays, setViewDays] = useState<1 | 3 | 5>(1);
@@ -114,13 +113,13 @@ export default function TeamRegulationsView() {
 
   const handlePrevDays = () => {
     const idx = DAYS.findIndex(d => d.key === timelineDayKey);
-    const newIdx = (idx - 1 + 7) % 7;
+    const newIdx = (idx - 1 + 5) % 5;
     setTimelineDayKey(DAYS[newIdx].key);
   };
 
   const handleNextDays = () => {
     const idx = DAYS.findIndex(d => d.key === timelineDayKey);
-    const newIdx = (idx + 1) % 7;
+    const newIdx = (idx + 1) % 5;
     setTimelineDayKey(DAYS[newIdx].key);
   };
 
@@ -132,7 +131,7 @@ export default function TeamRegulationsView() {
     const startIndex = DAYS.findIndex(d => d.key === timelineDayKey);
     const visible = [];
     for (let i = 0; i < viewDays; i++) {
-      visible.push(DAYS[(startIndex + i) % 7]);
+      visible.push(DAYS[(startIndex + i) % 5]);
     }
     return visible;
   }, [timelineDayKey, viewDays]);
@@ -375,7 +374,7 @@ export default function TeamRegulationsView() {
 
                         {/* Scrollable Timeline Area */}
                         <div className="flex-1 overflow-y-auto hidden-scrollbar relative">
-                          <div className="flex relative" style={{ minHeight: `${Math.max((endHour - startHour) * 48, 400)}px` }}>
+                          <div className="flex relative" style={{ minHeight: `${Math.max((endHour - startHour) * 100, 600)}px` }}>
                             {/* Y-axis */}
                             <div className="w-14 shrink-0 border-r border-gray-100 relative bg-gray-50/30">
                               {hourMarkers.map((h, i) => {
@@ -417,12 +416,12 @@ export default function TeamRegulationsView() {
                                       return (
                                         <div
                                           key={idx}
-                                          className={`absolute left-1.5 right-1.5 rounded-r-md p-1.5 transition-colors flex flex-col overflow-hidden ${bgClasses}`}
+                                          className={`absolute left-1.5 right-1.5 rounded-r-md p-1.5 transition-colors flex flex-col overflow-y-auto hidden-scrollbar ${bgClasses}`}
                                           style={{ top: `${top}%`, height: `${height}%` }}
                                           title={`${block.activity} (${block.start} - ${block.end})`}
                                         >
-                                          <div className="text-[11px] font-semibold leading-tight truncate">{block.activity}</div>
-                                          <div className="text-[10px] font-mono opacity-70 mt-0.5 truncate">{block.start} - {block.end}</div>
+                                          <div className="text-[11px] font-semibold leading-tight">{block.activity}</div>
+                                          <div className="text-[10px] font-mono opacity-70 mt-0.5 shrink-0">{block.start} - {block.end}</div>
                                         </div>
                                       );
                                     })}
