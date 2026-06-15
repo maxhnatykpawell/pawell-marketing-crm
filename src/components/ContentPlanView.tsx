@@ -48,6 +48,7 @@ export default function ContentPlanView() {
   const [filterChannel, setFilterChannel] = useState<string>('all');
   const [filterAssignee, setFilterAssignee] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [activeMonthTab, setActiveMonthTab] = useState<string | null>(null);
   
   const rawChannels = state.contentPlanChannels || DEFAULT_CHANNELS;
   const channels = rawChannels.map(ch => typeof ch === 'string' ? { name: ch, color: DEFAULT_CHANNEL_COLORS[ch] || '#f3f4f6' } : ch);
@@ -82,6 +83,29 @@ export default function ContentPlanView() {
     if (!b.publishDate) return -1;
     return new Date(a.publishDate).getTime() - new Date(b.publishDate).getTime();
   });
+
+  const groupedPlans: { month: string, plans: ContentPlanItem[] }[] = [];
+  sortedPlans.forEach(plan => {
+    let groupKey = 'Без дати';
+    if (plan.publishDate) {
+      const date = new Date(plan.publishDate);
+      const monthYear = date.toLocaleDateString('uk-UA', { month: 'long', year: 'numeric' });
+      groupKey = monthYear.charAt(0).toUpperCase() + monthYear.slice(1);
+    }
+    
+    let group = groupedPlans.find(g => g.month === groupKey);
+    if (!group) {
+      group = { month: groupKey, plans: [] };
+      groupedPlans.push(group);
+    }
+    group.plans.push(plan);
+  });
+
+  const availableMonths = groupedPlans.map(g => g.month);
+  const currentMonth = activeMonthTab && availableMonths.includes(activeMonthTab) 
+    ? activeMonthTab 
+    : availableMonths[0];
+  const activeGroup = groupedPlans.find(g => g.month === currentMonth);
 
   const handleAddRow = () => {
     addContentPlan({
@@ -177,6 +201,26 @@ export default function ContentPlanView() {
             </button>
           )}
         </div>
+
+        {availableMonths.length > 0 && (
+          <div className="flex overflow-x-auto hidden-scrollbar mt-2 -mb-4 -mx-6 px-6">
+            <div className="flex space-x-6 border-b border-gray-200 w-full">
+              {availableMonths.map(month => (
+                <button
+                  key={month}
+                  onClick={() => setActiveMonthTab(month)}
+                  className={`pb-3 pt-1 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                    currentMonth === month
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  {month} <span className={`ml-1.5 text-xs px-1.5 py-0.5 rounded-full ${currentMonth === month ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>{groupedPlans.find(g => g.month === month)?.plans.length || 0}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-auto hidden-scrollbar">
@@ -195,7 +239,7 @@ export default function ContentPlanView() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 text-sm">
-            {sortedPlans.map(plan => {
+            {activeGroup?.plans.map(plan => {
               const rowChannels = plan.channels || (plan.channel ? [plan.channel] : []);
               const mainChannel = rowChannels[0];
               const channelColor = mainChannel ? channels.find(c => c.name === mainChannel)?.color : undefined;
@@ -310,8 +354,8 @@ export default function ContentPlanView() {
                   </button>
                 </td>
               </tr>
-            )})}
-            {sortedPlans.length === 0 && (
+            ))}
+            {(!activeGroup || activeGroup.plans.length === 0) && (
               <tr>
                 <td colSpan={9} className="px-4 py-8 text-center text-gray-400">
                   Немає запланованих публікацій. Додайте першу, щоб почати!

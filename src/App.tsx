@@ -602,9 +602,9 @@ export default function App() {
         <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-10 w-full">
           <div className="flex items-center space-x-6">
             <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 rounded bg-blue-600 text-white flex items-center justify-center font-bold text-lg">K</div>
+              <div className="w-8 h-8 rounded bg-blue-600 text-white flex items-center justify-center font-bold text-lg">P</div>
               <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                Kanban Master
+                PAWELL - Marketing Workspace
               </h1>
             </div>
 
