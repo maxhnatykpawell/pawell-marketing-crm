@@ -12,11 +12,24 @@ export default function EventPageView() {
   const [isDirty, setIsDirty] = useState(false);
 
   useEffect(() => {
-    if (event) {
-      setFormData(event);
-      setIsDirty(false);
-    }
-  }, [event]);
+    if (!event) return;
+    
+    setFormData(current => {
+      // If we switched to a new event, load it and reset dirty state
+      if (current.id !== event.id) {
+        setIsDirty(false);
+        return event;
+      }
+      
+      // If we are currently editing this same event, ignore external updates to prevent overwriting user input
+      if (isDirty) {
+        return current;
+      }
+      
+      // Otherwise, load the event
+      return event;
+    });
+  }, [event, isDirty]);
 
   if (!event) {
     return (

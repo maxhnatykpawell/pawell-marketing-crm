@@ -142,6 +142,7 @@ export interface Project {
 export interface ProcessRequirement {
   id: string;
   label: string;
+  department?: string;
   type: 'checkbox';
 }
 

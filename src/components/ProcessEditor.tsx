@@ -87,10 +87,10 @@ export default function ProcessEditor({ process }: Props) {
     });
   };
 
-  const updateRequirement = (reqId: string, label: string) => {
+  const updateRequirement = (reqId: string, updates: Partial<ProcessRequirement>) => {
     if (!selectedNode) return;
     const reqs = (selectedNode.data.requirements as ProcessRequirement[]).map(r => 
-      r.id === reqId ? { ...r, label } : r
+      r.id === reqId ? { ...r, ...updates } : r
     );
     updateSelectedNodeData({ requirements: reqs });
   };
@@ -179,17 +179,26 @@ export default function ProcessEditor({ process }: Props) {
               ) : (
                 <div className="space-y-2">
                   {(selectedNode.data.requirements as ProcessRequirement[]).map(req => (
-                    <div key={req.id} className="flex items-center space-x-2 bg-gray-50 p-2 rounded border border-gray-200">
+                    <div key={req.id} className="flex flex-col space-y-2 bg-gray-50 p-2 rounded border border-gray-200">
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="text"
+                          value={req.label}
+                          onChange={(e) => updateRequirement(req.id, { label: e.target.value })}
+                          className="flex-1 bg-white border border-gray-300 rounded p-1 text-sm outline-none"
+                          placeholder="Опис вимоги"
+                        />
+                        <button onClick={() => deleteRequirement(req.id)} className="text-gray-400 hover:text-red-500 p-1">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                       <input
                         type="text"
-                        value={req.label}
-                        onChange={(e) => updateRequirement(req.id, e.target.value)}
-                        className="flex-1 bg-transparent text-sm outline-none"
-                        placeholder="Опис вимоги"
+                        value={req.department || ''}
+                        onChange={(e) => updateRequirement(req.id, { department: e.target.value })}
+                        className="w-full bg-white border border-gray-300 rounded p-1 text-xs outline-none text-gray-600"
+                        placeholder="Відповідальний відділ (необов'язково)"
                       />
-                      <button onClick={() => deleteRequirement(req.id)} className="text-gray-400 hover:text-red-500">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
                     </div>
                   ))}
                 </div>

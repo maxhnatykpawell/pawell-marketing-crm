@@ -294,7 +294,14 @@ export default function ProcessTracker({ process }: Props) {
                             <div className="w-5 h-5 border-2 border-gray-300 rounded-sm" />
                           )}
                         </div>
-                        <span className={`text-sm ${isCompleted ? 'text-green-800 font-medium' : 'text-gray-700'}`}>{req.label}</span>
+                        <div className="flex flex-col pt-0.5">
+                          <span className={`text-sm ${isCompleted ? 'text-green-800 font-medium' : 'text-gray-700'}`}>{req.label}</span>
+                          {req.department && (
+                            <span className={`text-[10px] font-medium uppercase tracking-wider mt-0.5 ${isCompleted ? 'text-green-600' : 'text-gray-500'}`}>
+                              Відділ: {req.department}
+                            </span>
+                          )}
+                        </div>
                         {/* Hidden checkbox for accessibility */}
                         <input type="checkbox" className="sr-only" checked={isCompleted} onChange={() => toggleRequirement(req.id)} />
                       </label>
