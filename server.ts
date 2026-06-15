@@ -324,14 +324,27 @@ async function generateAndSendDailyReport(state: any) {
   const isOverdue = (d?: string) => { if (!d) return false; const x = new Date(d); x.setHours(0,0,0,0); return x.getTime() < today.getTime(); };
   const isSoon = (d?: string) => { if (!d) return false; const x = new Date(d); x.setHours(0,0,0,0); const diff = Math.ceil((x.getTime() - today.getTime()) / 86400000); return diff > 0 && diff <= 3; };
 
+  const boards = state.boards || [];
+  const existingBoardIds = boards.map((b: any) => b.id);
+  
   const lists = state.lists || [];
-  const excludedListIds = lists.filter((l: any) => l.excludeFromAI).map((l: any) => l.id);
-  const allTasks = (state.cards || []).filter((c: any) => !excludedListIds.includes(c.listId));
-  const tasksToday = allTasks.filter((c: any) => !c.isCompleted && isToday(c.deadline));
-  const tasksOverdue = allTasks.filter((c: any) => !c.isCompleted && isOverdue(c.deadline));
-  const tasksSoon = allTasks.filter((c: any) => !c.isCompleted && isSoon(c.deadline));
+  // Only consider lists that belong to an existing board (or have no boardId which shouldn't happen, but just in case)
+  const validLists = lists.filter((l: any) => !l.boardId || existingBoardIds.includes(l.boardId));
+  const validListIds = validLists.map((l: any) => l.id);
+  
+  const excludedListIds = validLists.filter((l: any) => l.excludeFromAI).map((l: any) => l.id);
+  
+  // Only consider cards that belong to a valid list, are not in an excluded list, and are not completed
+  const allTasks = (state.cards || []).filter((c: any) => 
+    validListIds.includes(c.listId) && 
+    !excludedListIds.includes(c.listId) && 
+    !c.isCompleted
+  );
+  
+  const tasksToday = allTasks.filter((c: any) => isToday(c.deadline));
+  const tasksOverdue = allTasks.filter((c: any) => isOverdue(c.deadline));
+  const tasksSoon = allTasks.filter((c: any) => isSoon(c.deadline));
   const urgentTasks = allTasks.filter((c: any) => {
-    if (c.isCompleted) return false;
     if (!isToday(c.deadline) && !isOverdue(c.deadline) && !isSoon(c.deadline)) return false;
     const tags = state.tags || [];
     const cardTags = c.tagIds?.map((id: string) => tags.find((t: any) => t.id === id)?.name?.toLowerCase()).filter(Boolean) || [];
