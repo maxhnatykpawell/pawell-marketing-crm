@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../App';
-import { ArrowLeft, Save, MapPin, Globe, Calendar, Users, FileText, Target, Box, Flag } from 'lucide-react';
+import { ArrowLeft, Save, MapPin, Globe, Calendar, Users, FileText, Target, Box, Flag, Download } from 'lucide-react';
 import { EventItem } from '../types';
+import html2pdf from 'html2pdf.js';
 
 const EditableTextArea = ({ 
   value, 
@@ -50,6 +51,25 @@ export default function EventPageView() {
   
   const [formData, setFormData] = useState<Partial<EventItem>>({});
   const [isDirty, setIsDirty] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  const generatePDF = () => {
+    if (!contentRef.current) return;
+    setIsGeneratingPdf(true);
+    
+    const opt = {
+      margin:       10,
+      filename:     `${formData.title || 'event-brief'}.pdf`,
+      image:        { type: 'jpeg', quality: 0.98 },
+      html2canvas:  { scale: 2, useCORS: true },
+      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    html2pdf().set(opt).from(contentRef.current).save().then(() => {
+      setIsGeneratingPdf(false);
+    });
+  };
 
   useEffect(() => {
     if (!event) return;
@@ -120,20 +140,32 @@ export default function EventPageView() {
           <h2 className="text-xl font-bold text-gray-800">Деталі події / виставки</h2>
         </div>
         
-        <button
-          onClick={handleSave}
-          disabled={!isDirty}
-          className={`flex items-center px-4 py-2 font-medium rounded-lg transition ${isDirty ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
-        >
-          <Save className="w-4 h-4 mr-2" />
-          Зберегти зміни
-        </button>
+        <div className="flex items-center">
+          <button
+            onClick={generatePDF}
+            disabled={isGeneratingPdf}
+            className={`flex items-center px-4 py-2 font-medium rounded-lg transition border mr-3 ${isGeneratingPdf ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-wait' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50 shadow-sm'}`}
+          >
+            <Download className="w-4 h-4 mr-2" />
+            {isGeneratingPdf ? 'Генерація...' : 'PDF Бриф'}
+          </button>
+
+          <button
+            onClick={handleSave}
+            disabled={!isDirty}
+            className={`flex items-center px-4 py-2 font-medium rounded-lg transition ${isDirty ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
+          >
+            <Save className="w-4 h-4 mr-2" />
+            Зберегти зміни
+          </button>
+        </div>
       </div>
 
       {/* Main Content scrollable */}
-      <div className="flex-1 overflow-y-auto hidden-scrollbar p-6 space-y-8">
-        
-        {/* Title area */}
+      <div className="flex-1 overflow-y-auto hidden-scrollbar p-6">
+        <div ref={contentRef} className="space-y-8 bg-white p-2 rounded-xl">
+          
+          {/* Title area */}
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2 uppercase tracking-wide">Назва події</label>
           <input
@@ -303,6 +335,7 @@ export default function EventPageView() {
 
           </div>
         </div>
+      </div>
       </div>
     </div>
   );
