@@ -23,7 +23,7 @@ interface AppContextType {
   state: AppState;
   currentUser: AuthUser | null;
   logout: () => void;
-  moveCard: (cardId: string, toListId: string) => void;
+  moveCard: (cardId: string, toListId: string, targetCardId?: string) => void;
   addCard: (listId: string, title: string) => void;
   updateCard: (cardId: string, updates: Partial<Card>) => void;
   deleteCard: (cardId: string) => void;
@@ -217,10 +217,44 @@ export default function App() {
 
   // ── State mutations ────────────────────────────────────────────────────────
 
-  const moveCard = useCallback((cardId: string, toListId: string) => {
+  const moveCard = useCallback((cardId: string, toListId: string, targetCardId?: string) => {
     if (!state) return;
-    setState(prev => prev ? { ...prev, cards: prev.cards.map(c => c.id === cardId ? { ...c, listId: toListId } : c) } : prev);
-    updateEntity('cards', cardId, { listId: toListId }).catch(console.error);
+    
+    setState(prev => {
+      if (!prev) return prev;
+      let cards = [...prev.cards];
+      const draggedCardIdx = cards.findIndex(c => c.id === cardId);
+      if (draggedCardIdx === -1) return prev;
+      
+      const draggedCard = { ...cards[draggedCardIdx], listId: toListId };
+      
+      const targetListCards = cards.filter(c => c.listId === toListId && c.id !== cardId).sort((a, b) => a.order - b.order);
+      
+      if (targetCardId) {
+        const targetIdx = targetListCards.findIndex(c => c.id === targetCardId);
+        if (targetIdx !== -1) {
+          targetListCards.splice(targetIdx, 0, draggedCard);
+        } else {
+          targetListCards.push(draggedCard);
+        }
+      } else {
+        targetListCards.push(draggedCard);
+      }
+      
+      targetListCards.forEach((c, idx) => {
+        c.order = idx;
+      });
+      
+      const updatedCardsMap = new Map(targetListCards.map(c => [c.id, c]));
+      cards = cards.map(c => updatedCardsMap.has(c.id) ? updatedCardsMap.get(c.id)! : c);
+      
+      // Update in background
+      targetListCards.forEach(c => {
+        updateEntity('cards', c.id, { listId: c.listId, order: c.order }).catch(console.error);
+      });
+      
+      return { ...prev, cards };
+    });
   }, [state]);
 
   const updateCardAsync = useCallback((cardId: string, updates: Partial<Card>) => {

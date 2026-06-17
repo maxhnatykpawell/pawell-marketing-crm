@@ -15,8 +15,9 @@ interface Props {
 }
 
 export default function BoardCard({ card, selectionMode, isSelected, onToggleSelect }: Props) {
-  const { state, updateCard } = useAppContext();
+  const { state, updateCard, moveCard } = useAppContext();
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const assignee = card.assigneeId ? state.users.find(u => u.id === card.assigneeId) : null;
   
@@ -39,6 +40,21 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
           e.stopPropagation();
           e.dataTransfer.setData('cardId', card.id);
         }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsDragOver(true);
+        }}
+        onDragLeave={() => setIsDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsDragOver(false);
+          const draggedCardId = e.dataTransfer.getData('cardId');
+          if (draggedCardId && draggedCardId !== card.id) {
+            moveCard(draggedCardId, card.listId, card.id);
+          }
+        }}
         onClick={() => {
           if (selectionMode && onToggleSelect) {
             onToggleSelect();
@@ -48,7 +64,8 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
         }}
         className={cn(
           "rounded-lg shadow-sm hover:shadow-md border border-b-gray-300 cursor-pointer overflow-hidden group hover:ring-1 hover:ring-blue-500/50 transition-all flex flex-col relative",
-          isSelected ? "border-blue-500 ring-2 ring-blue-500 bg-blue-50/50" : "border-gray-200 bg-white"
+          isSelected ? "border-blue-500 ring-2 ring-blue-500 bg-blue-50/50" : "border-gray-200 bg-white",
+          isDragOver && "border-t-4 border-t-blue-500 rounded-none shadow-xl"
         )}
       >
         {selectionMode && (
