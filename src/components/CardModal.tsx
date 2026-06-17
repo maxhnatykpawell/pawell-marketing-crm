@@ -314,6 +314,7 @@ export default function CardModal({ card, onClose }: Props) {
                           </div>
                           <div className="flex gap-2">
                             <a href={att.url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline text-xs bg-blue-50 px-2 py-1 rounded">View</a>
+                            <a href={att.url} download={att.name} className="text-green-600 hover:underline text-xs bg-green-50 px-2 py-1 rounded">Download</a>
                             <button 
                               onClick={() => handleUpdate({ attachments: card.attachments.filter(a => a.id !== att.id) })}
                               className="text-red-600 hover:underline text-xs bg-red-50 px-2 py-1 rounded"
