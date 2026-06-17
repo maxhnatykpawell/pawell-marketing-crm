@@ -3,6 +3,46 @@ import { useAppContext } from '../App';
 import { ArrowLeft, Save, MapPin, Globe, Calendar, Users, FileText, Target, Box, Flag } from 'lucide-react';
 import { EventItem } from '../types';
 
+const EditableTextArea = ({ 
+  value, 
+  onChange, 
+  placeholder, 
+  activeClassName,
+  minHeight = '100px'
+}: { 
+  value: string; 
+  onChange: (val: string) => void; 
+  placeholder: string;
+  activeClassName: string;
+  minHeight?: string;
+}) => {
+  const [isEditing, setIsEditing] = useState(false);
+
+  if (isEditing) {
+    return (
+      <textarea
+        autoFocus
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        onBlur={() => setIsEditing(false)}
+        placeholder={placeholder}
+        style={{ minHeight }}
+        className={`w-full p-3 border rounded-xl transition resize-y text-sm bg-white shadow-sm outline-none ${activeClassName}`}
+      />
+    );
+  }
+
+  return (
+    <div 
+      onClick={() => setIsEditing(true)}
+      style={{ minHeight }}
+      className="w-full p-3 border border-transparent rounded-xl hover:border-gray-200 bg-gray-50 hover:bg-gray-100 cursor-pointer transition text-sm text-gray-800 whitespace-pre-wrap"
+    >
+      {value || <span className="text-gray-400 italic hover:text-gray-500 transition-colors">{placeholder}</span>}
+    </div>
+  );
+};
+
 export default function EventPageView() {
   const { state, activeEventId, setActiveView, updateEvent, setActiveEventId } = useAppContext();
   
@@ -114,11 +154,12 @@ export default function EventPageView() {
                 <FileText className="w-5 h-5 mr-no mb-0.5 text-blue-500 mr-2" /> 
                 Основний опис
               </h3>
-              <textarea
+              <EditableTextArea
                 value={formData.description || ''}
-                onChange={e => handleChange('description', e.target.value)}
+                onChange={val => handleChange('description', val)}
                 placeholder="Що це за подія, для чого вона?"
-                className="w-full min-h-[100px] p-3 border border-gray-300 rounded-xl focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition resize-y text-sm bg-gray-50 focus:bg-white"
+                activeClassName="border-blue-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                minHeight="100px"
               />
             </section>
 
@@ -127,11 +168,12 @@ export default function EventPageView() {
                 <Target className="w-5 h-5 text-orange-500 mr-2" /> 
                 Цілі участі
               </h3>
-              <textarea
+              <EditableTextArea
                 value={formData.goals || ''}
-                onChange={e => handleChange('goals', e.target.value)}
+                onChange={val => handleChange('goals', val)}
                 placeholder="Чого ми хочемо досягти на цій виставці? KPI, потрібні знайомства..."
-                className="w-full min-h-[100px] p-3 border border-gray-300 rounded-xl focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition resize-y text-sm bg-gray-50 focus:bg-white"
+                activeClassName="border-orange-300 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+                minHeight="100px"
               />
             </section>
 
@@ -140,11 +182,12 @@ export default function EventPageView() {
                 <Box className="w-5 h-5 text-purple-500 mr-2" /> 
                 Інформація про стенд (Booth / Stand)
               </h3>
-              <textarea
+              <EditableTextArea
                 value={formData.boothInfo || ''}
-                onChange={e => handleChange('boothInfo', e.target.value)}
+                onChange={val => handleChange('boothInfo', val)}
                 placeholder="Номер стенду, локація в залі, які матеріали потрібно підготувати для стенду..."
-                className="w-full min-h-[100px] p-3 border border-gray-300 rounded-xl focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition resize-y text-sm bg-gray-50 focus:bg-white"
+                activeClassName="border-purple-300 focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
+                minHeight="100px"
               />
             </section>
 
@@ -153,11 +196,12 @@ export default function EventPageView() {
                 <Flag className="w-5 h-5 text-green-500 mr-2" /> 
                 Логістика та деталі (Квитки / Готель)
               </h3>
-              <textarea
+              <EditableTextArea
                 value={formData.logisticsNotes || ''}
-                onChange={e => handleChange('logisticsNotes', e.target.value)}
+                onChange={val => handleChange('logisticsNotes', val)}
                 placeholder="Інформація про авіаквитки, готель, трансфери, інші організаційні моменти..."
-                className="w-full min-h-[120px] p-3 border border-gray-300 rounded-xl focus:border-green-500 focus:ring-1 focus:ring-green-500 transition resize-y text-sm bg-gray-50 focus:bg-white"
+                activeClassName="border-green-300 focus:border-green-500 focus:ring-1 focus:ring-green-500"
+                minHeight="120px"
               />
             </section>
 
@@ -166,11 +210,12 @@ export default function EventPageView() {
                 <FileText className="w-5 h-5 text-gray-500 mr-2" /> 
                 Детальні Нотатки
               </h3>
-              <textarea
+              <EditableTextArea
                 value={formData.detailedNotes || ''}
-                onChange={e => handleChange('detailedNotes', e.target.value)}
+                onChange={val => handleChange('detailedNotes', val)}
                 placeholder="Вільні нотатки, розклад зустрічей під час події..."
-                className="w-full min-h-[200px] p-3 border border-gray-300 rounded-xl focus:border-gray-500 focus:ring-1 focus:ring-gray-500 transition resize-y text-sm bg-gray-50 focus:bg-white"
+                activeClassName="border-gray-300 focus:border-gray-500 focus:ring-1 focus:ring-gray-500"
+                minHeight="200px"
               />
             </section>
           </div>
