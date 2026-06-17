@@ -414,6 +414,8 @@ function setupTelegramCron(scheduleExpr: string = '0 8 * * *') {
     currentCronTask = cron.schedule(scheduleExpr, async () => {
       const state = await getDb();
       generateAndSendDailyReport(state);
+    }, {
+      timezone: 'Europe/Kyiv'
     });
     console.log(`📅 Telegram daily cron scheduled (${scheduleExpr}).`);
   } catch (err) {

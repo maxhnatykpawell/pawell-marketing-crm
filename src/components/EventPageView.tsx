@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../App';
 import { ArrowLeft, Save, MapPin, Globe, Calendar, Users, FileText, Target, Box, Flag, Download } from 'lucide-react';
 import { EventItem } from '../types';
-import html2pdf from 'html2pdf.js';
+import { useReactToPrint } from 'react-to-print';
 
 const EditableTextArea = ({ 
   value, 
@@ -52,24 +52,11 @@ export default function EventPageView() {
   const [formData, setFormData] = useState<Partial<EventItem>>({});
   const [isDirty, setIsDirty] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
-  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
-
-  const generatePDF = () => {
-    if (!contentRef.current) return;
-    setIsGeneratingPdf(true);
-    
-    const opt = {
-      margin:       10,
-      filename:     `${formData.title || 'event-brief'}.pdf`,
-      image:        { type: 'jpeg', quality: 0.98 },
-      html2canvas:  { scale: 2, useCORS: true },
-      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
-
-    html2pdf().set(opt).from(contentRef.current).save().then(() => {
-      setIsGeneratingPdf(false);
-    });
-  };
+  const generatePDF = useReactToPrint({
+    contentRef,
+    content: () => contentRef.current,
+    documentTitle: formData.title || 'event-brief',
+  });
 
   useEffect(() => {
     if (!event) return;
@@ -142,12 +129,11 @@ export default function EventPageView() {
         
         <div className="flex items-center">
           <button
-            onClick={generatePDF}
-            disabled={isGeneratingPdf}
-            className={`flex items-center px-4 py-2 font-medium rounded-lg transition border mr-3 ${isGeneratingPdf ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-wait' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50 shadow-sm'}`}
+            onClick={() => generatePDF()}
+            className="flex items-center px-4 py-2 font-medium rounded-lg transition border mr-3 bg-white border-gray-300 text-gray-700 hover:bg-gray-50 shadow-sm"
           >
             <Download className="w-4 h-4 mr-2" />
-            {isGeneratingPdf ? 'Генерація...' : 'PDF Бриф'}
+            PDF Бриф
           </button>
 
           <button
