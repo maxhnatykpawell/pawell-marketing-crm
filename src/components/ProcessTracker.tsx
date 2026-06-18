@@ -145,17 +145,19 @@ export default function ProcessTracker({ process }: Props) {
     return process.nodes.find(n => n.id === selectedProjectState.nodeId);
   }, [selectedProjectState, process.nodes]);
 
-  const moveProject = (targetNodeIds: string[]) => {
+  const moveProject = (targetNodeIds: string[], checkRequirements: boolean = true) => {
     if (!selectedProject || !selectedProjectState || !currentNode) return;
     
-    // Check requirements
-    const reqs = currentNode.data.requirements || [];
-    const completed = selectedProject.completedRequirements || {};
-    const uncompletedReqs = reqs.filter(r => !completed[r.id]);
-    
-    if (uncompletedReqs.length > 0) {
-      alert('Спочатку виконайте всі вимоги для переходу!');
-      return;
+    if (checkRequirements) {
+      // Check requirements
+      const reqs = currentNode.data.requirements || [];
+      const completed = selectedProject.completedRequirements || {};
+      const uncompletedReqs = reqs.filter(r => !completed[r.id]);
+      
+      if (uncompletedReqs.length > 0) {
+        alert('Спочатку виконайте всі вимоги для переходу!');
+        return;
+      }
     }
 
     const now = new Date().toISOString();
@@ -364,7 +366,7 @@ export default function ProcessTracker({ process }: Props) {
                     return (
                       <button
                         key={nn.id}
-                        onClick={() => moveProject([nn.id])}
+                        onClick={() => moveProject([nn.id], true)}
                         disabled={!allReqsMet}
                         className={`w-full flex justify-between items-center p-3 rounded-lg border transition ${allReqsMet ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700 shadow-md' : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'}`}
                       >
@@ -382,7 +384,7 @@ export default function ProcessTracker({ process }: Props) {
                          const allReqsMet = reqs.every(r => completed[r.id]);
                          return (
                            <button
-                             onClick={() => moveProject(nextNodes.map(n => n.id))}
+                             onClick={() => moveProject(nextNodes.map(n => n.id), true)}
                              disabled={!allReqsMet}
                              className={`w-full flex justify-center items-center p-3 rounded-lg border transition ${allReqsMet ? 'bg-indigo-600 border-indigo-600 text-white hover:bg-indigo-700 shadow-md' : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'}`}
                            >
@@ -405,7 +407,7 @@ export default function ProcessTracker({ process }: Props) {
                   {previousNodes.map(pn => (
                     <button
                       key={pn.id}
-                      onClick={() => moveProject([pn.id])}
+                      onClick={() => moveProject([pn.id], false)}
                       className="w-full flex justify-between items-center p-3 rounded-lg border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 transition shadow-sm"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
