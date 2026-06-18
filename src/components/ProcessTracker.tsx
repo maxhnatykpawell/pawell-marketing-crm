@@ -14,9 +14,9 @@ interface Props {
 // Custom Node for the Tracker
 const TrackerNode = ({ data, id }: { data: ProcessNodeData & { projects: Project[], onProjectClick: (p: Project, nId: string) => void }, id: string }) => {
   return (
-    <div className="bg-white rounded-xl shadow-md border-2 border-blue-200 min-w-[200px] max-w-[250px] overflow-hidden">
+    <div className="bg-white rounded-xl shadow-md border-2 border-blue-200 min-w-[200px] max-w-[250px] overflow-visible">
       <Handle type="target" position={Position.Top} className="w-3 h-3" />
-      <div className="bg-blue-50 p-3 border-b border-blue-100 flex justify-between items-center group relative">
+      <div className="bg-blue-50 p-3 border-b border-blue-100 flex justify-between items-center group relative rounded-t-[10px]">
         <div className="flex items-center space-x-2">
           <h4 className="font-bold text-gray-800 text-sm">{data.label}</h4>
           {data.requirements && data.requirements.length > 0 && (
@@ -40,7 +40,7 @@ const TrackerNode = ({ data, id }: { data: ProcessNodeData & { projects: Project
           {data.projects.length}
         </span>
       </div>
-      <div className="p-2 space-y-2 min-h-[50px] max-h-[300px] overflow-y-auto hidden-scrollbar nodrag">
+      <div className="p-2 space-y-2 min-h-[50px] max-h-[300px] overflow-y-auto hidden-scrollbar nodrag rounded-b-[10px]">
         {data.projects.length === 0 ? (
           <p className="text-xs text-gray-400 text-center py-2">Немає проєктів</p>
         ) : (
