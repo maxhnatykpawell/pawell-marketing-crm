@@ -135,6 +135,7 @@ export interface Project {
   createdAt: string;
   processId?: string | null;
   currentProcessNodeId?: string | null;
+  activeProcessNodeIds?: string[];
   processEntryDates?: Record<string, string>;
   completedRequirements?: Record<string, boolean>;
 }

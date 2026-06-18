@@ -4,7 +4,7 @@ import { useCallback, useEffect } from 'react';
 import '@xyflow/react/dist/style.css';
 import { useAppContext } from '../App';
 import { Process, ProcessNodeData, Project } from '../types';
-import { FolderKanban, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { FolderKanban, AlertCircle, CheckCircle2, Info } from 'lucide-react';
 import { differenceInDays } from 'date-fns';
 
 interface Props {
@@ -16,8 +16,26 @@ const TrackerNode = ({ data, id }: { data: ProcessNodeData & { projects: Project
   return (
     <div className="bg-white rounded-xl shadow-md border-2 border-blue-200 min-w-[200px] max-w-[250px] overflow-hidden">
       <Handle type="target" position={Position.Top} className="w-3 h-3" />
-      <div className="bg-blue-50 p-3 border-b border-blue-100 flex justify-between items-center">
-        <h4 className="font-bold text-gray-800 text-sm">{data.label}</h4>
+      <div className="bg-blue-50 p-3 border-b border-blue-100 flex justify-between items-center group relative">
+        <div className="flex items-center space-x-2">
+          <h4 className="font-bold text-gray-800 text-sm">{data.label}</h4>
+          {data.requirements && data.requirements.length > 0 && (
+            <div className="relative flex items-center">
+              <Info className="w-4 h-4 text-blue-400 hover:text-blue-600 cursor-help" />
+              <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 bg-white border border-gray-200 shadow-xl rounded-lg p-3 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                <p className="text-xs font-bold text-gray-700 mb-2 uppercase">Вимоги етапу:</p>
+                <ul className="text-sm text-gray-600 space-y-1">
+                  {data.requirements.map(req => (
+                    <li key={req.id} className="flex items-start">
+                      <span className="mr-1.5 mt-0.5">•</span>
+                      <span>{req.label} {req.department && <span className="text-[10px] text-gray-400">({req.department})</span>}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+        </div>
         <span className="bg-blue-200 text-blue-800 text-xs px-2 py-0.5 rounded-full font-medium">
           {data.projects.length}
         </span>
@@ -64,7 +82,8 @@ const nodeTypes = { trackerNode: TrackerNode };
 export default function ProcessTracker({ process }: Props) {
   const { state, updateProject, updateProcess, confirmAction } = useAppContext();
   
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [selectedProjectState, setSelectedProjectState] = useState<{ project: Project; nodeId: string } | null>(null);
+  const selectedProject = selectedProjectState?.project || null;
   const [addProjectModalOpen, setAddProjectModalOpen] = useState(false);
   
   // Get projects in this process
@@ -74,7 +93,7 @@ export default function ProcessTracker({ process }: Props) {
 
   // Handle Project click
   const handleProjectClick = (project: Project, nodeId: string) => {
-    setSelectedProject(project);
+    setSelectedProjectState({ project, nodeId });
   };
 
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -85,7 +104,7 @@ export default function ProcessTracker({ process }: Props) {
       type: 'trackerNode',
       data: {
         ...n.data,
-        projects: processProjects.filter(p => p.currentProcessNodeId === n.id),
+        projects: processProjects.filter(p => p.activeProcessNodeIds?.includes(n.id) || p.currentProcessNodeId === n.id),
         onProjectClick: handleProjectClick
       }
     })));
@@ -107,27 +126,27 @@ export default function ProcessTracker({ process }: Props) {
 
   // Finding available next nodes
   const nextNodes = useMemo(() => {
-    if (!selectedProject || !selectedProject.currentProcessNodeId) return [];
-    const outgoingEdges = edges.filter(e => e.source === selectedProject.currentProcessNodeId);
+    if (!selectedProjectState || !selectedProjectState.nodeId) return [];
+    const outgoingEdges = edges.filter(e => e.source === selectedProjectState.nodeId);
     const targetNodeIds = outgoingEdges.map(e => e.target);
     return process.nodes.filter(n => targetNodeIds.includes(n.id));
   }, [selectedProject, edges, process.nodes]);
 
   // Finding available previous nodes (for moving backward)
   const previousNodes = useMemo(() => {
-    if (!selectedProject || !selectedProject.currentProcessNodeId) return [];
-    const incomingEdges = edges.filter(e => e.target === selectedProject.currentProcessNodeId);
+    if (!selectedProjectState || !selectedProjectState.nodeId) return [];
+    const incomingEdges = edges.filter(e => e.target === selectedProjectState.nodeId);
     const sourceNodeIds = incomingEdges.map(e => e.source);
     return process.nodes.filter(n => sourceNodeIds.includes(n.id));
   }, [selectedProject, edges, process.nodes]);
 
   const currentNode = useMemo(() => {
-    if (!selectedProject) return null;
-    return process.nodes.find(n => n.id === selectedProject.currentProcessNodeId);
-  }, [selectedProject, process.nodes]);
+    if (!selectedProjectState) return null;
+    return process.nodes.find(n => n.id === selectedProjectState.nodeId);
+  }, [selectedProjectState, process.nodes]);
 
-  const moveProject = (targetNodeId: string) => {
-    if (!selectedProject || !currentNode) return;
+  const moveProject = (targetNodeIds: string[]) => {
+    if (!selectedProject || !selectedProjectState || !currentNode) return;
     
     // Check requirements
     const reqs = currentNode.data.requirements || [];
@@ -140,15 +159,28 @@ export default function ProcessTracker({ process }: Props) {
     }
 
     const now = new Date().toISOString();
-    updateProject(selectedProject.id, {
-      currentProcessNodeId: targetNodeId,
-      processEntryDates: {
-        ...(selectedProject.processEntryDates || {}),
-        [targetNodeId]: now
-      },
-      completedRequirements: {} // Reset requirements for new node
+    
+    const currentActiveIds = selectedProject.activeProcessNodeIds || 
+                            (selectedProject.currentProcessNodeId ? [selectedProject.currentProcessNodeId] : []);
+    const newActiveIds = currentActiveIds.filter(id => id !== selectedProjectState.nodeId);
+    
+    targetNodeIds.forEach(id => {
+      if (!newActiveIds.includes(id)) {
+        newActiveIds.push(id);
+      }
     });
-    setSelectedProject(null);
+
+    const newEntryDates = { ...(selectedProject.processEntryDates || {}) };
+    targetNodeIds.forEach(id => {
+      newEntryDates[id] = now;
+    });
+
+    updateProject(selectedProject.id, {
+      currentProcessNodeId: newActiveIds.length > 0 ? newActiveIds[0] : null,
+      activeProcessNodeIds: newActiveIds.length > 0 ? newActiveIds : undefined,
+      processEntryDates: newEntryDates
+    });
+    setSelectedProjectState(null);
   };
 
   const toggleRequirement = (reqId: string) => {
@@ -162,9 +194,12 @@ export default function ProcessTracker({ process }: Props) {
       }
     });
     // Optimistic update of local state for fast UI reaction
-    setSelectedProject(prev => prev ? ({
+    setSelectedProjectState(prev => prev ? ({
       ...prev,
-      completedRequirements: { ...completed, [reqId]: !isCompleted }
+      project: {
+        ...prev.project,
+        completedRequirements: { ...completed, [reqId]: !isCompleted }
+      }
     }) : prev);
   };
 
@@ -178,6 +213,7 @@ export default function ProcessTracker({ process }: Props) {
     updateProject(projectId, {
       processId: process.id,
       currentProcessNodeId: firstNode.id,
+      activeProcessNodeIds: [firstNode.id],
       processEntryDates: { [firstNode.id]: now },
       completedRequirements: {}
     });
@@ -190,10 +226,11 @@ export default function ProcessTracker({ process }: Props) {
       updateProject(selectedProject.id, {
         processId: null,
         currentProcessNodeId: null,
+        activeProcessNodeIds: [],
         processEntryDates: {},
         completedRequirements: {}
       });
-      setSelectedProject(null);
+      setSelectedProjectState(null);
     });
   };
 
@@ -266,7 +303,7 @@ export default function ProcessTracker({ process }: Props) {
               <div className="w-4 h-4 rounded-full" style={{ backgroundColor: selectedProject.color || '#3b82f6' }} />
               <h3 className="font-bold text-gray-800 truncate" title={selectedProject.title}>{selectedProject.title}</h3>
             </div>
-            <button onClick={() => setSelectedProject(null)} className="text-gray-500 hover:text-gray-800">
+            <button onClick={() => setSelectedProjectState(null)} className="text-gray-500 hover:text-gray-800">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
           </div>
@@ -327,7 +364,7 @@ export default function ProcessTracker({ process }: Props) {
                     return (
                       <button
                         key={nn.id}
-                        onClick={() => moveProject(nn.id)}
+                        onClick={() => moveProject([nn.id])}
                         disabled={!allReqsMet}
                         className={`w-full flex justify-between items-center p-3 rounded-lg border transition ${allReqsMet ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700 shadow-md' : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'}`}
                       >
@@ -336,6 +373,26 @@ export default function ProcessTracker({ process }: Props) {
                       </button>
                     );
                   })}
+                  
+                  {nextNodes.length > 1 && (
+                    <div className="pt-2 mt-2 border-t border-gray-200">
+                      {(() => {
+                         const reqs = currentNode.data.requirements || [];
+                         const completed = selectedProject.completedRequirements || {};
+                         const allReqsMet = reqs.every(r => completed[r.id]);
+                         return (
+                           <button
+                             onClick={() => moveProject(nextNodes.map(n => n.id))}
+                             disabled={!allReqsMet}
+                             className={`w-full flex justify-center items-center p-3 rounded-lg border transition ${allReqsMet ? 'bg-indigo-600 border-indigo-600 text-white hover:bg-indigo-700 shadow-md' : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'}`}
+                           >
+                             <FolderKanban className="w-4 h-4 mr-2" />
+                             <span className="font-medium">Розгалузити на всі наступні етапи</span>
+                           </button>
+                         );
+                      })()}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -348,7 +405,7 @@ export default function ProcessTracker({ process }: Props) {
                   {previousNodes.map(pn => (
                     <button
                       key={pn.id}
-                      onClick={() => moveProject(pn.id)}
+                      onClick={() => moveProject([pn.id])}
                       className="w-full flex justify-between items-center p-3 rounded-lg border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 transition shadow-sm"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
