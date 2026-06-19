@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Metric, Project, Process } from './types';
+import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Metric, Project, Process, UserGroup, AccessRights } from './types';
 import { fetchState, syncState, getMe, estimateTaskTime, createEntity, updateEntity, deleteEntity } from './api';
 import { v4 as uuidv4 } from 'uuid';
 import Board from './components/Board';
@@ -22,6 +22,7 @@ type ActiveView = 'dashboard' | 'projects' | 'processes' | 'board' | 'content' |
 interface AppContextType {
   state: AppState;
   currentUser: AuthUser | null;
+  hasEditRights: boolean;
   logout: () => void;
   moveCard: (cardId: string, toListId: string, targetCardId?: string) => void;
   addCard: (listId: string, title: string) => void;
@@ -42,6 +43,9 @@ interface AppContextType {
   updateContentPlan: (id: string, updates: Partial<ContentPlanItem>) => void;
   deleteContentPlan: (id: string) => void;
   importContentPlans: (plans: Omit<ContentPlanItem, 'id'>[]) => void;
+  addUserGroup: (group: Omit<UserGroup, 'id'>) => void;
+  updateUserGroup: (id: string, updates: Partial<UserGroup>) => void;
+  deleteUserGroup: (id: string) => void;
   updateSettings: (updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule'>>) => void;
   addEvent: (item: Omit<EventItem, 'id'>) => void;
   updateEvent: (id: string, updates: Partial<EventItem>) => void;
@@ -106,6 +110,29 @@ export default function App() {
   const confirmAction = useCallback((message: string, onConfirm: () => void) => {
     setConfirmDialog({ message, onConfirm });
   }, []);
+
+  useEffect(() => {
+    if (!state || !currentUser) return;
+    
+    const userRecord = state.users.find(u => u.id === currentUser.userId);
+    const userGroup = state.userGroups?.find(g => g.id === userRecord?.groupId);
+    
+    const defaultRights = { 
+      allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations', 'profile'] 
+    };
+    
+    const currentRights = currentUser.role === 'admin' 
+      ? defaultRights 
+      : (userRecord?.customRights || userGroup?.rights || defaultRights);
+
+    if (!currentRights.allowedViews.includes(activeView) && activeView !== 'profile') {
+      if (currentRights.allowedViews.length > 0) {
+        setActiveView(currentRights.allowedViews[0] as ActiveView);
+      } else {
+        setActiveView('profile');
+      }
+    }
+  }, [activeView, state, currentUser]);
 
   const logout = useCallback(() => {
     localStorage.removeItem('auth_token');
@@ -440,6 +467,29 @@ export default function App() {
     });
   }, [state]);
 
+  const addUserGroup = useCallback((group: Omit<UserGroup, 'id'>) => {
+    if (!state) return;
+    const newGroup = { ...group, id: uuidv4() };
+    setState(prev => prev ? { ...prev, userGroups: [...(prev.userGroups || []), newGroup] } : prev);
+    createEntity('userGroups', newGroup).catch(console.error);
+  }, [state]);
+
+  const updateUserGroup = useCallback((id: string, updates: Partial<UserGroup>) => {
+    if (!state) return;
+    setState(prev => prev ? { ...prev, userGroups: (prev.userGroups || []).map(g => g.id === id ? { ...g, ...updates } : g) } : prev);
+    updateEntity('userGroups', id, updates).catch(console.error);
+  }, [state]);
+
+  const deleteUserGroup = useCallback((id: string) => {
+    if (!state) return;
+    setState(prev => prev ? { 
+      ...prev, 
+      userGroups: (prev.userGroups || []).filter(g => g.id !== id),
+      users: prev.users.map(u => u.groupId === id ? { ...u, groupId: null } : u)
+    } : prev);
+    deleteEntity('userGroups', id).catch(console.error);
+  }, [state]);
+
   const updateSettings = useCallback((updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule'>>) => {
     if (!state) return;
     saveState({ ...state, ...updates }); // settings are grouped in saveState logic
@@ -612,7 +662,22 @@ export default function App() {
   
   if (!state) return <LoadingScreen />;
 
-  const navItems: { view: ActiveView; label: string; Icon: any }[] = [
+  // RBAC Logic
+  const userRecord = state.users.find(u => u.id === currentUser.userId);
+  const userGroup = state.userGroups?.find(g => g.id === userRecord?.groupId);
+  
+  const defaultRights: AccessRights = { 
+    canEdit: true, 
+    allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations', 'profile'] 
+  };
+  
+  const currentRights: AccessRights = currentUser.role === 'admin' 
+    ? defaultRights 
+    : (userRecord?.customRights || userGroup?.rights || defaultRights);
+
+  const hasEditRights = currentRights.canEdit;
+
+  let allNavItems: { view: ActiveView; label: string; Icon: any }[] = [
     { view: 'dashboard', label: 'Головна', Icon: BarChart },
     { view: 'projects', label: 'Проєкти', Icon: FolderKanban },
     { view: 'processes', label: 'Процеси', Icon: GitMerge },
@@ -623,12 +688,15 @@ export default function App() {
     { view: 'regulations', label: 'Регламенти', Icon: BookOpen },
   ];
 
+  const navItems = allNavItems.filter(item => currentRights.allowedViews.includes(item.view));
+
   return (
     <AppContext.Provider value={{
-      state, currentUser, logout,
+      state, currentUser, hasEditRights, logout,
       moveCard, addCard, updateCard, deleteCard, clearList, addList, deleteList, updateList, moveList,
       addTag, deleteTag, updateTag, addUser, updateUser, deleteUser,
-      addContentPlan, updateContentPlan, deleteContentPlan, importContentPlans, updateSettings,
+      addContentPlan, updateContentPlan, deleteContentPlan, importContentPlans, 
+      addUserGroup, updateUserGroup, deleteUserGroup, updateSettings,
       addEvent, updateEvent, deleteEvent, addProject, updateProject, deleteProject, addProcess, updateProcess, deleteProcess, addBoard, deleteBoard,
       activeBoardId, setActiveBoardId, activeEventId, setActiveEventId, activeProjectId, setActiveProjectId,
       activeView, setActiveView, updateMetric, importTrelloBoard, confirmAction

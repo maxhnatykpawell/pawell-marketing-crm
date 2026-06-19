@@ -105,7 +105,7 @@ const INITIAL_APP_STATE = {
   lastModified: new Date().toISOString(),
 };
 
-const ATOMIC_COLLECTIONS = ['users', 'lists', 'cards', 'tags', 'contentPlans', 'events', 'projects', 'metrics', 'boards', 'processes'];
+const ATOMIC_COLLECTIONS = ['users', 'userGroups', 'lists', 'cards', 'tags', 'contentPlans', 'events', 'projects', 'metrics', 'boards', 'processes'];
 const SETTINGS_DOC = 'settings';
 
 async function updateLastModified() {

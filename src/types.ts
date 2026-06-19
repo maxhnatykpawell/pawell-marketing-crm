@@ -1,3 +1,14 @@
+export interface AccessRights {
+  canEdit: boolean;
+  allowedViews: string[];
+}
+
+export interface UserGroup {
+  id: string;
+  name: string;
+  rights: AccessRights;
+}
+
 export interface Tag {
   id: string;
   name: string;
@@ -21,6 +32,8 @@ export interface User {
   operationalDuties?: string;
   weeklySchedule?: Record<string, string>;
   goals?: string;
+  groupId?: string | null;
+  customRights?: AccessRights | null;
 }
 
 export interface AuthUser {
@@ -177,6 +190,7 @@ export interface Process {
 
 export interface AppState {
   users: User[];
+  userGroups?: UserGroup[];
   metrics?: Metric[];
   boards?: BoardItem[];
   lists: List[];

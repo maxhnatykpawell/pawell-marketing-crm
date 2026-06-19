@@ -54,7 +54,6 @@ export default function EventPageView() {
   const contentRef = useRef<HTMLDivElement>(null);
   const generatePDF = useReactToPrint({
     contentRef,
-    content: () => contentRef.current,
     documentTitle: formData.title || 'event-brief',
   });
 

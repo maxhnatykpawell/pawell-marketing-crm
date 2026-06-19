@@ -4,13 +4,25 @@ import { changePassword, setUserCredentials, resetUserPassword, getAuthList, gen
 import {
   Shield, User as UserIcon, Mail, Lock, Key, RefreshCw,
   Check, X, AlertCircle, Eye, EyeOff, ChevronDown, ChevronUp,
-  Copy, CheckCheck, Plus, Edit3, Link
+  Copy, CheckCheck, Plus, Edit3, Link, Settings2
 } from 'lucide-react';
+import { AccessRights } from '../types';
 
 interface AuthEntry { userId: string; email: string; role: string; }
 
+const viewsList = [
+  { id: 'dashboard', label: 'Головна' },
+  { id: 'projects', label: 'Проєкти' },
+  { id: 'processes', label: 'Процеси' },
+  { id: 'board', label: 'Дошка' },
+  { id: 'content', label: 'Контент-план' },
+  { id: 'events', label: 'Події' },
+  { id: 'calendar', label: 'Календар' },
+  { id: 'regulations', label: 'Регламенти' },
+];
+
 export default function AdminUsersPanel() {
-  const { state, currentUser } = useAppContext();
+  const { state, currentUser, updateUser } = useAppContext();
   const [authList, setAuthList] = useState<AuthEntry[] | null>(null);
   const [loadingList, setLoadingList] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -19,6 +31,8 @@ export default function AdminUsersPanel() {
   const [showFormPassword, setShowFormPassword] = useState(false);
   const [formError, setFormError] = useState('');
   const [formLoading, setFormLoading] = useState(false);
+  const [rightsUserId, setRightsUserId] = useState<string | null>(null);
+  const [rightsForm, setRightsForm] = useState<{ useCustom: boolean; rights: AccessRights } | null>(null);
 
   const [tempPassword, setTempPassword] = useState<{ userId: string; pass: string } | null>(null);
   const [copied, setCopied] = useState(false);
