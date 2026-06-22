@@ -40,7 +40,7 @@ const TrackerNode = ({ data, id }: { data: ProcessNodeData & { projects: Project
           {data.projects.length}
         </span>
       </div>
-      <div className="p-2 space-y-2 min-h-[50px] max-h-[300px] overflow-y-auto hidden-scrollbar nodrag rounded-b-[10px]">
+      <div className="p-2 space-y-2 min-h-[50px] max-h-[400px] overflow-y-auto nowheel nodrag rounded-b-[10px]">
         {data.projects.length === 0 ? (
           <p className="text-xs text-gray-400 text-center py-2">Немає проєктів</p>
         ) : (
