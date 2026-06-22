@@ -180,3 +180,55 @@ export const deleteEntity = async (type: string, id: string): Promise<void> => {
   });
   if (!res.ok) throw new Error(`Failed to delete ${type}`);
 };
+
+// ── Announcements ─────────────────────────────────────────────────────────────
+
+export const getAnnouncements = async (): Promise<any[]> => {
+  const res = await fetch('/api/announcements', { headers: authHeaders() });
+  if (!res.ok) throw new Error('Failed to load announcements');
+  return res.json();
+};
+
+export const createAnnouncement = async (data: Omit<any, 'id' | 'createdAt'>): Promise<any> => {
+  const res = await fetch('/api/announcements', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to create announcement');
+  }
+  return res.json();
+};
+
+export const updateAnnouncement = async (id: string, data: Partial<any>): Promise<void> => {
+  const res = await fetch(`/api/announcements/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to update announcement');
+  }
+};
+
+export const deleteAnnouncement = async (id: string): Promise<void> => {
+  const res = await fetch(`/api/announcements/${id}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to delete announcement');
+};
+
+export const testAnnouncement = async (id: string): Promise<void> => {
+  const res = await fetch(`/api/announcements/${id}/test`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to send test');
+  }
+};

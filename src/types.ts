@@ -1,3 +1,13 @@
+export interface ScheduledAnnouncement {
+  id: string;
+  label: string;         // Назва для зручності
+  text: string;          // Текст повідомлення (Telegram Markdown)
+  time: string;          // "HH:mm"
+  days: number[];        // 0=Нд, 1=Пн, 2=Вт, 3=Ср, 4=Чт, 5=Пт, 6=Сб
+  enabled: boolean;
+  createdAt: string;
+}
+
 export interface AccessRights {
   canEdit: boolean;
   allowedViews: string[];
@@ -204,5 +214,6 @@ export interface AppState {
   projects?: Project[];
   processes?: Process[];
   aiReportSchedule?: string;
+  announcements?: ScheduledAnnouncement[];
   lastModified?: string;
 }

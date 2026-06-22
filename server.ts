@@ -133,7 +133,8 @@ async function getDb(): Promise<any> {
         contentPlanChannels: legacyData.contentPlanChannels || INITIAL_APP_STATE.contentPlanChannels,
         contentPlanStatuses: legacyData.contentPlanStatuses || INITIAL_APP_STATE.contentPlanStatuses,
         contentPlanColumns: legacyData.contentPlanColumns || INITIAL_APP_STATE.contentPlanColumns,
-        aiReportSchedule: legacyData.aiReportSchedule || '0 8 * * *'
+        aiReportSchedule: legacyData.aiReportSchedule || '0 8 * * *',
+        announcements: legacyData.announcements || []
       };
       await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).set(settings);
       
@@ -165,7 +166,8 @@ async function getDb(): Promise<any> {
         contentPlanChannels: INITIAL_APP_STATE.contentPlanChannels,
         contentPlanStatuses: INITIAL_APP_STATE.contentPlanStatuses,
         contentPlanColumns: INITIAL_APP_STATE.contentPlanColumns,
-        aiReportSchedule: '0 8 * * *'
+        aiReportSchedule: '0 8 * * *',
+        announcements: []
       });
     }
     
@@ -195,7 +197,8 @@ async function saveDb(data: any): Promise<void> {
       contentPlanChannels: data.contentPlanChannels || [],
       contentPlanStatuses: data.contentPlanStatuses || [],
       contentPlanColumns: data.contentPlanColumns || [],
-      aiReportSchedule: data.aiReportSchedule || '0 8 * * *'
+      aiReportSchedule: data.aiReportSchedule || '0 8 * * *',
+      announcements: data.announcements || []
     };
     await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).set(settings);
     
@@ -422,6 +425,69 @@ function setupTelegramCron(scheduleExpr: string = '0 8 * * *') {
     console.error(`❌ Invalid cron expression: ${scheduleExpr}`, err);
   }
 }
+
+// ── Announcement Cron Management ─────────────────────────────────────────────
+
+interface AnnouncementRecord {
+  id: string;
+  label: string;
+  text: string;
+  time: string;    // "HH:mm"
+  days: number[];  // 0=Sun,1=Mon,...,6=Sat
+  enabled: boolean;
+  createdAt: string;
+}
+
+const announcementCronTasks = new Map<string, any>();
+
+async function sendAnnouncementToTelegram(text: string): Promise<{ success: boolean; error?: string }> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID || '-5182383955';
+  if (!token || !chatId) return { success: false, error: 'missing_telegram_credentials' };
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' })
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('Telegram API rejected announcement:', errText);
+      return { success: false, error: 'telegram_api_error' };
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: 'request_failed' };
+  }
+}
+
+function buildAnnouncementCron(time: string, days: number[]): string {
+  const [h, m] = time.split(':').map(Number);
+  // days: 0=Sun,1=Mon,...,6=Sat — node-cron uses same convention
+  const dayStr = days.length === 7 || days.length === 0 ? '*' : days.join(',');
+  return `${m} ${h} * * ${dayStr}`;
+}
+
+function setupAnnouncementCrons(announcements: AnnouncementRecord[]) {
+  // Stop all existing announcement crons
+  announcementCronTasks.forEach(task => task.stop());
+  announcementCronTasks.clear();
+
+  for (const ann of announcements) {
+    if (!ann.enabled || !ann.time || !ann.days?.length) continue;
+    try {
+      const cronExpr = buildAnnouncementCron(ann.time, ann.days);
+      const task = cron.schedule(cronExpr, async () => {
+        console.log(`📣 Sending announcement "${ann.label}"...`);
+        await sendAnnouncementToTelegram(ann.text);
+      }, { timezone: 'Europe/Kyiv' });
+      announcementCronTasks.set(ann.id, task);
+      console.log(`📣 Announcement cron "${ann.label}" scheduled: ${cronExpr}`);
+    } catch (err) {
+      console.error(`❌ Invalid cron for announcement "${ann.label}":`, err);
+    }
+  }
+}
 // ── Main Server ───────────────────────────────────────────────────────────────
 
 async function startServer() {
@@ -439,6 +505,7 @@ async function startServer() {
   await bootstrapAdmin();
   const initialState = await getDb();
   setupTelegramCron(initialState.aiReportSchedule || '0 8 * * *');
+  setupAnnouncementCrons(initialState.announcements || []);
 
   // ── Auth Routes ──────────────────────────────────────────────────────────────
 
@@ -580,9 +647,13 @@ async function startServer() {
     const oldState = await getDb();
     await saveDb(req.body);
     
-    // Check if schedule changed
+    // Check if AI schedule changed
     if (req.body.aiReportSchedule && req.body.aiReportSchedule !== oldState.aiReportSchedule) {
       setupTelegramCron(req.body.aiReportSchedule);
+    }
+    // Re-setup announcement crons if changed
+    if (req.body.announcements) {
+      setupAnnouncementCrons(req.body.announcements);
     }
     
     res.json({ success: true });
@@ -617,6 +688,74 @@ async function startServer() {
       if (result.success) res.json({ success: true });
       else res.status(500).json({ success: false, error: result.error });
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // ── Announcements CRUD ───────────────────────────────────────────────────────
+
+  app.get('/api/announcements', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const state = await getDb();
+      res.json(state.announcements || []);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/announcements', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { label, text, time, days, enabled } = req.body;
+      if (!label || !text || !time || !days) {
+        res.status(400).json({ error: 'label, text, time, days are required' }); return;
+      }
+      const state = await getDb();
+      const newAnn: AnnouncementRecord = {
+        id: `ann_${Date.now()}`,
+        label, text, time,
+        days: days as number[],
+        enabled: enabled !== false,
+        createdAt: new Date().toISOString()
+      };
+      state.announcements = [...(state.announcements || []), newAnn];
+      await saveDb(state);
+      setupAnnouncementCrons(state.announcements);
+      res.json(newAnn);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.put('/api/announcements/:id', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const state = await getDb();
+      const idx = (state.announcements || []).findIndex((a: AnnouncementRecord) => a.id === id);
+      if (idx === -1) { res.status(404).json({ error: 'Announcement not found' }); return; }
+      state.announcements[idx] = { ...state.announcements[idx], ...req.body, id };
+      await saveDb(state);
+      setupAnnouncementCrons(state.announcements);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete('/api/announcements/:id', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const state = await getDb();
+      state.announcements = (state.announcements || []).filter((a: AnnouncementRecord) => a.id !== id);
+      await saveDb(state);
+      // Stop cron for this announcement
+      const task = announcementCronTasks.get(id);
+      if (task) { task.stop(); announcementCronTasks.delete(id); }
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/announcements/:id/test', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const state = await getDb();
+      const ann = (state.announcements || []).find((a: AnnouncementRecord) => a.id === id);
+      if (!ann) { res.status(404).json({ error: 'Announcement not found' }); return; }
+      const result = await sendAnnouncementToTelegram(ann.text);
+      if (result.success) res.json({ success: true });
+      else res.status(500).json({ success: false, error: result.error });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   // ── Upload ───────────────────────────────────────────────────────────────────

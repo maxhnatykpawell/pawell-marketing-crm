@@ -14,8 +14,10 @@ interface Props {
 }
 
 export default function CardModal({ card, onClose }: Props) {
-  const { state, updateCard, deleteCard, confirmAction } = useAppContext();
+  const { state, updateCard, deleteCard, confirmAction, currentUser } = useAppContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const currentUserRecord = state.users.find(u => u.id === currentUser?.userId) || state.users[0];
 
   const list = state.lists.find(l => l.id === card.listId);
   const assignee = state.users.find(u => u.id === card.assigneeId);
@@ -41,7 +43,7 @@ export default function CardModal({ card, onClose }: Props) {
 
       const newComment: Comment = {
         id: uuidv4(),
-        authorId: state.users[0].id, // current user id for now, but prefixed to show AI
+        authorId: currentUserRecord?.id || '', // current user id for now, but prefixed to show AI
         text: `🤖 **Мудрий Менеджер (AI):**\n\nОцінка задачі: **${storyPoints} SP**\n\n${explanation}`,
         createdAt: new Date().toISOString()
       };
@@ -109,7 +111,7 @@ export default function CardModal({ card, onClose }: Props) {
     if (!newCommentText.trim()) return;
     const newComment: Comment = {
       id: uuidv4(),
-      authorId: state.users[0].id, // assume first user is current user for demo
+      authorId: currentUserRecord?.id || '', // assume first user is current user for demo
       text: newCommentText.trim(),
       createdAt: new Date().toISOString()
     };
@@ -348,7 +350,7 @@ export default function CardModal({ card, onClose }: Props) {
                 </div>
                 <div className="ml-8 space-y-5">
                   <form onSubmit={handleAddComment} className="flex gap-3">
-                    <img src={state.users[0].avatar} alt="" className="w-8 h-8 rounded-full border border-gray-200 shrink-0" />
+                    <img src={currentUserRecord?.avatar} alt="" className="w-8 h-8 rounded-full border border-gray-200 shrink-0" />
                     <div className="flex-1 bg-white border border-gray-200 rounded-lg shadow-sm focus-within:ring-2 focus-within:ring-blue-100 focus-within:border-blue-500 transition overflow-hidden">
                       <textarea
                         value={newCommentText}
