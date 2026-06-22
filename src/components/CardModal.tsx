@@ -306,24 +306,36 @@ export default function CardModal({ card, onClose }: Props) {
                 <div className="ml-8">
                   {card.attachments && card.attachments.length > 0 ? (
                     <div className="space-y-2 mb-4">
-                      {card.attachments.map(att => (
-                        <div key={att.id} className="flex items-center justify-between p-3 rounded-lg border border-gray-200 bg-gray-50 hover:bg-white hover:border-gray-300 transition group">
-                          <div className="flex items-center overflow-hidden">
-                            <div className="w-10 h-10 bg-gray-200 rounded flex items-center justify-center shrink-0 mr-3 text-gray-500 font-medium text-xs">
-                              FILE
+                      {card.attachments.map(att => {
+                        const isImage = att.name.match(/\.(jpeg|jpg|gif|png|webp|svg)$/i);
+                        return (
+                          <div key={att.id} className="flex flex-col p-3 rounded-lg border border-gray-200 bg-gray-50 hover:bg-white hover:border-gray-300 transition group">
+                            {isImage && (
+                              <div className="mb-3 rounded overflow-hidden border border-gray-200 flex justify-center bg-gray-100">
+                                <img src={att.url} alt={att.name} className="max-w-full max-h-64 object-contain" />
+                              </div>
+                            )}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center overflow-hidden">
+                                {!isImage && (
+                                  <div className="w-10 h-10 bg-gray-200 rounded flex items-center justify-center shrink-0 mr-3 text-gray-500 font-medium text-xs">
+                                    FILE
+                                  </div>
+                                )}
+                                <span className="text-sm text-gray-700 font-medium truncate">{att.name}</span>
+                              </div>
+                              <div className="flex gap-2 shrink-0 ml-3">
+                                <a href={att.url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline text-xs bg-blue-50 px-2 py-1 rounded">View</a>
+                                <a href={att.url} download={att.name} className="text-green-600 hover:underline text-xs bg-green-50 px-2 py-1 rounded">Download</a>
+                                <button 
+                                  onClick={() => handleUpdate({ attachments: card.attachments.filter(a => a.id !== att.id) })}
+                                  className="text-red-600 hover:underline text-xs bg-red-50 px-2 py-1 rounded"
+                                >Remove</button>
+                              </div>
                             </div>
-                            <span className="text-sm text-gray-700 font-medium truncate">{att.name}</span>
                           </div>
-                          <div className="flex gap-2">
-                            <a href={att.url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline text-xs bg-blue-50 px-2 py-1 rounded">View</a>
-                            <a href={att.url} download={att.name} className="text-green-600 hover:underline text-xs bg-green-50 px-2 py-1 rounded">Download</a>
-                            <button 
-                              onClick={() => handleUpdate({ attachments: card.attachments.filter(a => a.id !== att.id) })}
-                              className="text-red-600 hover:underline text-xs bg-red-50 px-2 py-1 rounded"
-                            >Remove</button>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <p className="text-xs text-gray-500 mb-4">No attachments yet.</p>

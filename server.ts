@@ -763,8 +763,10 @@ async function startServer() {
   const storage = multer.diskStorage({
     destination: (req, file, cb) => { cb(null, UPLOADS_DIR); },
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname);
-      const base = path.basename(file.originalname, ext);
+      // Decode from latin1 to utf8 to fix Cyrillic characters which break extension parsing
+      const decodedName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+      const ext = path.extname(decodedName);
+      const base = path.basename(decodedName, ext);
       cb(null, `${base}-${Date.now()}${ext}`);
     }
   });
@@ -772,7 +774,8 @@ async function startServer() {
 
   app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
     if (!req.file) { res.status(400).json({ error: 'No file uploaded' }); return; }
-    res.json({ id: req.file.filename, name: req.file.originalname, url: `/uploads/${encodeURIComponent(req.file.filename)}` });
+    const decodedName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+    res.json({ id: req.file.filename, name: decodedName, url: `/uploads/${encodeURIComponent(req.file.filename)}` });
   });
 
   app.post('/api/estimate-time', requireAuth, async (req, res) => {
