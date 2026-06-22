@@ -703,7 +703,7 @@ export default function App() {
     }}>
       <div className="min-h-screen bg-blue-50/50 flex flex-col font-sans text-gray-900">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-10 w-full">
+        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-10 w-full print:hidden">
           <div className="flex items-center space-x-6">
             <div className="flex items-center space-x-3">
               <div className="w-8 h-8 rounded bg-blue-600 text-white flex items-center justify-center font-bold text-lg">P</div>
@@ -769,7 +769,7 @@ export default function App() {
         </header>
 
         {/* Main */}
-        <main className={`flex-1 p-6 h-[calc(100vh-73px)] flex flex-col ${['board', 'processes'].includes(activeView) ? 'overflow-hidden' : 'overflow-auto hidden-scrollbar'}`}>
+        <main className={`flex-1 p-6 h-[calc(100vh-73px)] print:h-auto print:overflow-visible print:p-0 flex flex-col ${['board', 'processes'].includes(activeView) ? 'overflow-hidden' : 'overflow-auto hidden-scrollbar'}`}>
           {activeView === 'dashboard' && <DashboardView />}
           {activeView === 'projects' && <ProjectsView />}
           {activeView === 'processes' && <ProcessTreeView />}

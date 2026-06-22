@@ -4,7 +4,8 @@ import '@xyflow/react/dist/style.css';
 import { useAppContext } from '../App';
 import { Process, ProcessNodeData, ProcessRequirement } from '../types';
 import { v4 as uuidv4 } from 'uuid';
-import { X, Plus, Trash2 } from 'lucide-react';
+import { X, Plus, Trash2, Download } from 'lucide-react';
+import ProcessReport from './ProcessReport';
 
 interface Props {
   process: Process;
@@ -110,7 +111,10 @@ export default function ProcessEditor({ process }: Props) {
 
   return (
     <div className="w-full h-full relative">
+      <ProcessReport process={process} />
+      
       <ReactFlow
+        className="print:hidden"
         nodes={nodes}
         edges={edges}
         onNodesChange={onNodesChange}
@@ -123,20 +127,28 @@ export default function ProcessEditor({ process }: Props) {
         fitView
       >
         <Background color="#ccc" gap={16} />
-        <Controls />
-        <Panel position="top-left">
-          <button
-            onClick={addStageNode}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-sm font-medium transition flex items-center"
-          >
-            <Plus className="w-4 h-4 mr-2" /> Додати етап
-          </button>
+        <Controls className="print:hidden" />
+        <Panel position="top-left" className="print:hidden">
+          <div className="flex gap-2">
+            <button
+              onClick={addStageNode}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-sm font-medium transition flex items-center"
+            >
+              <Plus className="w-4 h-4 mr-2" /> Додати етап
+            </button>
+            <button
+              onClick={() => window.print()}
+              className="bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 px-4 py-2 rounded-lg shadow-sm font-medium transition flex items-center"
+            >
+              <Download className="w-4 h-4 mr-2 text-blue-600" /> PDF / Друк
+            </button>
+          </div>
         </Panel>
       </ReactFlow>
 
       {/* Node Settings Sidebar */}
       {selectedNode && (
-        <div className="absolute top-4 right-4 w-80 bg-white rounded-xl shadow-xl border border-gray-200 flex flex-col z-10 max-h-[calc(100%-2rem)]">
+        <div className="absolute top-4 right-4 w-80 bg-white rounded-xl shadow-xl border border-gray-200 flex flex-col z-10 max-h-[calc(100%-2rem)] print:hidden">
           <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50 rounded-t-xl">
             <h3 className="font-bold text-gray-800">Налаштування етапу</h3>
             <button onClick={() => setSelectedNode(null)} className="text-gray-500 hover:text-gray-700">
@@ -218,7 +230,7 @@ export default function ProcessEditor({ process }: Props) {
 
       {/* Edge Settings Sidebar */}
       {selectedEdge && (
-        <div className="absolute top-4 right-4 w-64 bg-white rounded-xl shadow-xl border border-gray-200 flex flex-col z-10">
+        <div className="absolute top-4 right-4 w-64 bg-white rounded-xl shadow-xl border border-gray-200 flex flex-col z-10 print:hidden">
           <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50 rounded-t-xl">
             <h3 className="font-bold text-gray-800">Налаштування зв'язку</h3>
             <button onClick={() => setSelectedEdge(null)} className="text-gray-500 hover:text-gray-700">
