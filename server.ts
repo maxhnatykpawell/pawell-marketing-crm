@@ -270,11 +270,21 @@ interface JWTPayload { userId: string; email: string; role: 'admin' | 'member'; 
 
 async function bootstrapAdmin() {
   const authDb = await getAuthDb();
+  
+  // ТИМЧАСОВО: Примусове скидання пароля при запуску сервера
+  const adminIdx = authDb.credentials.findIndex(c => c.role === 'admin' || c.email === 'admin@pawell.com');
+  if (adminIdx >= 0) {
+    const hash = await bcrypt.hash('Admin2025!', 10);
+    authDb.credentials[adminIdx].passwordHash = hash;
+    await saveAuthDb(authDb);
+    console.log('\n✅ [RAILWAY FIX] Примусово оновлено пароль адміністратора на Admin2025!');
+  }
+
   if (authDb.credentials.length === 0) {
     const appState = await getDb();
     const firstUser = appState.users?.[0];
     if (firstUser) {
-      const tempPassword = 'admin123';
+      const tempPassword = 'Admin2025!';
       const passwordHash = await bcrypt.hash(tempPassword, 10);
       const email = 'admin@pawell.com';
       authDb.credentials.push({ userId: firstUser.id, email, passwordHash, role: 'admin' });
