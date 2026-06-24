@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Metric, Project, Process, UserGroup, AccessRights } from './types';
-import { fetchState, syncState, getMe, estimateTaskTime, createEntity, updateEntity, deleteEntity } from './api';
+import { fetchState, syncState, getMe, estimateTaskTime, createEntity, updateEntity, deleteEntity, processOfflineQueue } from './api';
 import { v4 as uuidv4 } from 'uuid';
 import Board from './components/Board';
 import ContentPlanView from './components/ContentPlanView';
@@ -106,9 +106,31 @@ export default function App() {
   const [activeEventId, setActiveEventId] = useState<string | null>(null);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string, onConfirm: () => void } | null>(null);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
 
   const confirmAction = useCallback((message: string, onConfirm: () => void) => {
     setConfirmDialog({ message, onConfirm });
+  }, []);
+
+  // ── Network listeners ────────────────────────────────────────────────────────
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOffline(false);
+      processOfflineQueue().catch(console.error);
+    };
+    const handleOffline = () => setIsOffline(true);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    if (navigator.onLine) {
+      processOfflineQueue().catch(console.error);
+    }
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
   useEffect(() => {
@@ -728,6 +750,12 @@ export default function App() {
 
           {/* Right side */}
           <div className="flex items-center space-x-3">
+            {isOffline && (
+              <div className="hidden md:flex items-center px-3 py-1.5 bg-yellow-100 text-yellow-800 rounded-lg text-xs font-medium border border-yellow-200 shadow-sm animate-pulse">
+                <span className="w-2 h-2 rounded-full bg-yellow-500 mr-2"></span>
+                Офлайн. Зміни зберігаються локально
+              </div>
+            )}
             <div className="flex -space-x-2">
               {state.users.slice(0, 5).map(u => (
                 <img key={u.id} src={u.avatar} alt={u.name} title={u.name} className="w-8 h-8 rounded-full border-2 border-white" />

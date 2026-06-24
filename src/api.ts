@@ -1,4 +1,5 @@
 import { AppState, Attachment, AuthUser } from './types';
+import { v4 as uuidv4 } from 'uuid';
 
 const getToken = () => localStorage.getItem('auth_token');
 
@@ -100,6 +101,86 @@ export const acceptInvite = async (token: string, email: string, password: strin
   return res.json();
 };
 
+// ── Offline Queue ─────────────────────────────────────────────────────────────
+
+export interface OfflineQueueItem {
+  id: string;
+  url: string;
+  options: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: any;
+  };
+}
+
+const OFFLINE_QUEUE_KEY = 'offline_queue';
+
+const enqueueRequest = (url: string, options: RequestInit) => {
+  const queue: OfflineQueueItem[] = JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]');
+  
+  let serializedHeaders: Record<string, string> = {};
+  if (options.headers) {
+    if (options.headers instanceof Headers) {
+      options.headers.forEach((value, key) => { serializedHeaders[key] = value; });
+    } else if (Array.isArray(options.headers)) {
+      options.headers.forEach(([key, value]) => { serializedHeaders[key] = value; });
+    } else {
+      serializedHeaders = options.headers as Record<string, string>;
+    }
+  }
+
+  delete serializedHeaders['Authorization'];
+
+  queue.push({
+    id: uuidv4(),
+    url,
+    options: {
+      method: options.method,
+      headers: serializedHeaders,
+      body: options.body ? JSON.parse(options.body as string) : undefined
+    }
+  });
+  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+};
+
+export const processOfflineQueue = async () => {
+  if (!navigator.onLine) return;
+  const queue: OfflineQueueItem[] = JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]');
+  if (queue.length === 0) return;
+
+  const newQueue: OfflineQueueItem[] = [];
+
+  for (const item of queue) {
+    try {
+      await fetch(item.url, {
+        method: item.options.method,
+        headers: { ...item.options.headers, ...authHeaders() },
+        body: item.options.body ? JSON.stringify(item.options.body) : undefined
+      });
+    } catch (error: any) {
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        newQueue.push(item);
+      }
+    }
+  }
+
+  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(newQueue));
+};
+
+const fetchWithOfflineQueue = async (url: string, options: RequestInit): Promise<Response> => {
+  try {
+    const res = await fetch(url, options);
+    return res;
+  } catch (error: any) {
+    if (error.name === 'TypeError' && error.message.includes('fetch')) {
+      enqueueRequest(url, options);
+      // Return fake successful response to prevent UI from breaking
+      return new Response(null, { status: 202, statusText: 'Accepted Offline' });
+    }
+    throw error;
+  }
+};
+
 // ── App State ─────────────────────────────────────────────────────────────────
 
 export const fetchState = async (): Promise<AppState> => {
@@ -114,7 +195,7 @@ export const fetchState = async (): Promise<AppState> => {
 };
 
 export const syncState = async (state: AppState): Promise<void> => {
-  const res = await fetch('/api/state', {
+  const res = await fetchWithOfflineQueue('/api/state', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(state),
@@ -156,7 +237,7 @@ export const reviewPlanWithAI = async (title: string, description: string, subta
 };
 
 export const createEntity = async (type: string, data: any): Promise<void> => {
-  const res = await fetch(`/api/entity/${type}`, {
+  const res = await fetchWithOfflineQueue(`/api/entity/${type}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(data),
@@ -165,7 +246,7 @@ export const createEntity = async (type: string, data: any): Promise<void> => {
 };
 
 export const updateEntity = async (type: string, id: string, updates: any): Promise<void> => {
-  const res = await fetch(`/api/entity/${type}/${id}`, {
+  const res = await fetchWithOfflineQueue(`/api/entity/${type}/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(updates),
@@ -174,7 +255,7 @@ export const updateEntity = async (type: string, id: string, updates: any): Prom
 };
 
 export const deleteEntity = async (type: string, id: string): Promise<void> => {
-  const res = await fetch(`/api/entity/${type}/${id}`, {
+  const res = await fetchWithOfflineQueue(`/api/entity/${type}/${id}`, {
     method: 'DELETE',
     headers: { ...authHeaders() },
   });
