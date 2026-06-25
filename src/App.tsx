@@ -147,7 +147,9 @@ export default function App() {
       ? defaultRights 
       : (userRecord?.customRights || userGroup?.rights || defaultRights);
 
-    if (!currentRights.allowedViews.includes(activeView) && activeView !== 'profile') {
+    const isAllowed = currentRights.allowedViews.includes(activeView) || activeView === 'profile' || (activeView === 'event-details' && currentRights.allowedViews.includes('events'));
+
+    if (!isAllowed) {
       if (currentRights.allowedViews.length > 0) {
         setActiveView(currentRights.allowedViews[0] as ActiveView);
       } else {
