@@ -134,7 +134,7 @@ export default function TagPicker({ cardId, selectedTagIds, onChange, compact }:
       )}
 
       {isOpen && (
-        <div ref={popoverRef} className="absolute right-0 top-full mt-2 w-72 bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden flex flex-col">
+        <div ref={popoverRef} className="absolute left-0 top-full mt-2 w-72 bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden flex flex-col">
           {/* Header */}
           <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
             <button 
