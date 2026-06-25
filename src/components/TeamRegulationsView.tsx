@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAppContext } from '../App';
 import { User } from '../types';
-import { Target, Activity, Shield, Save, Users, Edit2, Calendar, Clock, AlertCircle, Play, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Target, Activity, Shield, Save, Users, Edit2, Calendar, Clock, AlertCircle, Play, ChevronLeft, ChevronRight, Maximize2, Minimize2, X } from 'lucide-react';
 
 const DAYS = [
   { key: 'monday', label: 'Понеділок', short: 'Пн' },
@@ -58,6 +58,15 @@ export default function TeamRegulationsView() {
 
   const [timelineDayKey, setTimelineDayKey] = useState<string>(todayKey);
   const [viewDays, setViewDays] = useState<1 | 3 | 5>(1);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Close fullscreen on Escape
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsFullscreen(false); };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [isFullscreen]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -331,10 +340,19 @@ export default function TeamRegulationsView() {
                         <ChevronRight className="w-5 h-5"/>
                       </button>
                     </div>
-                    <div className="flex items-center bg-gray-100/80 rounded-lg p-1 border border-gray-200/50">
-                      <button onClick={() => setViewDays(1)} className={`px-3.5 py-1 text-sm font-medium rounded-md transition-all ${viewDays === 1 ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>1 день</button>
-                      <button onClick={() => setViewDays(3)} className={`px-3.5 py-1 text-sm font-medium rounded-md transition-all ${viewDays === 3 ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>3 дні</button>
-                      <button onClick={() => setViewDays(5)} className={`px-3.5 py-1 text-sm font-medium rounded-md transition-all ${viewDays === 5 ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>5 днів</button>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center bg-gray-100/80 rounded-lg p-1 border border-gray-200/50">
+                        <button onClick={() => setViewDays(1)} className={`px-3.5 py-1 text-sm font-medium rounded-md transition-all ${viewDays === 1 ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>1 день</button>
+                        <button onClick={() => setViewDays(3)} className={`px-3.5 py-1 text-sm font-medium rounded-md transition-all ${viewDays === 3 ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>3 дні</button>
+                        <button onClick={() => setViewDays(5)} className={`px-3.5 py-1 text-sm font-medium rounded-md transition-all ${viewDays === 5 ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>5 днів</button>
+                      </div>
+                      <button
+                        onClick={() => setIsFullscreen(true)}
+                        className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition"
+                        title="На весь екран"
+                      >
+                        <Maximize2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
 
@@ -441,6 +459,138 @@ export default function TeamRegulationsView() {
                       </div>
                     );
                   })()}
+
+                  {/* ── FULLSCREEN OVERLAY ── */}
+                  {isFullscreen && selectedUser && (() => {
+                    const allBlocksFs = visibleDays.flatMap(day => parseScheduleText(selectedUser.weeklySchedule?.[day.key] || ''));
+                    const startHourFs = Math.max(0, Math.min(8, ...allBlocksFs.map(b => Math.floor(b.startMinutes / 60))));
+                    const endHourFs = Math.min(24, Math.max(20, ...allBlocksFs.map(b => Math.ceil(b.endMinutes / 60))));
+                    const totalMinutesFs = (endHourFs - startHourFs) * 60;
+                    const hourMarkersFs: number[] = [];
+                    for (let h = startHourFs; h <= endHourFs; h++) hourMarkersFs.push(h);
+                    const currentMinutesFs = now.getHours() * 60 + now.getMinutes();
+                    const currentOffsetFs = currentMinutesFs - startHourFs * 60;
+                    const redLineFs = totalMinutesFs > 0 ? (currentOffsetFs / totalMinutesFs) * 100 : 0;
+
+                    return (
+                      <div
+                        className="fixed inset-0 z-[200] bg-white flex flex-col"
+                        style={{ animation: 'fadeInScale 0.18s ease' }}
+                      >
+                        {/* Fullscreen header */}
+                        <div className="flex items-center justify-between px-6 py-3 border-b border-gray-100 bg-white shrink-0">
+                          <div className="flex items-center gap-4">
+                            <img src={selectedUser.avatar} alt={selectedUser.name} className="w-8 h-8 rounded-full" />
+                            <span className="text-base font-semibold text-gray-900">{selectedUser.name} — Тижневий графік</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            {/* Day switcher */}
+                            <div className="flex items-center space-x-1">
+                              <button onClick={handlePrevDays} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition"><ChevronLeft className="w-4 h-4" /></button>
+                              <button onClick={handleToday} className="px-3 py-1 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition">Сьогодні</button>
+                              <button onClick={handleNextDays} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition"><ChevronRight className="w-4 h-4" /></button>
+                            </div>
+                            <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                              <button onClick={() => setViewDays(1)} className={`px-3 py-1 text-sm font-medium rounded-md transition ${viewDays === 1 ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>1 день</button>
+                              <button onClick={() => setViewDays(3)} className={`px-3 py-1 text-sm font-medium rounded-md transition ${viewDays === 3 ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>3 дні</button>
+                              <button onClick={() => setViewDays(5)} className={`px-3 py-1 text-sm font-medium rounded-md transition ${viewDays === 5 ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>5 днів</button>
+                            </div>
+                            <button
+                              onClick={() => setIsFullscreen(false)}
+                              className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition"
+                              title="Закрити (Esc)"
+                            >
+                              <Minimize2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => setIsFullscreen(false)}
+                              className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Calendar canvas — full remaining height */}
+                        <div className="flex-1 overflow-hidden flex flex-col px-4 pb-4 pt-3">
+                          <div className="relative border border-gray-200 rounded-xl bg-white flex-1 overflow-hidden flex flex-col shadow-sm">
+                            {/* Day headers */}
+                            <div className="flex border-b border-gray-100 bg-gray-50/50 shrink-0">
+                              <div className="w-16 shrink-0 border-r border-gray-100" />
+                              <div className={`flex-1 grid ${gridColsClass} divide-x divide-gray-100`}>
+                                {visibleDays.map(day => {
+                                  const isToday = day.key === todayKey;
+                                  return (
+                                    <div key={day.key} className="text-center py-3 text-sm font-semibold text-gray-700 relative">
+                                      {day.label}
+                                      {isToday && <span className="absolute top-1/2 -translate-y-1/2 ml-1.5 w-1.5 h-1.5 inline-block rounded-full bg-blue-500" />}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {/* Scrollable body */}
+                            <div className="flex-1 overflow-y-auto hidden-scrollbar relative">
+                              <div className="flex relative" style={{ minHeight: `${Math.max((endHourFs - startHourFs) * 120, 700)}px` }}>
+                                {/* Y-axis */}
+                                <div className="w-16 shrink-0 border-r border-gray-100 relative bg-gray-50/30">
+                                  {hourMarkersFs.map((h, i) => (
+                                    <div key={h} className="absolute left-0 right-0 flex justify-end pr-2" style={{ top: `${(i / (hourMarkersFs.length - 1)) * 100}%` }}>
+                                      <span className="text-[11px] text-gray-400 -mt-2 font-mono">{h.toString().padStart(2, '0')}:00</span>
+                                    </div>
+                                  ))}
+                                </div>
+
+                                {/* Grid + events */}
+                                <div className={`flex-1 grid ${gridColsClass} divide-x divide-gray-100 relative`}>
+                                  <div className="absolute inset-0 pointer-events-none">
+                                    {hourMarkersFs.map((h, i) => (
+                                      <div key={h} className="absolute w-full border-t border-gray-100" style={{ top: `${(i / (hourMarkersFs.length - 1)) * 100}%` }} />
+                                    ))}
+                                  </div>
+
+                                  {visibleDays.map(day => {
+                                    const blocks = parseScheduleText(selectedUser.weeklySchedule?.[day.key] || '');
+                                    const isTimelineToday = day.key === todayKey;
+                                    return (
+                                      <div key={day.key} className="relative h-full">
+                                        {blocks.map((block, idx) => {
+                                          const top = ((block.startMinutes - startHourFs * 60) / totalMinutesFs) * 100;
+                                          const height = ((block.endMinutes - block.startMinutes) / totalMinutesFs) * 100;
+                                          const isCurrent = isTimelineToday && currentMinutesFs >= block.startMinutes && currentMinutesFs < block.endMinutes;
+                                          const bgCls = isCurrent
+                                            ? 'bg-blue-100/80 text-blue-900 border-l-[3px] border-l-blue-600 shadow-sm z-10'
+                                            : 'bg-indigo-50/60 hover:bg-indigo-50/80 text-indigo-900 border-l-[3px] border-l-indigo-300';
+                                          return (
+                                            <div
+                                              key={idx}
+                                              className={`absolute left-2 right-2 rounded-r-md p-2 flex flex-col overflow-hidden ${bgCls}`}
+                                              style={{ top: `${top}%`, height: `${height}%` }}
+                                              title={`${block.activity} (${block.start}–${block.end})`}
+                                            >
+                                              <div className="text-xs font-semibold leading-tight">{block.activity}</div>
+                                              <div className="text-[11px] font-mono opacity-70 mt-0.5">{block.start} – {block.end}</div>
+                                            </div>
+                                          );
+                                        })}
+                                        {isTimelineToday && currentMinutesFs >= startHourFs * 60 && currentMinutesFs <= endHourFs * 60 && (
+                                          <div className="absolute left-0 right-0 border-t-[1.5px] border-red-500 z-20 pointer-events-none" style={{ top: `${redLineFs}%` }}>
+                                            <div className="w-2.5 h-2.5 rounded-full bg-red-500 -mt-1.5 -ml-1 absolute" />
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   
                   {!selectedUser.operationalDuties && !selectedUser.goals && (!selectedUser.weeklySchedule || Object.values(selectedUser.weeklySchedule).every(v => !v)) && (
                     <div className="absolute inset-0 z-30 flex items-center justify-center bg-white/80 backdrop-blur-sm rounded-xl">

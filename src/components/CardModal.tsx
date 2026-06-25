@@ -139,19 +139,19 @@ export default function CardModal({ card, onClose }: Props) {
     }
   };
 
+  // Always read the LIVE card from state so updates (tags, assignee…) are reflected immediately
+  const liveCard = state.cards.find(c => c.id === card.id) || card;
+
   // Assignee: the main card assigneeId
-  const assignees = card.assigneeId ? [state.users.find(u => u.id === card.assigneeId)].filter(Boolean) : [];
+  const assignees = liveCard.assigneeId ? [state.users.find(u => u.id === liveCard.assigneeId)].filter(Boolean) : [];
 
-  // Tags
-  const selectedTags = (card.tagIds || []).map(id => state.tags.find(t => t.id === id)).filter(Boolean);
-
-  // Progress
-  const subtasks = card.subtasks || [];
+  // Progress — use liveCard subtasks
+  const subtasks = liveCard.subtasks || [];
   const completedCount = subtasks.filter(s => s.completed).length;
   const progressPct = subtasks.length ? Math.round((completedCount / subtasks.length) * 100) : 0;
 
   // Sorted comments (newest last)
-  const sortedComments = [...(card.comments || [])].sort(
+  const sortedComments = [...(liveCard.comments || [])].sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   );
 
@@ -201,11 +201,11 @@ export default function CardModal({ card, onClose }: Props) {
             {/* Title */}
             <div className="flex items-start gap-3">
               <button
-                onClick={() => handleUpdate({ isCompleted: !card.isCompleted })}
+                onClick={() => handleUpdate({ isCompleted: !liveCard.isCompleted })}
                 className="mt-1 shrink-0 text-gray-300 hover:text-blue-500 transition"
-                title={card.isCompleted ? 'Відмітити як невиконане' : 'Відмітити як виконане'}
+                title={liveCard.isCompleted ? 'Відмітити як невиконане' : 'Відмітити як виконане'}
               >
-                {card.isCompleted
+                {liveCard.isCompleted
                   ? <CheckCircle2 className="w-5 h-5 text-green-500" />
                   : <Circle className="w-5 h-5" />}
               </button>
@@ -216,7 +216,7 @@ export default function CardModal({ card, onClose }: Props) {
                 onBlur={handleTitleBlur}
                 rows={title.length > 40 ? 2 : 1}
               />
-              {card.storyPoints && (
+              {liveCard.storyPoints && (
                 <span className="shrink-0 mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
                   <Sparkles className="w-3 h-3 mr-1" />
                   {card.storyPoints} SP
@@ -351,25 +351,13 @@ export default function CardModal({ card, onClose }: Props) {
               </div>
             )}
 
-            {/* Tags row */}
-            {(selectedTags.length > 0 || true) && (
-              <div className="pl-8">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Мітки</p>
-                <div className="flex items-center flex-wrap gap-2">
-                  {selectedTags.map(tag => tag && (
-                    <span
-                      key={tag.id}
-                      className="px-3 py-1 rounded-md text-sm font-semibold text-white"
-                      style={{ backgroundColor: tag.color }}
-                    >
-                      {tag.name}
-                    </span>
-                  ))}
-                  {/* TagPicker toggle */}
-                  <TagPicker cardId={card.id} selectedTagIds={card.tagIds || []} compact />
-                </div>
+            {/* Tags row — TagPicker compact renders both the tag pills AND the add button */}
+            <div className="pl-8">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Мітки</p>
+              <div className="flex items-center flex-wrap gap-2">
+                <TagPicker cardId={card.id} selectedTagIds={liveCard.tagIds || []} compact />
               </div>
-            )}
+            </div>
 
             {/* Description */}
             <div className="pl-8">
