@@ -47,6 +47,7 @@ export default function CardModal({ card, onClose }: Props) {
   const [uploading, setUploading] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [isEditingDescription, setIsEditingDescription] = useState(false);
 
   // Which "add" panels are open
   const [openPanel, setOpenPanel] = useState<'members' | 'date' | 'checklist' | 'attachment' | null>(null);
@@ -365,13 +366,57 @@ export default function CardModal({ card, onClose }: Props) {
                 <AlignLeft className="w-4 h-4 text-gray-500 -ml-6" />
                 <p className="text-sm font-semibold text-gray-700">Опис</p>
               </div>
-              <textarea
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm text-gray-700 focus:bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition resize-none min-h-[90px]"
-                placeholder="Додати детальніший опис..."
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-                onBlur={handleDescriptionBlur}
-              />
+
+              {isEditingDescription ? (
+                /* Edit mode */
+                <div className="space-y-2">
+                  <textarea
+                    autoFocus
+                    className="w-full bg-white border border-blue-400 ring-2 ring-blue-100 rounded-xl p-3 text-sm text-gray-700 outline-none transition resize-none min-h-[110px]"
+                    placeholder="Додати детальніший опис..."
+                    value={description}
+                    onChange={e => setDescription(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Escape') {
+                        setDescription(liveCard.description || '');
+                        setIsEditingDescription(false);
+                      }
+                    }}
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        handleUpdate({ description });
+                        setIsEditingDescription(false);
+                      }}
+                      className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition shadow-sm"
+                    >
+                      Зберегти
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDescription(liveCard.description || '');
+                        setIsEditingDescription(false);
+                      }}
+                      className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition"
+                    >
+                      Скасувати
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* View mode */
+                <div
+                  onClick={() => setIsEditingDescription(true)}
+                  className={`w-full min-h-[80px] rounded-xl p-3 text-sm cursor-pointer transition ${
+                    description
+                      ? 'text-gray-700 bg-gray-50 hover:bg-gray-100 whitespace-pre-wrap'
+                      : 'text-gray-400 bg-gray-50 hover:bg-gray-100 italic'
+                  }`}
+                >
+                  {description || 'Додати детальніший опис...'}
+                </div>
+              )}
             </div>
 
             {/* Subtasks / Checklist */}

@@ -103,16 +103,26 @@ export default function TagPicker({ cardId, selectedTagIds, onChange, compact }:
       
       <div className={`flex flex-wrap gap-1.5 ${compact ? '' : 'mb-2'}`}>
         {cardTags.map(tag => (
-          <span 
+          <span
             key={tag.id}
-            className="px-2.5 py-1 rounded text-xs font-semibold text-white flex items-center shadow-sm"
+            className="pl-2.5 pr-1 py-1 rounded text-xs font-semibold text-white flex items-center gap-1 shadow-sm"
             style={{ backgroundColor: tag.color }}
           >
             {tag.name}
+            {compact && (
+              <button
+                type="button"
+                onClick={() => toggleTag(tag.id)}
+                className="ml-0.5 opacity-70 hover:opacity-100 transition rounded-full hover:bg-white/20 p-0.5"
+                title="Видалити мітку"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
           </span>
         ))}
         {compact && (
-          <button 
+          <button
             onClick={() => setIsOpen(true)}
             className="flex items-center px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-xs font-medium transition"
             title="Додати тег"

@@ -53,8 +53,9 @@ export default function MyProfileView() {
   const myCardsThisMonth = myCards.filter(c => isThisMonth(c.deadline));
   const myTotalStoryPoints = myCardsThisMonth.filter(c => c.isCompleted).reduce((sum, c) => sum + (c.storyPoints || 0), 0);
 
-  const getDeadlineStatus = (deadline: string | null) => {
+  const getDeadlineStatus = (deadline: string | null | undefined, isCompleted?: boolean) => {
     if (!deadline) return null;
+    if (isCompleted) return null; // виконані завдання не мають статусу дедлайну
     const d = new Date(deadline);
     d.setHours(0, 0, 0, 0);
     const diff = Math.ceil((d.getTime() - now.getTime()) / 86400000);
@@ -73,8 +74,8 @@ export default function MyProfileView() {
 
   const sortedCards = [...myCards].sort((a, b) => {
     const order = { overdue: 0, today: 1, soon: 2, ok: 3 };
-    const sa = getDeadlineStatus(a.deadline) || 'ok';
-    const sb = getDeadlineStatus(b.deadline) || 'ok';
+    const sa = getDeadlineStatus(a.deadline, a.isCompleted) || 'ok';
+    const sb = getDeadlineStatus(b.deadline, b.isCompleted) || 'ok';
     return order[sa] - order[sb];
   });
 
@@ -126,8 +127,8 @@ export default function MyProfileView() {
   const roleLabel = currentUser.role === 'admin' ? 'Адміністратор' : 'Член команди';
   const roleColor = currentUser.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700';
 
-  const overdueCount = myCards.filter(c => getDeadlineStatus(c.deadline) === 'overdue').length;
-  const todayCount = myCards.filter(c => getDeadlineStatus(c.deadline) === 'today').length;
+  const overdueCount = myCards.filter(c => !c.isCompleted && getDeadlineStatus(c.deadline, c.isCompleted) === 'overdue').length;
+  const todayCount = myCards.filter(c => !c.isCompleted && getDeadlineStatus(c.deadline, c.isCompleted) === 'today').length;
 
   return (
     <div className="w-full max-w-5xl mx-auto space-y-6 pb-8">
@@ -264,7 +265,7 @@ export default function MyProfileView() {
                       </div>
                       <div className="divide-y divide-gray-50">
                         {group.cards.map(card => {
-                          const status = getDeadlineStatus(card.deadline) || 'ok';
+                          const status = getDeadlineStatus(card.deadline, card.isCompleted) || 'ok';
                           const cfg = deadlineConfig[status];
                           const tags = getCardTags(card);
                           const completedSubs = card.subtasks?.filter(s => s.completed).length || 0;
