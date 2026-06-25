@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { List } from '../types';
 import { useAppContext } from '../App';
 import BoardCard from './BoardCard';
-import { Plus, MoreHorizontal, Trash2, Eye, EyeOff, CheckSquare, X, Check } from 'lucide-react';
+import { Plus, MoreHorizontal, Trash2, Eye, EyeOff, CheckSquare, X, Check, ArrowDownAZ } from 'lucide-react';
 import { cn } from '../utils';
 
 interface Props {
@@ -44,6 +44,27 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
       setNewCardTitle('');
       setIsAdding(false);
     }
+  };
+
+  const sortCardsByDeadline = () => {
+    setMenuOpen(false);
+    
+    // Sort logic: empty deadlines at the bottom, closest deadlines at the top
+    const sorted = [...cards].sort((a, b) => {
+      // Completed cards can go to the bottom too if desired, but we'll stick to deadline first
+      if (!a.deadline && !b.deadline) return 0;
+      if (!a.deadline) return 1;
+      if (!b.deadline) return -1;
+      return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
+    });
+
+    // Assign sequential orders (spaced by 1000 for safety)
+    sorted.forEach((c, idx) => {
+      const newOrder = idx * 1000;
+      if (c.order !== newOrder) {
+        updateCard(c.id, { order: newOrder });
+      }
+    });
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -157,6 +178,13 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
                 >
                   <CheckSquare className="w-4 h-4 mr-2 text-gray-500" />
                   Виділити задачі
+                </button>
+                <button
+                  onClick={sortCardsByDeadline}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center"
+                >
+                  <ArrowDownAZ className="w-4 h-4 mr-2 text-gray-500" />
+                  Сортувати за датою
                 </button>
                 <button
                   onClick={() => { 
