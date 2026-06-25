@@ -156,6 +156,7 @@ export interface Project {
   managerIds: string[];
   deadline?: string | null;
   createdAt: string;
+  groupName?: string | null;
   processId?: string | null;
   currentProcessNodeId?: string | null;
   activeProcessNodeIds?: string[];

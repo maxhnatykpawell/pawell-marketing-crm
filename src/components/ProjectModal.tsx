@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Project, ProjectStatus } from '../types';
 import { useAppContext } from '../App';
-import { X, Calendar, Users, Palette, Check } from 'lucide-react';
+import { X, Calendar, Users, Palette, Check, FolderOpen } from 'lucide-react';
 
 interface Props {
   project?: Project;
@@ -37,8 +37,18 @@ export default function ProjectModal({ project, onClose }: Props) {
   const [status, setStatus] = useState<ProjectStatus>(project?.status || 'planning');
   const [managerIds, setManagerIds] = useState<string[]>(project?.managerIds || (currentUser ? [currentUser.userId] : []));
   const [deadline, setDeadline] = useState(project?.deadline || '');
+  const [groupName, setGroupName] = useState(project?.groupName || '');
 
   const [isManagerDropdownOpen, setIsManagerDropdownOpen] = useState(false);
+
+  // Collect unique existing group names for autocomplete
+  const existingGroups = Array.from(
+    new Set(
+      (state.projects || [])
+        .map(p => p.groupName)
+        .filter((g): g is string => !!g && g.trim() !== '')
+    )
+  ).sort();
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -62,6 +72,7 @@ export default function ProjectModal({ project, onClose }: Props) {
       status,
       managerIds,
       deadline: deadline || null,
+      groupName: groupName.trim() || null,
     };
 
     if (project) {
@@ -109,6 +120,31 @@ export default function ProjectModal({ project, onClose }: Props) {
               value={title}
               onChange={e => setTitle(e.target.value)}
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1.5">
+              <FolderOpen className="w-4 h-4 text-gray-400" />
+              Група (папка)
+            </label>
+            <input
+              type="text"
+              list="group-suggestions"
+              className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition outline-none"
+              placeholder="Наприклад: Q3 2025 або Клієнти…"
+              value={groupName}
+              onChange={e => setGroupName(e.target.value)}
+            />
+            {existingGroups.length > 0 && (
+              <datalist id="group-suggestions">
+                {existingGroups.map(g => (
+                  <option key={g} value={g} />
+                ))}
+              </datalist>
+            )}
+            {groupName.trim() === '' && (
+              <p className="text-xs text-gray-400 mt-1">Залиште порожнім — проєкт буде в «Без групи»</p>
+            )}
           </div>
 
           <div>
