@@ -95,20 +95,23 @@ export default function CardModal({ card, onClose }: Props) {
     e.preventDefault();
     if (!newSubtaskTitle.trim()) return;
     const newSubtask: Subtask = { id: uuidv4(), title: newSubtaskTitle.trim(), completed: false };
-    handleUpdate({ subtasks: [...(card.subtasks || []), newSubtask] });
+    const currentSubtasks = (state.cards.find(c => c.id === card.id) || card).subtasks || [];
+    handleUpdate({ subtasks: [...currentSubtasks, newSubtask] });
     setNewSubtaskTitle('');
   };
 
   const toggleSubtask = (subtaskId: string) => {
+    const currentSubtasks = (state.cards.find(c => c.id === card.id) || card).subtasks || [];
     handleUpdate({
-      subtasks: card.subtasks.map(st =>
+      subtasks: currentSubtasks.map(st =>
         st.id === subtaskId ? { ...st, completed: !st.completed } : st
       )
     });
   };
 
   const deleteSubtask = (subtaskId: string) => {
-    handleUpdate({ subtasks: card.subtasks.filter(st => st.id !== subtaskId) });
+    const currentSubtasks = (state.cards.find(c => c.id === card.id) || card).subtasks || [];
+    handleUpdate({ subtasks: currentSubtasks.filter(st => st.id !== subtaskId) });
   };
 
   const handleAddComment = (e: React.FormEvent) => {
