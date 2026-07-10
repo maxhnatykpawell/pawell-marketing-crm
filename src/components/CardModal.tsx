@@ -48,6 +48,7 @@ export default function CardModal({ card, onClose }: Props) {
   const [isReviewing, setIsReviewing] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
+  const [subtaskAssigneeOpen, setSubtaskAssigneeOpen] = useState<string | null>(null);
 
   // Which "add" panels are open
   const [openPanel, setOpenPanel] = useState<'members' | 'date' | 'checklist' | 'attachment' | null>(null);
@@ -112,6 +113,16 @@ export default function CardModal({ card, onClose }: Props) {
   const deleteSubtask = (subtaskId: string) => {
     const currentSubtasks = (state.cards.find(c => c.id === card.id) || card).subtasks || [];
     handleUpdate({ subtasks: currentSubtasks.filter(st => st.id !== subtaskId) });
+  };
+
+  const updateSubtaskAssignee = (subtaskId: string, assigneeId: string | null) => {
+    const currentSubtasks = (state.cards.find(c => c.id === card.id) || card).subtasks || [];
+    handleUpdate({
+      subtasks: currentSubtasks.map(st =>
+        st.id === subtaskId ? { ...st, assigneeId } : st
+      )
+    });
+    setSubtaskAssigneeOpen(null);
   };
 
   const handleAddComment = (e: React.FormEvent) => {
@@ -451,27 +462,99 @@ export default function CardModal({ card, onClose }: Props) {
                 )}
 
                 <div className="space-y-1">
-                  {subtasks.map(st => (
-                    <div key={st.id} className="flex items-start gap-2 py-1 px-2 rounded-lg hover:bg-gray-50 group transition">
-                      <button
-                        onClick={() => toggleSubtask(st.id)}
-                        className="mt-0.5 shrink-0"
-                      >
-                        {st.completed
-                          ? <CheckSquare className="w-4 h-4 text-blue-500" />
-                          : <div className="w-4 h-4 border-2 border-gray-300 rounded" />}
-                      </button>
-                      <span className={`text-sm flex-1 ${st.completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>
-                        {st.title}
-                      </span>
-                      <button
-                        onClick={() => deleteSubtask(st.id)}
-                        className="opacity-0 group-hover:opacity-100 transition text-gray-300 hover:text-red-500 p-0.5"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
+                  {subtasks.map(st => {
+                    const stAssignee = st.assigneeId ? state.users.find(u => u.id === st.assigneeId) : null;
+                    const isAssigneeOpen = subtaskAssigneeOpen === st.id;
+                    return (
+                      <div key={st.id} className="flex items-center gap-2 py-1 px-2 rounded-lg hover:bg-gray-50 group transition relative">
+                        <button
+                          onClick={() => toggleSubtask(st.id)}
+                          className="shrink-0"
+                        >
+                          {st.completed
+                            ? <CheckSquare className="w-4 h-4 text-blue-500" />
+                            : <div className="w-4 h-4 border-2 border-gray-300 rounded" />}
+                        </button>
+                        <span className={`text-sm flex-1 ${st.completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>
+                          {st.title}
+                        </span>
+
+                        {/* Subtask assignee button */}
+                        <div className="relative shrink-0">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setSubtaskAssigneeOpen(isAssigneeOpen ? null : st.id); }}
+                            className="opacity-0 group-hover:opacity-100 transition flex items-center justify-center"
+                            title={stAssignee ? stAssignee.name : 'Призначити виконавця'}
+                          >
+                            {stAssignee ? (
+                              stAssignee.avatar
+                                ? <img src={stAssignee.avatar} alt={stAssignee.name} className="w-5 h-5 rounded-full border border-gray-200 hover:ring-2 hover:ring-blue-400 transition" />
+                                : <div className="w-5 h-5 rounded-full bg-amber-400 flex items-center justify-center text-white text-[9px] font-bold hover:ring-2 hover:ring-blue-400 transition">{stAssignee.name.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase()}</div>
+                            ) : (
+                              <div className="w-5 h-5 rounded-full border border-dashed border-gray-300 flex items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-500 transition">
+                                <UserIcon className="w-3 h-3" />
+                              </div>
+                            )}
+                          </button>
+
+                          {/* Always show assigned avatar even without hover */}
+                          {stAssignee && !isAssigneeOpen && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setSubtaskAssigneeOpen(st.id); }}
+                              className="absolute inset-0 opacity-100 group-hover:opacity-0 transition pointer-events-none group-hover:pointer-events-none"
+                              title={stAssignee.name}
+                            >
+                              {stAssignee.avatar
+                                ? <img src={stAssignee.avatar} alt={stAssignee.name} className="w-5 h-5 rounded-full border border-gray-200" />
+                                : <div className="w-5 h-5 rounded-full bg-amber-400 flex items-center justify-center text-white text-[9px] font-bold">{stAssignee.name.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase()}</div>
+                              }
+                            </button>
+                          )}
+
+                          {/* Dropdown */}
+                          {isAssigneeOpen && (
+                            <>
+                              <div className="fixed inset-0 z-10" onClick={() => setSubtaskAssigneeOpen(null)} />
+                              <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-xl shadow-xl border border-gray-200 py-1 z-20 overflow-hidden">
+                                <button
+                                  onClick={() => updateSubtaskAssignee(st.id, null)}
+                                  className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 flex items-center gap-2"
+                                >
+                                  <div className="w-5 h-5 rounded-full border border-dashed border-gray-300 flex items-center justify-center">
+                                    <X className="w-2.5 h-2.5 text-gray-400" />
+                                  </div>
+                                  Не призначено
+                                </button>
+                                {state.users.map(u => (
+                                  <button
+                                    key={u.id}
+                                    onClick={() => updateSubtaskAssignee(st.id, u.id)}
+                                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 flex items-center gap-2 ${
+                                      st.assigneeId === u.id ? 'bg-blue-50 text-blue-700' : 'text-gray-700'
+                                    }`}
+                                  >
+                                    {u.avatar
+                                      ? <img src={u.avatar} alt={u.name} className="w-5 h-5 rounded-full border border-gray-200" />
+                                      : <div className="w-5 h-5 rounded-full bg-amber-400 flex items-center justify-center text-white text-[9px] font-bold">{u.name.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase()}</div>
+                                    }
+                                    <span className="truncate">{u.name}</span>
+                                    {st.assigneeId === u.id && <Check className="w-3 h-3 ml-auto shrink-0 text-blue-500" />}
+                                  </button>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={() => deleteSubtask(st.id)}
+                          className="opacity-0 group-hover:opacity-100 transition text-gray-300 hover:text-red-500 p-0.5 shrink-0"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {showSubtaskInput ? (

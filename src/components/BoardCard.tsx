@@ -30,6 +30,16 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
   const cardTags = state.tags?.filter(t => card.tagIds?.includes(t.id)) || [];
   const project = state.projects?.find(p => p.id === card.projectId);
 
+  // Unique subtask assignees (excluding the main card assignee to avoid duplication)
+  const subtaskAssigneeIds = [...new Set(
+    (card.subtasks || [])
+      .map(st => st.assigneeId)
+      .filter((id): id is string => !!id && id !== card.assigneeId)
+  )];
+  const subtaskAssignees = subtaskAssigneeIds
+    .map(id => state.users.find(u => u.id === id))
+    .filter(Boolean) as typeof state.users;
+
   const isOverdue = card.deadline && new Date(card.deadline) < new Date() && card.listId !== state.lists[state.lists.length - 1]?.id && !card.isCompleted; // basic logic, last list is done
 
   return (
@@ -180,14 +190,26 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
               )}
             </div>
 
-            {/* Assignee Avatar */}
-            <div className="ml-auto">
+            {/* Assignee Avatars */}
+            <div className="ml-auto flex items-center gap-0.5">
+              {/* Subtask assignees — tiny avatars */}
+              {subtaskAssignees.slice(0, 3).map(u => (
+                u.avatar
+                  ? <img key={u.id} src={u.avatar} alt={u.name} title={u.name} className="w-4 h-4 rounded-full border border-white ring-1 ring-gray-200 -ml-1 first:ml-0" />
+                  : <div key={u.id} title={u.name} className="w-4 h-4 rounded-full bg-amber-400 flex items-center justify-center text-white text-[7px] font-bold border border-white ring-1 ring-gray-200 -ml-1 first:ml-0">{u.name.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase()}</div>
+              ))}
+              {subtaskAssignees.length > 3 && (
+                <div className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 text-[7px] font-bold border border-white -ml-1">
+                  +{subtaskAssignees.length - 3}
+                </div>
+              )}
+              {/* Main card assignee */}
               {assignee && (
-                <img 
-                  src={assignee.avatar} 
-                  alt={assignee.name} 
+                <img
+                  src={assignee.avatar}
+                  alt={assignee.name}
                   title={assignee.name}
-                  className="w-6 h-6 rounded-full block border border-gray-200" 
+                  className="w-6 h-6 rounded-full block border border-gray-200 ml-1"
                 />
               )}
             </div>
