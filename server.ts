@@ -685,7 +685,7 @@ async function startServer() {
 
   app.use(express.json({ limit: '50mb' }));
 
-  const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
+  const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
   if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
   app.use('/uploads', express.static(UPLOADS_DIR));
 
