@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../App';
-import { changePassword, setUserCredentials, resetUserPassword, getAuthList, generateInviteToken } from '../api';
+import { changePassword, setUserCredentials, resetUserPassword, getAuthList, generateInviteToken, testPersonalNotification } from '../api';
 import {
   Shield, User as UserIcon, Mail, Lock, Key, RefreshCw,
   Check, X, AlertCircle, Eye, EyeOff, ChevronDown, ChevronUp,
-  Copy, CheckCheck, Plus, Edit3, Link, Settings2
+  Copy, CheckCheck, Plus, Edit3, Link, Settings2, Send, MessageCircle
 } from 'lucide-react';
 import { AccessRights } from '../types';
 
@@ -40,6 +40,12 @@ export default function AdminUsersPanel() {
   
   const [inviteLoading, setInviteLoading] = useState<string | null>(null);
   const [inviteLink, setInviteLink] = useState<{ userId: string; link: string } | null>(null);
+
+  // Telegram Chat ID editing
+  const [telegramEdit, setTelegramEdit] = useState<{ userId: string; value: string } | null>(null);
+  const [telegramSaving, setTelegramSaving] = useState<string | null>(null);
+  const [telegramTesting, setTelegramTesting] = useState<string | null>(null);
+  const [telegramTestResult, setTelegramTestResult] = useState<{ userId: string; ok: boolean; msg: string } | null>(null);
 
   const loadAuthList = async () => {
     setLoadingList(true);
@@ -123,6 +129,31 @@ export default function AdminUsersPanel() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
+  };
+
+  const handleSaveTelegramId = async (userId: string) => {
+    if (!telegramEdit || telegramEdit.userId !== userId) return;
+    setTelegramSaving(userId);
+    try {
+      await updateUser(userId, { telegramChatId: telegramEdit.value.trim() || null });
+      setTelegramEdit(null);
+    } finally {
+      setTelegramSaving(null);
+    }
+  };
+
+  const handleTestTelegram = async (userId: string) => {
+    setTelegramTesting(userId);
+    setTelegramTestResult(null);
+    try {
+      await testPersonalNotification(userId);
+      setTelegramTestResult({ userId, ok: true, msg: 'Тестове повідомлення надіслано!' });
+    } catch (err: any) {
+      setTelegramTestResult({ userId, ok: false, msg: err.message || 'Помилка надсилання' });
+    } finally {
+      setTelegramTesting(null);
+      setTimeout(() => setTelegramTestResult(null), 5000);
+    }
   };
 
   if (currentUser?.role !== 'admin') return null;
@@ -218,19 +249,6 @@ export default function AdminUsersPanel() {
                           </button>
                         )}
 
-                        {!hasAccess && !isEditingThis && (
-                          <button
-                            onClick={() => handleInvite(user.id)}
-                            disabled={inviteLoading === user.id}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition disabled:opacity-60"
-                          >
-                            {inviteLoading === user.id ? (
-                              <div className="w-3.5 h-3.5 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin" />
-                            ) : (
-                              <Link className="w-3.5 h-3.5" />
-                            )}
-                            Запросити
-                          </button>
                         )}
 
                         {hasAccess && (
@@ -384,6 +402,92 @@ export default function AdminUsersPanel() {
                         </div>
                       </form>
                     )}
+
+                    {/* Telegram Chat ID */}
+                    <div className="mt-3 bg-sky-50/70 border border-sky-100 rounded-xl p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-1.5">
+                          <MessageCircle className="w-3.5 h-3.5 text-sky-600" />
+                          <span className="text-xs font-semibold text-sky-800">Telegram Chat ID</span>
+                          {user.telegramChatId && (
+                            <span className="text-[10px] bg-green-100 text-green-700 font-bold px-1.5 py-0.5 rounded-full">✓ Налаштовано</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {user.telegramChatId && telegramEdit?.userId !== user.id && (
+                            <button
+                              onClick={() => handleTestTelegram(user.id)}
+                              disabled={telegramTesting === user.id}
+                              className="flex items-center gap-1 px-2 py-1 text-[10px] font-semibold bg-sky-100 hover:bg-sky-200 text-sky-700 rounded-lg transition disabled:opacity-60"
+                            >
+                              {telegramTesting === user.id
+                                ? <div className="w-3 h-3 border-2 border-sky-300 border-t-sky-600 rounded-full animate-spin" />
+                                : <Send className="w-3 h-3" />
+                              }
+                              Тест
+                            </button>
+                          )}
+                          <button
+                            onClick={() => telegramEdit?.userId === user.id ? setTelegramEdit(null) : setTelegramEdit({ userId: user.id, value: user.telegramChatId || '' })}
+                            className="flex items-center gap-1 px-2 py-1 text-[10px] font-semibold bg-white border border-sky-200 hover:bg-sky-50 text-sky-700 rounded-lg transition"
+                          >
+                            {telegramEdit?.userId === user.id ? <X className="w-3 h-3" /> : <Edit3 className="w-3 h-3" />}
+                            {telegramEdit?.userId === user.id ? 'Скасувати' : (user.telegramChatId ? 'Змінити' : 'Вказати')}
+                          </button>
+                        </div>
+                      </div>
+
+                      {telegramEdit?.userId === user.id ? (
+                        <div className="space-y-2">
+                          <div className="bg-sky-100/60 rounded-lg px-2.5 py-2 text-[10px] text-sky-700 leading-relaxed">
+                            <span className="font-bold">Як отримати Chat ID:</span> Попросіть людину написати боту
+                            {' '}<span className="font-mono bg-white px-1 py-0.5 rounded border border-sky-200">/start</span>{' '}
+                            або будь-яке повідомлення, а потім відкрийте
+                            {' '}<span className="font-mono bg-white px-1 py-0.5 rounded border border-sky-200">https://api.telegram.org/bot{'{TOKEN}'}/getUpdates</span>{' '}
+                            та знайдіть поле <span className="font-mono">message.chat.id</span>.
+                          </div>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={telegramEdit.value}
+                              onChange={e => setTelegramEdit({ ...telegramEdit, value: e.target.value })}
+                              placeholder="Наприклад: 123456789"
+                              className="flex-1 px-3 py-1.5 text-xs border border-sky-200 rounded-lg outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100 font-mono"
+                            />
+                            <button
+                              onClick={() => handleSaveTelegramId(user.id)}
+                              disabled={telegramSaving === user.id}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold rounded-lg transition disabled:opacity-60"
+                            >
+                              {telegramSaving === user.id
+                                ? <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                : <Check className="w-3 h-3" />
+                              }
+                              Зберегти
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-gray-500 font-mono">
+                          {user.telegramChatId
+                            ? <span className="text-sky-700 font-semibold">{user.telegramChatId}</span>
+                            : <span className="text-gray-400 italic">Не вказано — персональні сповіщення не надсилатимуться</span>
+                          }
+                        </div>
+                      )}
+
+                      {/* Test result */}
+                      {telegramTestResult?.userId === user.id && (
+                        <div className={`mt-2 text-xs px-2.5 py-1.5 rounded-lg font-medium ${
+                          telegramTestResult.ok
+                            ? 'bg-green-50 text-green-700 border border-green-200'
+                            : 'bg-red-50 text-red-700 border border-red-200'
+                        }`}>
+                          {telegramTestResult.ok ? '✅ ' : '❌ '}{telegramTestResult.msg}
+                        </div>
+                      )}
+                    </div>
+
                   </div>
                 );
               })}

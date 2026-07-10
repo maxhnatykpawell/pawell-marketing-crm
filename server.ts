@@ -108,6 +108,22 @@ const INITIAL_APP_STATE = {
 const ATOMIC_COLLECTIONS = ['users', 'userGroups', 'lists', 'cards', 'tags', 'contentPlans', 'events', 'projects', 'metrics', 'boards', 'processes'];
 const SETTINGS_DOC = 'settings';
 
+const DEFAULT_NOTIFICATION_TEMPLATES = {
+  taskAssigned: '🎯 *Тобі призначено нову задачу!*\n\n📌 *{{taskTitle}}*\n📅 Дедлайн: {{deadline}}\n🗂 Проєкт: {{projectName}}',
+  taskOverdue: '⚠️ *Задача протермінована!*\n\n📌 *{{taskTitle}}*\n📅 Дедлайн був: {{deadline}}\n⏰ Прострочено на {{daysOverdue}} дн.',
+  dailyDigestHeader: '📋 *Твої задачі на сьогодні, {{assigneeName}}!*\n\n',
+  dailyDigestItem: '🔹 *{{taskTitle}}* — до {{deadline}}\n',
+};
+
+const DEFAULT_PERSONAL_NOTIFICATIONS = {
+  enabled: true,
+  notifyOnAssign: true,
+  notifyOnOverdue: true,
+  dailyDigestEnabled: true,
+  dailyDigestTime: '08:30',
+  templates: DEFAULT_NOTIFICATION_TEMPLATES,
+};
+
 async function updateLastModified() {
   const db = initFirebase();
   if (db) {
@@ -489,6 +505,178 @@ function setupAnnouncementCrons(announcements: AnnouncementRecord[]) {
     }
   }
 }
+// ── Personal Notifications ───────────────────────────────────────────────────
+
+function fillTemplate(template: string, vars: Record<string, string>): string {
+  return Object.entries(vars).reduce((t, [k, v]) => t.replace(new RegExp(`{{${k}}}`, 'g'), v || ''), template);
+}
+
+async function sendPersonalTelegramMessage(chatId: string, text: string): Promise<{ success: boolean; error?: string }> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || !chatId) return { success: false, error: 'missing_credentials' };
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' })
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error(`Telegram personal message error (chatId: ${chatId}):`, errText);
+      return { success: false, error: errText };
+    }
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+}
+
+async function notifyCardAssigned(state: any, cardId: string, assigneeId: string): Promise<void> {
+  const settings = state.personalNotifications || DEFAULT_PERSONAL_NOTIFICATIONS;
+  if (!settings.enabled || !settings.notifyOnAssign) return;
+
+  const card = (state.cards || []).find((c: any) => c.id === cardId);
+  const assignee = (state.users || []).find((u: any) => u.id === assigneeId);
+  if (!card || !assignee?.telegramChatId) return;
+
+  const project = card.projectId ? (state.projects || []).find((p: any) => p.id === card.projectId) : null;
+  const deadline = card.deadline ? new Date(card.deadline).toLocaleDateString('uk-UA') : 'не вказано';
+
+  const text = fillTemplate(settings.templates?.taskAssigned || DEFAULT_NOTIFICATION_TEMPLATES.taskAssigned, {
+    taskTitle: card.title,
+    assigneeName: assignee.name,
+    deadline,
+    projectName: project?.title || 'без проєкту',
+  });
+
+  await sendPersonalTelegramMessage(assignee.telegramChatId, text);
+  console.log(`📨 Assigned notification sent to ${assignee.name} (chatId: ${assignee.telegramChatId})`);
+}
+
+async function sendDailyPersonalDigests(state: any): Promise<void> {
+  const settings = state.personalNotifications || DEFAULT_PERSONAL_NOTIFICATIONS;
+  if (!settings.enabled || !settings.dailyDigestEnabled) return;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const isToday = (d?: string) => { if (!d) return false; const x = new Date(d); x.setHours(0,0,0,0); return x.getTime() === today.getTime(); };
+  const isOverdue = (d?: string) => { if (!d) return false; const x = new Date(d); x.setHours(0,0,0,0); return x.getTime() < today.getTime(); };
+
+  const validListIds = (state.lists || []).map((l: any) => l.id);
+  const allCards = (state.cards || []).filter((c: any) => validListIds.includes(c.listId) && !c.isCompleted);
+
+  const templates = settings.templates || DEFAULT_NOTIFICATION_TEMPLATES;
+  const headerTpl = templates.dailyDigestHeader || DEFAULT_NOTIFICATION_TEMPLATES.dailyDigestHeader;
+  const itemTpl = templates.dailyDigestItem || DEFAULT_NOTIFICATION_TEMPLATES.dailyDigestItem;
+
+  const usersWithTelegram = (state.users || []).filter((u: any) => u.telegramChatId);
+
+  for (const user of usersWithTelegram) {
+    const userCards = allCards.filter((c: any) => c.assigneeId === user.id);
+    const todayCards = userCards.filter((c: any) => isToday(c.deadline));
+    const overdueCards = userCards.filter((c: any) => isOverdue(c.deadline));
+
+    if (todayCards.length === 0 && overdueCards.length === 0) continue;
+
+    let msg = fillTemplate(headerTpl, { assigneeName: user.name });
+
+    if (todayCards.length > 0) {
+      msg += '✅ *Сьогодні:*\n';
+      todayCards.forEach((c: any) => {
+        msg += fillTemplate(itemTpl, { taskTitle: c.title, deadline: 'сьогодні' });
+      });
+      msg += '\n';
+    }
+    if (overdueCards.length > 0) {
+      msg += '⚠️ *Протерміновані:*\n';
+      overdueCards.forEach((c: any) => {
+        const dl = c.deadline ? new Date(c.deadline).toLocaleDateString('uk-UA') : '—';
+        msg += fillTemplate(itemTpl, { taskTitle: c.title, deadline: dl });
+      });
+    }
+
+    if (msg.length > 4000) msg = msg.substring(0, 4000) + '\n...';
+    await sendPersonalTelegramMessage(user.telegramChatId, msg);
+    console.log(`📨 Daily digest sent to ${user.name}`);
+  }
+}
+
+async function sendOverduePersonalNotifications(state: any): Promise<void> {
+  const settings = state.personalNotifications || DEFAULT_PERSONAL_NOTIFICATIONS;
+  if (!settings.enabled || !settings.notifyOnOverdue) return;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const isOverdue = (d?: string) => { if (!d) return false; const x = new Date(d); x.setHours(0,0,0,0); return x.getTime() < today.getTime(); };
+
+  const validListIds = (state.lists || []).map((l: any) => l.id);
+  const overdueCards = (state.cards || []).filter((c: any) =>
+    validListIds.includes(c.listId) && !c.isCompleted && isOverdue(c.deadline) && c.assigneeId
+  );
+
+  const templates = settings.templates || DEFAULT_NOTIFICATION_TEMPLATES;
+  const tpl = templates.taskOverdue || DEFAULT_NOTIFICATION_TEMPLATES.taskOverdue;
+
+  for (const card of overdueCards) {
+    const assignee = (state.users || []).find((u: any) => u.id === card.assigneeId);
+    if (!assignee?.telegramChatId) continue;
+
+    const deadlineDate = new Date(card.deadline);
+    const daysOverdue = Math.ceil((today.getTime() - deadlineDate.getTime()) / 86400000);
+    const deadline = deadlineDate.toLocaleDateString('uk-UA');
+
+    const text = fillTemplate(tpl, {
+      taskTitle: card.title,
+      deadline,
+      daysOverdue: String(daysOverdue),
+    });
+
+    await sendPersonalTelegramMessage(assignee.telegramChatId, text);
+    console.log(`📨 Overdue notification sent to ${assignee.name} for task "${card.title}"`);
+  }
+}
+
+let personalDigestCronTask: any = null;
+let overdueNotifCronTask: any = null;
+
+function setupPersonalNotificationCrons(settings: any) {
+  // Stop existing
+  if (personalDigestCronTask) { personalDigestCronTask.stop(); personalDigestCronTask = null; }
+  if (overdueNotifCronTask) { overdueNotifCronTask.stop(); overdueNotifCronTask = null; }
+
+  if (!settings?.enabled) return;
+
+  // Daily digest cron
+  if (settings.dailyDigestEnabled && settings.dailyDigestTime) {
+    const [h, m] = settings.dailyDigestTime.split(':').map(Number);
+    const expr = `${m} ${h} * * *`;
+    try {
+      personalDigestCronTask = cron.schedule(expr, async () => {
+        console.log('📅 Running personal daily digests...');
+        const state = await getDb();
+        await sendDailyPersonalDigests(state);
+      }, { timezone: 'Europe/Kyiv' });
+      console.log(`📅 Personal digest cron scheduled at ${settings.dailyDigestTime}.`);
+    } catch (err) { console.error('❌ Invalid digest cron expression:', err); }
+  }
+
+  // Overdue notifications — run 5 minutes after digest
+  if (settings.notifyOnOverdue && settings.dailyDigestTime) {
+    const [h, m] = settings.dailyDigestTime.split(':').map(Number);
+    const mOverdue = (m + 5) % 60;
+    const hOverdue = m + 5 >= 60 ? h + 1 : h;
+    const expr = `${mOverdue} ${hOverdue} * * *`;
+    try {
+      overdueNotifCronTask = cron.schedule(expr, async () => {
+        console.log('📅 Running overdue personal notifications...');
+        const state = await getDb();
+        await sendOverduePersonalNotifications(state);
+      }, { timezone: 'Europe/Kyiv' });
+      console.log(`📅 Overdue notifications cron scheduled.`);
+    } catch (err) { console.error('❌ Invalid overdue cron:', err); }
+  }
+}
+
 // ── Main Server ───────────────────────────────────────────────────────────────
 
 async function startServer() {
@@ -507,6 +695,7 @@ async function startServer() {
   const initialState = await getDb();
   setupTelegramCron(initialState.aiReportSchedule || '0 8 * * *');
   setupAnnouncementCrons(initialState.announcements || []);
+  setupPersonalNotificationCrons(initialState.personalNotifications || DEFAULT_PERSONAL_NOTIFICATIONS);
 
   // ── Auth Routes ──────────────────────────────────────────────────────────────
 
@@ -655,6 +844,10 @@ async function startServer() {
     // Re-setup announcement crons if changed
     if (req.body.announcements) {
       setupAnnouncementCrons(req.body.announcements);
+    }
+    // Re-setup personal notification crons if changed
+    if (req.body.personalNotifications) {
+      setupPersonalNotificationCrons(req.body.personalNotifications);
     }
     
     res.json({ success: true });
@@ -916,6 +1109,54 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
       console.error('Gemini review error:', err);
       res.status(500).json({ error: 'Failed to analyze plan' });
     }
+  });
+
+  // ── Personal Notification Endpoints ────────────────────────────────────────
+
+  // Notify that a card was assigned (called from frontend)
+  app.post('/api/notify/card-assigned', requireAuth, async (req, res) => {
+    try {
+      const { cardId, assigneeId } = req.body;
+      if (!cardId || !assigneeId) { res.status(400).json({ error: 'cardId and assigneeId required' }); return; }
+      const state = await getDb();
+      await notifyCardAssigned(state, cardId, assigneeId);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Send test personal notification to a specific user
+  app.post('/api/notify/test-personal/:userId', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const state = await getDb();
+      const user = (state.users || []).find((u: any) => u.id === userId);
+      if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+      if (!user.telegramChatId) { res.status(400).json({ error: 'User has no Telegram Chat ID set' }); return; }
+      const result = await sendPersonalTelegramMessage(
+        user.telegramChatId,
+        `👋 *Привіт, ${user.name}!*\n\nЦе тестове сповіщення від Pawell CRM.\nTelegram-сповіщення успішно налаштовані ✅`
+      );
+      if (result.success) res.json({ success: true });
+      else res.status(500).json({ success: false, error: result.error });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Manually trigger overdue notifications (admin only)
+  app.post('/api/notify/send-overdue', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const state = await getDb();
+      await sendOverduePersonalNotifications(state);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Manually trigger personal digests (admin only)
+  app.post('/api/notify/send-digests', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const state = await getDb();
+      await sendDailyPersonalDigests(state);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   // ── Vite / Static ────────────────────────────────────────────────────────────

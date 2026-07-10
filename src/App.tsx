@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Metric, Project, Process, UserGroup, AccessRights } from './types';
-import { fetchState, syncState, getMe, estimateTaskTime, createEntity, updateEntity, deleteEntity, processOfflineQueue } from './api';
+import { fetchState, syncState, getMe, estimateTaskTime, createEntity, updateEntity, deleteEntity, processOfflineQueue, sendCardAssignedNotification } from './api';
 import { v4 as uuidv4 } from 'uuid';
 import Board from './components/Board';
 import ContentPlanView from './components/ContentPlanView';
@@ -25,7 +25,7 @@ interface AppContextType {
   hasEditRights: boolean;
   logout: () => void;
   moveCard: (cardId: string, toListId: string, targetCardId?: string) => void;
-  addCard: (listId: string, title: string) => void;
+  addCard: (listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[] }) => void;
   updateCard: (cardId: string, updates: Partial<Card>) => void;
   deleteCard: (cardId: string) => void;
   clearList: (listId: string) => void;
@@ -316,13 +316,15 @@ export default function App() {
     updateEntity('cards', cardId, updates).catch(console.error);
   }, []);
 
-  const addCard = useCallback((listId: string, title: string) => {
+  const addCard = useCallback((listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[] }) => {
     if (!state) return;
     const listCards = state.cards.filter(c => c.listId === listId);
     const minOrder = listCards.length > 0 ? Math.min(...listCards.map(c => c.order)) : 0;
     const newCard: Card = {
       id: uuidv4(), listId, title, description: '', deadline: null,
-      assigneeId: null, subtasks: [], comments: [], attachments: [],
+      assigneeId: initialValues?.assigneeId ?? null,
+      tagIds: initialValues?.tagIds ?? [],
+      subtasks: [], comments: [], attachments: [],
       order: minOrder - 1,
       projectId: activeProjectId
     };
@@ -337,8 +339,13 @@ export default function App() {
 
   const updateCard = useCallback((cardId: string, updates: Partial<Card>) => {
     if (!state) return;
+    const prevCard = state.cards.find(c => c.id === cardId);
     setState(prev => prev ? { ...prev, cards: prev.cards.map(c => c.id === cardId ? { ...c, ...updates } : c) } : prev);
     updateEntity('cards', cardId, updates).catch(console.error);
+    // Trigger Telegram notification if assignee changed
+    if (updates.assigneeId && updates.assigneeId !== prevCard?.assigneeId) {
+      sendCardAssignedNotification(cardId, updates.assigneeId);
+    }
   }, [state]);
 
   const deleteCard = useCallback((cardId: string) => {

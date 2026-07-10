@@ -40,7 +40,11 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
   const handleAddCard = (e: React.FormEvent) => {
     e.preventDefault();
     if (newCardTitle.trim()) {
-      addCard(list.id, newCardTitle.trim());
+      // Apply active filters to the new card so it stays visible
+      const initialValues: { assigneeId?: string | null; tagIds?: string[] } = {};
+      if (filterAssigneeId) initialValues.assigneeId = filterAssigneeId;
+      if (filterTagId) initialValues.tagIds = [filterTagId];
+      addCard(list.id, newCardTitle.trim(), initialValues);
       setNewCardTitle('');
       setIsAdding(false);
     }
@@ -242,6 +246,11 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
                 }
               }}
             />
+            {filterOverdue && (
+              <p className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-1 mb-1">
+                ⚠️ Встановіть дедлайн у картці, щоб вона відображалась у фільтрі «Протерміновані»
+              </p>
+            )}
             <div className="flex items-center space-x-2 mt-2">
               <button
                 type="submit"

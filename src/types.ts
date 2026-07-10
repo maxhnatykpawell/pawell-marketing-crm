@@ -8,6 +8,22 @@ export interface ScheduledAnnouncement {
   createdAt: string;
 }
 
+export interface NotificationTemplates {
+  taskAssigned: string;      // Змінні: {{taskTitle}}, {{assigneeName}}, {{deadline}}, {{projectName}}
+  taskOverdue: string;       // Змінні: {{taskTitle}}, {{deadline}}, {{daysOverdue}}
+  dailyDigestHeader: string; // Шапка щоденного дайджесту
+  dailyDigestItem: string;   // Рядок задачі: {{taskTitle}}, {{deadline}}
+}
+
+export interface PersonalNotificationSettings {
+  enabled: boolean;
+  notifyOnAssign: boolean;
+  notifyOnOverdue: boolean;
+  dailyDigestEnabled: boolean;
+  dailyDigestTime: string;  // "HH:mm"
+  templates: NotificationTemplates;
+}
+
 export interface AccessRights {
   canEdit: boolean;
   allowedViews: string[];
@@ -44,6 +60,7 @@ export interface User {
   goals?: string;
   groupId?: string | null;
   customRights?: AccessRights | null;
+  telegramChatId?: string | null;
 }
 
 export interface AuthUser {
@@ -216,5 +233,6 @@ export interface AppState {
   processes?: Process[];
   aiReportSchedule?: string;
   announcements?: ScheduledAnnouncement[];
+  personalNotifications?: PersonalNotificationSettings;
   lastModified?: string;
 }

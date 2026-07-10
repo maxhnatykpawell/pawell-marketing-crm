@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
 import {
   Settings, ChevronDown, ChevronUp, Check, Clock,
-  Megaphone, Plus, Trash2, Edit3, X, Send, ToggleLeft, ToggleRight
+  Megaphone, Plus, Trash2, Edit3, X, Send, ToggleLeft, ToggleRight,
+  Bell, BellOff, MessageCircle, AlarmClock, FileText
 } from 'lucide-react';
 import {
   getAnnouncements, createAnnouncement, updateAnnouncement,
   deleteAnnouncement, testAnnouncement
 } from '../api';
-import { ScheduledAnnouncement } from '../types';
+import { ScheduledAnnouncement, PersonalNotificationSettings, NotificationTemplates } from '../types';
 
 // ── Days config ───────────────────────────────────────────────────────────────
 
@@ -213,6 +214,28 @@ export default function AdminSettingsPanel() {
   const [testResult, setTestResult] = useState<{ id: string; ok: boolean } | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
+  // Personal notifications state
+  const DEFAULT_TEMPLATES: NotificationTemplates = {
+    taskAssigned: '🎯 *Тобі призначено нову задачу!*\n\n📌 *{{taskTitle}}*\n📅 Дедлайн: {{deadline}}\n🗂 Проєкт: {{projectName}}',
+    taskOverdue: '⚠️ *Задача протермінована!*\n\n📌 *{{taskTitle}}*\n📅 Дедлайн був: {{deadline}}\n⏰ Прострочено на {{daysOverdue}} дн.',
+    dailyDigestHeader: '📋 *Твої задачі на сьогодні, {{assigneeName}}!*\n\n',
+    dailyDigestItem: '🔹 *{{taskTitle}}* — до {{deadline}}\n',
+  };
+  const defaultPNSettings: PersonalNotificationSettings = {
+    enabled: true,
+    notifyOnAssign: true,
+    notifyOnOverdue: true,
+    dailyDigestEnabled: true,
+    dailyDigestTime: '08:30',
+    templates: DEFAULT_TEMPLATES,
+  };
+  const [pnSettings, setPnSettings] = useState<PersonalNotificationSettings>(
+    state?.personalNotifications || defaultPNSettings
+  );
+  const [pnSaving, setPnSaving] = useState(false);
+  const [pnSaveOk, setPnSaveOk] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+
   // Parse existing cron to HH:mm
   useEffect(() => {
     if (state?.aiReportSchedule) {
@@ -308,6 +331,26 @@ export default function AdminSettingsPanel() {
     } finally {
       setTestingId(null);
       setTimeout(() => setTestResult(null), 4000);
+    }
+  };
+
+  const handleSavePersonalNotifications = async () => {
+    setPnSaving(true);
+    setPnSaveOk(false);
+    try {
+      // Use syncState-compatible approach via updateSettings
+      const newState = { ...state, personalNotifications: pnSettings };
+      await fetch('/api/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('auth_token')}` },
+        body: JSON.stringify(newState),
+      });
+      setPnSaveOk(true);
+      setTimeout(() => setPnSaveOk(false), 3000);
+    } catch {
+      alert('Помилка збереження');
+    } finally {
+      setPnSaving(false);
     }
   };
 
@@ -512,6 +555,160 @@ export default function AdminSettingsPanel() {
               )}
             </div>
           </div>
+        </div>
+
+          {/* ── Personal Notifications ────────────────────────────────────── */}
+          <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <h4 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                <MessageCircle className="w-4 h-4 text-sky-600" />
+                Персональні Telegram-сповіщення
+              </h4>
+              <button
+                onClick={() => setPnSettings(s => ({ ...s, enabled: !s.enabled }))}
+                className="text-sky-600 transition"
+              >
+                {pnSettings.enabled
+                  ? <ToggleRight className="w-7 h-7" />
+                  : <ToggleLeft className="w-7 h-7 text-gray-400" />
+                }
+              </button>
+            </div>
+
+            <div className={`p-4 space-y-4 ${!pnSettings.enabled ? 'opacity-50 pointer-events-none' : ''}`}>
+              {/* Event toggles */}
+              <div className="grid grid-cols-1 gap-2.5">
+                <label className="flex items-center justify-between bg-sky-50/60 border border-sky-100 rounded-xl px-3.5 py-2.5 cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <Bell className="w-4 h-4 text-sky-600" />
+                    <div>
+                      <p className="text-sm font-semibold text-gray-800">🎯 Призначення задачі</p>
+                      <p className="text-[11px] text-gray-500">Коли виконавцю призначають задачу</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setPnSettings(s => ({ ...s, notifyOnAssign: !s.notifyOnAssign }))}
+                    className="text-sky-600"
+                  >
+                    {pnSettings.notifyOnAssign ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6 text-gray-300" />}
+                  </button>
+                </label>
+
+                <label className="flex items-center justify-between bg-orange-50/60 border border-orange-100 rounded-xl px-3.5 py-2.5 cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <AlarmClock className="w-4 h-4 text-orange-500" />
+                    <div>
+                      <p className="text-sm font-semibold text-gray-800">⚠️ Протерміновані задачі</p>
+                      <p className="text-[11px] text-gray-500">Щоденне нагадування про прострочені задачі</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setPnSettings(s => ({ ...s, notifyOnOverdue: !s.notifyOnOverdue }))}
+                    className="text-orange-500"
+                  >
+                    {pnSettings.notifyOnOverdue ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6 text-gray-300" />}
+                  </button>
+                </label>
+
+                <label className="flex items-center justify-between bg-green-50/60 border border-green-100 rounded-xl px-3.5 py-2.5 cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-green-600" />
+                    <div>
+                      <p className="text-sm font-semibold text-gray-800">📋 Щоденний дайджест</p>
+                      <p className="text-[11px] text-gray-500">Особисті задачі на сьогодні кожному</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setPnSettings(s => ({ ...s, dailyDigestEnabled: !s.dailyDigestEnabled }))}
+                    className="text-green-600"
+                  >
+                    {pnSettings.dailyDigestEnabled ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6 text-gray-300" />}
+                  </button>
+                </label>
+              </div>
+
+              {/* Digest time */}
+              {pnSettings.dailyDigestEnabled && (
+                <div className="flex items-center gap-3">
+                  <Clock className="w-4 h-4 text-gray-400 shrink-0" />
+                  <span className="text-xs text-gray-600 font-medium">Час дайджесту:</span>
+                  <input
+                    type="time"
+                    value={pnSettings.dailyDigestTime}
+                    onChange={e => setPnSettings(s => ({ ...s, dailyDigestTime: e.target.value }))}
+                    className="px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-sky-400"
+                  />
+                  <span className="text-[10px] text-gray-400">Протерміновані надсилаються через 5 хв.</span>
+                </div>
+              )}
+
+              {/* Template editor */}
+              <div>
+                <button
+                  onClick={() => setShowTemplates(v => !v)}
+                  className="flex items-center gap-2 text-xs font-semibold text-gray-600 hover:text-gray-800 transition"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  {showTemplates ? 'Сприхнути шаблони' : 'Налаштувати шаблони повідомлень'}
+                </button>
+
+                {showTemplates && (
+                  <div className="mt-3 space-y-3">
+                    <div className="text-[10px] text-gray-400 bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
+                      <span className="font-bold">Доступні змінні:</span>{' '}
+                      <code>{{taskTitle}}</code>{' '}·{' '}
+                      <code>{{assigneeName}}</code>{' '}·{' '}
+                      <code>{{deadline}}</code>{' '}·{' '}
+                      <code>{{projectName}}</code>{' '}·{' '}
+                      <code>{{daysOverdue}}</code>
+                    </div>
+
+                    {([
+                      { key: 'taskAssigned', label: '🎯 Призначення задачі', hint: 'taskTitle, assigneeName, deadline, projectName' },
+                      { key: 'taskOverdue', label: '⚠️ Протермінована задача', hint: 'taskTitle, deadline, daysOverdue' },
+                      { key: 'dailyDigestHeader', label: '📋 Шапка дайджесту', hint: 'assigneeName' },
+                      { key: 'dailyDigestItem', label: '🔹 Рядок задачі', hint: 'taskTitle, deadline' },
+                    ] as { key: keyof NotificationTemplates; label: string; hint: string }[]).map(({ key, label, hint }) => (
+                      <div key={key}>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">
+                          {label}
+                          <span className="ml-1 font-normal text-gray-400">({hint})</span>
+                        </label>
+                        <textarea
+                          value={pnSettings.templates[key]}
+                          onChange={e => setPnSettings(s => ({ ...s, templates: { ...s.templates, [key]: e.target.value } }))}
+                          rows={3}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-sky-100 focus:border-sky-400 resize-y font-mono"
+                        />
+                        <button
+                          onClick={() => setPnSettings(s => ({ ...s, templates: { ...s.templates, [key]: DEFAULT_TEMPLATES[key] } }))}
+                          className="mt-1 text-[10px] text-gray-400 hover:text-gray-600 transition"
+                        >
+                          ↺ Повернути за замовчунням
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Save button */}
+              <button
+                onClick={handleSavePersonalNotifications}
+                disabled={pnSaving}
+                className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition text-white ${
+                  pnSaveOk ? 'bg-green-600' : 'bg-sky-600 hover:bg-sky-700'
+                } disabled:opacity-60`}
+              >
+                {pnSaving
+                  ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  : <Check className="w-3.5 h-3.5" />
+                }
+                {pnSaveOk ? 'Збережено ✅' : 'Зберегти налаштування'}
+              </button>
+            </div>
+          </div>
+
         </div>
       )}
     </div>

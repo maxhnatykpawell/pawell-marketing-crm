@@ -313,3 +313,25 @@ export const testAnnouncement = async (id: string): Promise<void> => {
     throw new Error(err.error || 'Failed to send test');
   }
 };
+
+// ── Personal Notifications ────────────────────────────────────────────────────
+
+export const testPersonalNotification = async (userId: string): Promise<void> => {
+  const res = await fetch(`/api/notify/test-personal/${userId}`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to send test notification');
+  }
+};
+
+export const sendCardAssignedNotification = async (cardId: string, assigneeId: string): Promise<void> => {
+  // Fire-and-forget — does not block card update
+  fetch('/api/notify/card-assigned', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ cardId, assigneeId }),
+  }).catch(() => { /* silent */ });
+};
