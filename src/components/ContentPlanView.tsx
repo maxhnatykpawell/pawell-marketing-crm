@@ -41,7 +41,7 @@ const DEFAULT_COLUMNS = [
 ];
 
 export default function ContentPlanView() {
-  const { state, addContentPlan, updateContentPlan, deleteContentPlan, confirmAction } = useAppContext();
+  const { state, addContentPlan, updateContentPlan, deleteContentPlan, confirmAction, hasEditRights } = useAppContext();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   
@@ -126,29 +126,31 @@ export default function ContentPlanView() {
       <div className="px-6 py-4 border-b border-gray-200 flex flex-col gap-4 bg-gray-50 flex-shrink-0">
         <div className="flex justify-between items-center">
           <h2 className="text-lg font-semibold text-gray-800">Контент-план</h2>
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={() => setIsImportModalOpen(true)}
-              className="flex items-center px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition"
-            >
-              <DownloadCloud className="w-4 h-4 mr-2" />
-              Імпорт CSV
-            </button>
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              className="flex items-center px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition"
-            >
-              <Settings className="w-4 h-4 mr-2" />
-              Налаштування
-            </button>
-            <button
-              onClick={handleAddRow}
-              className="flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Додати публікацію
-            </button>
-          </div>
+          {hasEditRights && (
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={() => setIsImportModalOpen(true)}
+                className="flex items-center px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition"
+              >
+                <DownloadCloud className="w-4 h-4 mr-2" />
+                Імпорт CSV
+              </button>
+              <button
+                onClick={() => setIsSettingsOpen(true)}
+                className="flex items-center px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition"
+              >
+                <Settings className="w-4 h-4 mr-2" />
+                Налаштування
+              </button>
+              <button
+                onClick={handleAddRow}
+                className="flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Додати публікацію
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -259,7 +261,8 @@ export default function ContentPlanView() {
                       value={plan.focus}
                       onChange={(e) => updateContentPlan(plan.id, { focus: e.target.value })}
                       placeholder="..."
-                      className={`w-full bg-transparent outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 rounded px-2 py-1 border border-transparent hover:border-gray-200 transition ${isPublished ? 'line-through text-gray-500' : ''}`}
+                      readOnly={!hasEditRights}
+                      className={`w-full bg-transparent outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 rounded px-2 py-1 border border-transparent ${hasEditRights ? 'hover:border-gray-200' : ''} transition ${isPublished ? 'line-through text-gray-500' : ''}`}
                     />
                   </td>
                 )}
@@ -279,7 +282,8 @@ export default function ContentPlanView() {
                       value={plan.description}
                       onChange={(e) => updateContentPlan(plan.id, { description: e.target.value })}
                       placeholder="..."
-                      className="w-full bg-transparent outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 rounded px-2 py-1 border border-transparent hover:border-gray-200 transition"
+                      readOnly={!hasEditRights}
+                      className={`w-full bg-transparent outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 rounded px-2 py-1 border border-transparent ${hasEditRights ? 'hover:border-gray-200' : ''} transition`}
                     />
                   </td>
                 )}
@@ -288,7 +292,8 @@ export default function ContentPlanView() {
                     <select
                       value={plan.assigneeId || ''}
                       onChange={(e) => updateContentPlan(plan.id, { assigneeId: e.target.value || null })}
-                      className="w-full bg-transparent outline-none cursor-pointer hover:bg-gray-100 rounded px-2 py-1 border border-transparent hover:border-gray-200 transition"
+                      disabled={!hasEditRights}
+                      className={`w-full bg-transparent outline-none ${hasEditRights ? 'cursor-pointer hover:bg-gray-100 hover:border-gray-200' : 'appearance-none'} rounded px-2 py-1 border border-transparent transition`}
                     >
                       <option value="">Не призначено</option>
                       {state.users.map(u => (
@@ -302,7 +307,8 @@ export default function ContentPlanView() {
                     <select
                       value={plan.status}
                       onChange={(e) => updateContentPlan(plan.id, { status: e.target.value })}
-                      className="w-full bg-transparent outline-none cursor-pointer hover:bg-gray-100 rounded px-2 py-1 border border-transparent hover:border-gray-200 transition"
+                      disabled={!hasEditRights}
+                      className={`w-full bg-transparent outline-none ${hasEditRights ? 'cursor-pointer hover:bg-gray-100 hover:border-gray-200' : 'appearance-none'} rounded px-2 py-1 border border-transparent transition`}
                     >
                       {statuses.map(st => (
                         <option key={st} value={st}>{st}</option>
@@ -325,7 +331,8 @@ export default function ContentPlanView() {
                       type="date"
                       value={plan.publishDate ? plan.publishDate.split('T')[0] : ''}
                       onChange={(e) => updateContentPlan(plan.id, { publishDate: e.target.value ? new Date(e.target.value).toISOString() : null })}
-                      className="w-full bg-transparent outline-none cursor-pointer hover:bg-gray-100 rounded px-2 py-1 border border-transparent hover:border-gray-200 transition text-gray-700"
+                      disabled={!hasEditRights}
+                      className={`w-full bg-transparent outline-none ${hasEditRights ? 'cursor-pointer hover:bg-gray-100 hover:border-gray-200' : ''} rounded px-2 py-1 border border-transparent transition text-gray-700`}
                     />
                   </td>
                 )}
@@ -336,22 +343,25 @@ export default function ContentPlanView() {
                       value={plan.engagement}
                       onChange={(e) => updateContentPlan(plan.id, { engagement: e.target.value })}
                       placeholder="..."
-                      className="w-full bg-transparent outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 rounded px-2 py-1 border border-transparent hover:border-gray-200 transition"
+                      readOnly={!hasEditRights}
+                      className={`w-full bg-transparent outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 rounded px-2 py-1 border border-transparent ${hasEditRights ? 'hover:border-gray-200' : ''} transition`}
                     />
                   </td>
                 )}
                 <td className="px-4 py-2 text-right">
-                  <button
-                    onClick={() => {
-                      confirmAction('Ви впевнені, що хочете видалити цей рядок?', () => {
-                        deleteContentPlan(plan.id);
-                      });
-                    }}
-                    className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-white/50 rounded transition opacity-0 group-hover:opacity-100"
-                    title="Видалити"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {hasEditRights && (
+                    <button
+                      onClick={() => {
+                        confirmAction('Ви впевнені, що хочете видалити цей рядок?', () => {
+                          deleteContentPlan(plan.id);
+                        });
+                      }}
+                      className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-white/50 rounded transition opacity-0 group-hover:opacity-100"
+                      title="Видалити"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </td>
               </tr>
               );

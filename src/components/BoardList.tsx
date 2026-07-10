@@ -14,7 +14,7 @@ interface Props {
 }
 
 export default function BoardList({ list, filterAssigneeId, filterTagId, filterOverdue }: Props) {
-  const { state, addCard, deleteList, clearList, moveCard, moveList, activeProjectId, confirmAction, updateList, updateCard, deleteCard } = useAppContext();
+  const { state, addCard, deleteList, clearList, moveCard, moveList, activeProjectId, confirmAction, updateList, updateCard, deleteCard, hasEditRights } = useAppContext();
   const [isAdding, setIsAdding] = useState(false);
   const [newCardTitle, setNewCardTitle] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
@@ -90,18 +90,19 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
 
   return (
     <div 
-      draggable
+      draggable={hasEditRights}
       onDragStart={(e) => {
         // Only set data if not dragging a card (handled by stopPropagation in Card)
-        e.dataTransfer.setData('listId', list.id);
+        if (hasEditRights) e.dataTransfer.setData('listId', list.id);
       }}
       className={cn(
-        "w-80 shrink-0 bg-gray-100 rounded-xl flex flex-col max-h-full border border-transparent transition duration-200 shadow-sm cursor-grab active:cursor-grabbing",
+        "w-80 shrink-0 bg-gray-100 rounded-xl flex flex-col max-h-full border border-transparent transition duration-200 shadow-sm",
+        hasEditRights && "cursor-grab active:cursor-grabbing",
         isDragOver && "bg-blue-50/70 border-blue-300 shadow-md ring-2 ring-blue-500/20"
       )}
-      onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+      onDragOver={(e) => { if (hasEditRights) { e.preventDefault(); setIsDragOver(true); } }}
       onDragLeave={() => setIsDragOver(false)}
-      onDrop={handleDrop}
+      onDrop={hasEditRights ? handleDrop : undefined}
     >
       {selectionMode ? (
         <div className="px-4 py-3 flex items-center justify-between bg-blue-50 border-b border-blue-100 rounded-t-xl min-h-[48px]">
@@ -160,13 +161,14 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
             {list.title}
             {list.excludeFromAI && <EyeOff className="w-3.5 h-3.5 text-gray-400" title="Виключено зі звіту ШІ" />}
           </h3>
-          <div className="relative">
-          <button 
-            onClick={() => setMenuOpen(!menuOpen)}
-            className="p-1.5 hover:bg-gray-200 rounded-md text-gray-500 opacity-0 group-hover:opacity-100 transition"
-          >
-            <MoreHorizontal className="w-4 h-4" />
-          </button>
+          {hasEditRights && (
+            <div className="relative">
+            <button 
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="p-1.5 hover:bg-gray-200 rounded-md text-gray-500 opacity-0 group-hover:opacity-100 transition"
+            >
+              <MoreHorizontal className="w-4 h-4" />
+            </button>
           
           {menuOpen && (
             <>
@@ -226,55 +228,58 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
             </>
           )}
         </div>
+        )}
       </div>
       )}
 
       <div className="px-3 pb-2 pt-1">
-        {isAdding ? (
-          <form onSubmit={handleAddCard} className="bg-white rounded-lg shadow-sm border border-gray-200 p-2 border-b-gray-300">
-            <textarea
-              autoFocus
-              className="w-full text-sm resize-none focus:outline-none bg-transparent"
-              placeholder="Введіть назву задачі..."
-              rows={2}
-              value={newCardTitle}
-              onChange={e => setNewCardTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleAddCard(e);
-                }
-              }}
-            />
-            {filterOverdue && (
-              <p className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-1 mb-1">
-                ⚠️ Встановіть дедлайн у картці, щоб вона відображалась у фільтрі «Протерміновані»
-              </p>
-            )}
-            <div className="flex items-center space-x-2 mt-2">
-              <button
-                type="submit"
-                className="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-md hover:bg-blue-700 transition"
-              >
-                Додати задачу
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsAdding(false)}
-                className="px-2 py-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 text-sm font-medium rounded-md transition"
-              >
-                Скасувати
-              </button>
-            </div>
-          </form>
-        ) : (
-          <button
-            onClick={() => setIsAdding(true)}
-            className="w-full flex items-center px-3 py-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-200/70 font-medium rounded-lg text-sm transition"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Додати задачу
-          </button>
+        {hasEditRights && (
+          isAdding ? (
+            <form onSubmit={handleAddCard} className="bg-white rounded-lg shadow-sm border border-gray-200 p-2 border-b-gray-300">
+              <textarea
+                autoFocus
+                className="w-full text-sm resize-none focus:outline-none bg-transparent"
+                placeholder="Введіть назву задачі..."
+                rows={2}
+                value={newCardTitle}
+                onChange={e => setNewCardTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleAddCard(e);
+                  }
+                }}
+              />
+              {filterOverdue && (
+                <p className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-1 mb-1">
+                  ⚠️ Встановіть дедлайн у картці, щоб вона відображалась у фільтрі «Протерміновані»
+                </p>
+              )}
+              <div className="flex items-center space-x-2 mt-2">
+                <button
+                  type="submit"
+                  className="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-md hover:bg-blue-700 transition"
+                >
+                  Додати задачу
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsAdding(false)}
+                  className="px-2 py-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 text-sm font-medium rounded-md transition"
+                >
+                  Скасувати
+                </button>
+              </div>
+            </form>
+          ) : (
+            <button
+              onClick={() => setIsAdding(true)}
+              className="w-full flex items-center px-3 py-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-200/70 font-medium rounded-lg text-sm transition"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Додати задачу
+            </button>
+          )
         )}
       </div>
 

@@ -5,7 +5,7 @@ import { Plus, Calendar as CalendarIcon, MapPin, Globe, Users, Trash2, ArrowUpRi
 import EventDialog from './EventDialog';
 
 export default function EventCalendarView() {
-  const { state, deleteEvent, setActiveView, setActiveEventId, confirmAction } = useAppContext();
+  const { state, deleteEvent, setActiveView, setActiveEventId, confirmAction, hasEditRights } = useAppContext();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<EventItem | null>(null);
 
@@ -77,15 +77,17 @@ export default function EventCalendarView() {
         <div className="flex-grow min-w-0">
           <div className="flex justify-between items-start">
             <h3 className="text-xl font-bold text-gray-900 truncate pr-4">{event.title}</h3>
-            <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button
-                onClick={(e) => { e.stopPropagation(); confirmAction('Видалити подію?', () => deleteEvent(event.id)); }}
-                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
-                title="Видалити"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
+            {hasEditRights && (
+              <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  onClick={(e) => { e.stopPropagation(); confirmAction('Видалити подію?', () => deleteEvent(event.id)); }}
+                  className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
+                  title="Видалити"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
 
           {event.description && (
@@ -136,13 +138,15 @@ export default function EventCalendarView() {
           </h2>
           <p className="text-gray-500 text-sm mt-1">Планування делегацій та важливих заходів</p>
         </div>
-        <button
-          onClick={handleAddNew}
-          className="flex items-center px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition shadow-sm"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          Додати подію
-        </button>
+        {hasEditRights && (
+          <button
+            onClick={handleAddNew}
+            className="flex items-center px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition shadow-sm"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Додати подію
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto hidden-scrollbar pb-10 space-y-4">
@@ -153,13 +157,15 @@ export default function EventCalendarView() {
             </div>
             <h3 className="text-lg font-medium text-gray-800 mb-1">Немає запланованих подій</h3>
             <p className="text-gray-500 mb-6 max-w-sm mx-auto">Додайте інформацію про майбутні виставки, конференції або збори.</p>
-            <button
-              onClick={handleAddNew}
-              className="inline-flex items-center px-4 py-2 bg-blue-50 text-blue-600 font-medium rounded-lg hover:bg-blue-100 transition"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Додати подію
-            </button>
+            {hasEditRights && (
+              <button
+                onClick={handleAddNew}
+                className="inline-flex items-center px-4 py-2 bg-blue-50 text-blue-600 font-medium rounded-lg hover:bg-blue-100 transition"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Додати подію
+              </button>
+            )}
           </div>
         ) : (
           <>

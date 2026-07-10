@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useAppContext } from '../App';
 import { Check, Plus, X } from 'lucide-react';
 
 interface Props {
@@ -10,6 +11,7 @@ interface Props {
 export default function ChannelPicker({ selectedChannels, options, onChange }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const { hasEditRights } = useAppContext();
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -22,6 +24,7 @@ export default function ChannelPicker({ selectedChannels, options, onChange }: P
   }, [isOpen]);
 
   const toggle = (ch: string) => {
+    if (!hasEditRights) return;
     if (selectedChannels.includes(ch)) {
       onChange(selectedChannels.filter(c => c !== ch));
     } else {
@@ -37,23 +40,27 @@ export default function ChannelPicker({ selectedChannels, options, onChange }: P
           return (
             <span key={ch} className="px-2 py-0.5 rounded text-xs font-medium text-gray-800 shadow-sm border border-black/5 flex items-center gap-1 group" style={{ backgroundColor: color }}>
               {ch}
-              <button 
-                onClick={(e) => { e.stopPropagation(); toggle(ch); }}
-                className="hover:bg-black/10 rounded-full p-0.5 opacity-50 hover:opacity-100 transition"
-              >
-                <X className="w-3 h-3 text-gray-700" />
-              </button>
+              {hasEditRights && (
+                <button 
+                  onClick={(e) => { e.stopPropagation(); toggle(ch); }}
+                  className="hover:bg-black/10 rounded-full p-0.5 opacity-50 hover:opacity-100 transition"
+                >
+                  <X className="w-3 h-3 text-gray-700" />
+                </button>
+              )}
             </span>
           );
         })}
-        <button 
-          onClick={(e) => { e.stopPropagation(); setIsOpen(!isOpen); }}
-          className="flex items-center px-2 py-0.5 bg-white/50 hover:bg-white text-gray-700 rounded text-xs font-medium transition border border-gray-200/60 shadow-sm"
-          title="Додати канал"
-        >
-          <Plus className="w-3 h-3 text-gray-500" />
-          {selectedChannels.length === 0 && <span className="ml-1 text-gray-500">Додати</span>}
-        </button>
+        {hasEditRights && (
+          <button 
+            onClick={(e) => { e.stopPropagation(); setIsOpen(!isOpen); }}
+            className="flex items-center px-2 py-0.5 bg-white/50 hover:bg-white text-gray-700 rounded text-xs font-medium transition border border-gray-200/60 shadow-sm"
+            title="Додати канал"
+          >
+            <Plus className="w-3 h-3 text-gray-500" />
+            {selectedChannels.length === 0 && <span className="ml-1 text-gray-500">Додати</span>}
+          </button>
+        )}
       </div>
 
       {isOpen && (

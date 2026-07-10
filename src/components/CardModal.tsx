@@ -32,7 +32,7 @@ function AvatarFallback({ name, color }: { name: string; color?: string }) {
 }
 
 export default function CardModal({ card, onClose }: Props) {
-  const { state, updateCard, deleteCard, confirmAction, currentUser } = useAppContext();
+  const { state, updateCard, deleteCard, confirmAction, currentUser, hasEditRights } = useAppContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const currentUserRecord = state.users.find(u => u.id === currentUser?.userId) || state.users[0];
@@ -215,22 +215,30 @@ export default function CardModal({ card, onClose }: Props) {
 
             {/* Title */}
             <div className="flex items-start gap-3">
-              <button
-                onClick={() => handleUpdate({ isCompleted: !liveCard.isCompleted })}
-                className="mt-1 shrink-0 text-gray-300 hover:text-blue-500 transition"
-                title={liveCard.isCompleted ? 'Відмітити як невиконане' : 'Відмітити як виконане'}
-              >
-                {liveCard.isCompleted
-                  ? <CheckCircle2 className="w-5 h-5 text-green-500" />
-                  : <Circle className="w-5 h-5" />}
-              </button>
-              <textarea
-                className="flex-1 text-2xl font-bold text-gray-900 bg-transparent resize-none outline-none leading-tight focus:bg-gray-50 rounded-lg px-2 py-1 -ml-2 transition min-h-[2.5rem]"
-                value={title}
-                onChange={e => setTitle(e.target.value)}
-                onBlur={handleTitleBlur}
-                rows={title.length > 40 ? 2 : 1}
-              />
+              {hasEditRights && (
+                <button
+                  onClick={() => handleUpdate({ isCompleted: !liveCard.isCompleted })}
+                  className="mt-1 shrink-0 text-gray-300 hover:text-blue-500 transition"
+                  title={liveCard.isCompleted ? 'Відмітити як невиконане' : 'Відмітити як виконане'}
+                >
+                  {liveCard.isCompleted
+                    ? <CheckCircle2 className="w-5 h-5 text-green-500" />
+                    : <Circle className="w-5 h-5" />}
+                </button>
+              )}
+              {hasEditRights ? (
+                <textarea
+                  className="flex-1 text-2xl font-bold text-gray-900 bg-transparent resize-none outline-none leading-tight focus:bg-gray-50 rounded-lg px-2 py-1 -ml-2 transition min-h-[2.5rem]"
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  onBlur={handleTitleBlur}
+                  rows={title.length > 40 ? 2 : 1}
+                />
+              ) : (
+                <div className="flex-1 text-2xl font-bold text-gray-900 leading-tight px-2 py-1 -ml-2 min-h-[2.5rem] break-words">
+                  {title}
+                </div>
+              )}
               {liveCard.storyPoints && (
                 <span className="shrink-0 mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
                   <Sparkles className="w-3 h-3 mr-1" />
@@ -240,47 +248,49 @@ export default function CardModal({ card, onClose }: Props) {
             </div>
 
             {/* Quick action toolbar */}
-            <div className="flex items-center gap-2 flex-wrap pl-8">
-              <button
-                onClick={() => setOpenPanel(openPanel === 'members' ? null : 'members')}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition font-medium"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Додати
-              </button>
-              <button
-                onClick={() => setOpenPanel(openPanel === 'date' ? null : 'date')}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition font-medium"
-              >
-                <Calendar className="w-3.5 h-3.5" />
-                Дати
-              </button>
-              <button
-                onClick={() => { setOpenPanel(null); setShowSubtaskInput(true); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition font-medium"
-              >
-                <CheckSquare className="w-3.5 h-3.5" />
-                Перелік
-              </button>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition font-medium"
-              >
-                <Paperclip className="w-3.5 h-3.5" />
-                Вкладення
-              </button>
-              <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+            {hasEditRights && (
+              <div className="flex items-center gap-2 flex-wrap pl-8">
+                <button
+                  onClick={() => setOpenPanel(openPanel === 'members' ? null : 'members')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition font-medium"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Додати
+                </button>
+                <button
+                  onClick={() => setOpenPanel(openPanel === 'date' ? null : 'date')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition font-medium"
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  Дати
+                </button>
+                <button
+                  onClick={() => { setOpenPanel(null); setShowSubtaskInput(true); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition font-medium"
+                >
+                  <CheckSquare className="w-3.5 h-3.5" />
+                  Перелік
+                </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition font-medium"
+                >
+                  <Paperclip className="w-3.5 h-3.5" />
+                  Вкладення
+                </button>
+                <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
 
-              {/* AI button */}
-              <button
-                onClick={handleReviewPlan}
-                disabled={isReviewing}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition font-medium disabled:opacity-50 border border-indigo-100"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                {isReviewing ? 'ШІ думає…' : 'ШІ аналіз'}
-              </button>
-            </div>
+                {/* AI button */}
+                <button
+                  onClick={handleReviewPlan}
+                  disabled={isReviewing}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition font-medium disabled:opacity-50 border border-indigo-100"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {isReviewing ? 'ШІ думає…' : 'ШІ аналіз'}
+                </button>
+              </div>
+            )}
 
             {/* Date quick-panel */}
             {openPanel === 'date' && (
@@ -356,12 +366,14 @@ export default function CardModal({ card, onClose }: Props) {
                         : <AvatarFallback name={u.name} />}
                     </React.Fragment>
                   ))}
-                  <button
-                    onClick={() => setOpenPanel('members')}
-                    className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 transition border border-dashed border-gray-300"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
+                  {hasEditRights && (
+                    <button
+                      onClick={() => setOpenPanel('members')}
+                      className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 transition border border-dashed border-gray-300"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -421,14 +433,14 @@ export default function CardModal({ card, onClose }: Props) {
               ) : (
                 /* View mode */
                 <div
-                  onClick={() => setIsEditingDescription(true)}
-                  className={`w-full min-h-[80px] rounded-xl p-3 text-sm cursor-pointer transition ${
+                  onClick={() => { if (hasEditRights) setIsEditingDescription(true); }}
+                  className={`w-full min-h-[80px] rounded-xl p-3 text-sm transition ${
                     description
-                      ? 'text-gray-700 bg-gray-50 hover:bg-gray-100 whitespace-pre-wrap'
-                      : 'text-gray-400 bg-gray-50 hover:bg-gray-100 italic'
-                  }`}
+                      ? 'text-gray-700 bg-gray-50 whitespace-pre-wrap'
+                      : 'text-gray-400 bg-gray-50 italic'
+                  } ${hasEditRights ? 'cursor-pointer hover:bg-gray-100' : ''}`}
                 >
-                  {description || 'Додати детальніший опис...'}
+                  {description || (hasEditRights ? 'Додати детальніший опис...' : 'Опис відсутній')}
                 </div>
               )}
             </div>
@@ -439,14 +451,16 @@ export default function CardModal({ card, onClose }: Props) {
                 <div className="flex items-center gap-2 mb-2 -ml-6">
                   <CheckSquare className="w-4 h-4 text-gray-500" />
                   <p className="text-sm font-semibold text-gray-700 flex-1">Перелік</p>
-                  <button
-                    onClick={handleReviewPlan}
-                    disabled={isReviewing}
-                    className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium disabled:opacity-50"
-                  >
-                    <Sparkles className="w-3 h-3" />
-                    {isReviewing ? 'Аналіз…' : 'ШІ'}
-                  </button>
+                  {hasEditRights && (
+                    <button
+                      onClick={handleReviewPlan}
+                      disabled={isReviewing}
+                      className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium disabled:opacity-50"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      {isReviewing ? 'Аналіз…' : 'ШІ'}
+                    </button>
+                  )}
                 </div>
 
                 {subtasks.length > 0 && (
@@ -467,35 +481,53 @@ export default function CardModal({ card, onClose }: Props) {
                     const isAssigneeOpen = subtaskAssigneeOpen === st.id;
                     return (
                       <div key={st.id} className="flex items-center gap-2 py-1 px-2 rounded-lg hover:bg-gray-50 group transition relative">
-                        <button
-                          onClick={() => toggleSubtask(st.id)}
-                          className="shrink-0"
-                        >
-                          {st.completed
-                            ? <CheckSquare className="w-4 h-4 text-blue-500" />
-                            : <div className="w-4 h-4 border-2 border-gray-300 rounded" />}
-                        </button>
+                        {hasEditRights ? (
+                          <button
+                            onClick={() => toggleSubtask(st.id)}
+                            className="shrink-0"
+                          >
+                            {st.completed
+                              ? <CheckSquare className="w-4 h-4 text-blue-500" />
+                              : <div className="w-4 h-4 border-2 border-gray-300 rounded" />}
+                          </button>
+                        ) : (
+                          <div className="shrink-0">
+                            {st.completed
+                              ? <CheckSquare className="w-4 h-4 text-gray-400" />
+                              : <div className="w-4 h-4 border-2 border-gray-300 rounded opacity-50" />}
+                          </div>
+                        )}
                         <span className={`text-sm flex-1 ${st.completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>
                           {st.title}
                         </span>
 
                         {/* Subtask assignee button */}
                         <div className="relative shrink-0">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setSubtaskAssigneeOpen(isAssigneeOpen ? null : st.id); }}
-                            className="opacity-0 group-hover:opacity-100 transition flex items-center justify-center"
-                            title={stAssignee ? stAssignee.name : 'Призначити виконавця'}
-                          >
-                            {stAssignee ? (
-                              stAssignee.avatar
-                                ? <img src={stAssignee.avatar} alt={stAssignee.name} className="w-5 h-5 rounded-full border border-gray-200 hover:ring-2 hover:ring-blue-400 transition" />
-                                : <div className="w-5 h-5 rounded-full bg-amber-400 flex items-center justify-center text-white text-[9px] font-bold hover:ring-2 hover:ring-blue-400 transition">{stAssignee.name.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase()}</div>
-                            ) : (
-                              <div className="w-5 h-5 rounded-full border border-dashed border-gray-300 flex items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-500 transition">
-                                <UserIcon className="w-3 h-3" />
+                          {hasEditRights ? (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setSubtaskAssigneeOpen(isAssigneeOpen ? null : st.id); }}
+                              className="opacity-0 group-hover:opacity-100 transition flex items-center justify-center"
+                              title={stAssignee ? stAssignee.name : 'Призначити виконавця'}
+                            >
+                              {stAssignee ? (
+                                stAssignee.avatar
+                                  ? <img src={stAssignee.avatar} alt={stAssignee.name} className="w-5 h-5 rounded-full border border-gray-200 hover:ring-2 hover:ring-blue-400 transition" />
+                                  : <div className="w-5 h-5 rounded-full bg-amber-400 flex items-center justify-center text-white text-[9px] font-bold hover:ring-2 hover:ring-blue-400 transition">{stAssignee.name.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase()}</div>
+                              ) : (
+                                <div className="w-5 h-5 rounded-full border border-dashed border-gray-300 flex items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-500 transition">
+                                  <UserIcon className="w-3 h-3" />
+                                </div>
+                              )}
+                            </button>
+                          ) : (
+                            stAssignee && (
+                              <div className="opacity-0 group-hover:opacity-100 transition flex items-center justify-center" title={stAssignee.name}>
+                                {stAssignee.avatar
+                                  ? <img src={stAssignee.avatar} alt={stAssignee.name} className="w-5 h-5 rounded-full border border-gray-200" />
+                                  : <div className="w-5 h-5 rounded-full bg-amber-400 flex items-center justify-center text-white text-[9px] font-bold">{stAssignee.name.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase()}</div>}
                               </div>
-                            )}
-                          </button>
+                            )
+                          )}
 
                           {/* Always show assigned avatar even without hover */}
                           {stAssignee && !isAssigneeOpen && (
@@ -512,7 +544,7 @@ export default function CardModal({ card, onClose }: Props) {
                           )}
 
                           {/* Dropdown */}
-                          {isAssigneeOpen && (
+                          {hasEditRights && isAssigneeOpen && (
                             <>
                               <div className="fixed inset-0 z-10" onClick={() => setSubtaskAssigneeOpen(null)} />
                               <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-xl shadow-xl border border-gray-200 py-1 z-20 overflow-hidden">
@@ -546,43 +578,47 @@ export default function CardModal({ card, onClose }: Props) {
                           )}
                         </div>
 
-                        <button
-                          onClick={() => deleteSubtask(st.id)}
-                          className="opacity-0 group-hover:opacity-100 transition text-gray-300 hover:text-red-500 p-0.5 shrink-0"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+                        {hasEditRights && (
+                          <button
+                            onClick={() => deleteSubtask(st.id)}
+                            className="opacity-0 group-hover:opacity-100 transition text-gray-300 hover:text-red-500 p-0.5 shrink-0"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     );
                   })}
                 </div>
 
-                {showSubtaskInput ? (
-                  <form onSubmit={handleAddSubtask} className="mt-2 flex gap-2">
-                    <input
-                      autoFocus
-                      type="text"
-                      placeholder="Новий пункт..."
-                      value={newSubtaskTitle}
-                      onChange={e => setNewSubtaskTitle(e.target.value)}
-                      className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-400"
-                      onKeyDown={e => { if (e.key === 'Escape') setShowSubtaskInput(false); }}
-                    />
-                    <button type="submit" className="px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition">
-                      Додати
+                {hasEditRights && (
+                  showSubtaskInput ? (
+                    <form onSubmit={handleAddSubtask} className="mt-2 flex gap-2">
+                      <input
+                        autoFocus
+                        type="text"
+                        placeholder="Новий пункт..."
+                        value={newSubtaskTitle}
+                        onChange={e => setNewSubtaskTitle(e.target.value)}
+                        className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-400"
+                        onKeyDown={e => { if (e.key === 'Escape') setShowSubtaskInput(false); }}
+                      />
+                      <button type="submit" className="px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition">
+                        Додати
+                      </button>
+                      <button type="button" onClick={() => setShowSubtaskInput(false)} className="px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100 rounded-lg transition">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </form>
+                  ) : (
+                    <button
+                      onClick={() => setShowSubtaskInput(true)}
+                      className="mt-2 flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 hover:bg-gray-100 px-2 py-1 rounded-lg transition"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Додати пункт
                     </button>
-                    <button type="button" onClick={() => setShowSubtaskInput(false)} className="px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100 rounded-lg transition">
-                      <X className="w-4 h-4" />
-                    </button>
-                  </form>
-                ) : (
-                  <button
-                    onClick={() => setShowSubtaskInput(true)}
-                    className="mt-2 flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 hover:bg-gray-100 px-2 py-1 rounded-lg transition"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Додати пункт
-                  </button>
+                  )
                 )}
               </div>
             )}
@@ -609,12 +645,14 @@ export default function CardModal({ card, onClose }: Props) {
                             <a href={att.url} download={att.name} className="text-xs text-green-600 hover:underline">Завантажити</a>
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleUpdate({ attachments: card.attachments.filter(a => a.id !== att.id) })}
-                          className="opacity-0 group-hover:opacity-100 transition text-gray-300 hover:text-red-500 p-1"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {hasEditRights && (
+                          <button
+                            onClick={() => handleUpdate({ attachments: card.attachments!.filter(a => a.id !== att.id) })}
+                            className="opacity-0 group-hover:opacity-100 transition text-gray-300 hover:text-red-500 p-1"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -623,15 +661,17 @@ export default function CardModal({ card, onClose }: Props) {
             )}
 
             {/* Delete card button */}
-            <div className="pl-8 pb-4">
-              <button
-                onClick={() => confirmAction('Видалити цю картку?', () => { deleteCard(card.id); onClose(); })}
-                className="flex items-center gap-1.5 text-sm text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded-lg transition"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Видалити картку
-              </button>
-            </div>
+            {hasEditRights && (
+              <div className="pl-8 pb-4">
+                <button
+                  onClick={() => confirmAction('Видалити цю картку?', () => { deleteCard(card.id); onClose(); })}
+                  className="flex items-center gap-1.5 text-sm text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded-lg transition"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Видалити картку
+                </button>
+              </div>
+            )}
           </div>
 
           {/* ══ RIGHT COLUMN — Comments ══ */}
@@ -651,28 +691,30 @@ export default function CardModal({ card, onClose }: Props) {
 
             <div className="flex-1 overflow-y-auto hidden-scrollbar px-4 py-3 space-y-4">
               {/* Comment input */}
-              <div className="flex gap-2">
-                {currentUserRecord?.avatar
-                  ? <img src={currentUserRecord.avatar} alt="" className="w-7 h-7 rounded-full shrink-0 mt-0.5" />
-                  : <AvatarFallback name={currentUserRecord?.name || 'U'} />}
-                <form onSubmit={handleAddComment} className="flex-1">
-                  <input
-                    type="text"
-                    value={newCommentText}
-                    onChange={e => setNewCommentText(e.target.value)}
-                    placeholder="Написати коментар..."
-                    className="w-full px-3 py-2 text-sm border border-gray-200 bg-white rounded-lg outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 transition"
-                  />
-                  {newCommentText.trim() && (
-                    <button
-                      type="submit"
-                      className="mt-1.5 px-3 py-1 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition"
-                    >
-                      Зберегти
-                    </button>
-                  )}
-                </form>
-              </div>
+              {hasEditRights && (
+                <div className="flex gap-2">
+                  {currentUserRecord?.avatar
+                    ? <img src={currentUserRecord.avatar} alt="" className="w-7 h-7 rounded-full shrink-0 mt-0.5" />
+                    : <AvatarFallback name={currentUserRecord?.name || 'U'} />}
+                  <form onSubmit={handleAddComment} className="flex-1">
+                    <input
+                      type="text"
+                      value={newCommentText}
+                      onChange={e => setNewCommentText(e.target.value)}
+                      placeholder="Написати коментар..."
+                      className="w-full px-3 py-2 text-sm border border-gray-200 bg-white rounded-lg outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 transition"
+                    />
+                    {newCommentText.trim() && (
+                      <button
+                        type="submit"
+                        className="mt-1.5 px-3 py-1 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition"
+                      >
+                        Зберегти
+                      </button>
+                    )}
+                  </form>
+                </div>
+              )}
 
               {/* Activity / comments list */}
               <div className="space-y-4">

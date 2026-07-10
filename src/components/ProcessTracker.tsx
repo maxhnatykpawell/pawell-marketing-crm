@@ -80,7 +80,7 @@ const TrackerNode = ({ data, id }: { data: ProcessNodeData & { projects: Project
 const nodeTypes = { trackerNode: TrackerNode };
 
 export default function ProcessTracker({ process }: Props) {
-  const { state, updateProject, updateProcess, confirmAction } = useAppContext();
+  const { state, updateProject, updateProcess, confirmAction, hasEditRights } = useAppContext();
   
   const [selectedProjectState, setSelectedProjectState] = useState<{ project: Project; nodeId: string } | null>(null);
   const selectedProject = selectedProjectState?.project || null;
@@ -111,16 +111,21 @@ export default function ProcessTracker({ process }: Props) {
   }, [process.nodes, processProjects]);
 
   const onNodesChange = useCallback(
-    (changes: NodeChange[]) => setNodes((nds) => applyNodeChanges(changes, nds)),
-    []
+    (changes: NodeChange[]) => {
+      if (hasEditRights) {
+        setNodes((nds) => applyNodeChanges(changes, nds));
+      }
+    },
+    [hasEditRights]
   );
 
   const onNodeDragStop = useCallback((_: React.MouseEvent, node: Node) => {
+    if (!hasEditRights) return;
     const updatedNodes = process.nodes.map(n => 
       n.id === node.id ? { ...n, position: node.position } : n
     );
     updateProcess(process.id, { nodes: updatedNodes as any });
-  }, [process.nodes, process.id, updateProcess]);
+  }, [process.nodes, process.id, updateProcess, hasEditRights]);
 
   const edges: Edge[] = (process.edges || []).map(e => ({ ...e, type: 'smoothstep' }));
 
@@ -246,24 +251,26 @@ export default function ProcessTracker({ process }: Props) {
         onNodeDragStop={onNodeDragStop}
         defaultEdgeOptions={{ type: 'smoothstep' }}
         fitView
-        nodesDraggable={true}
+        nodesDraggable={hasEditRights}
         nodesConnectable={false}
-        elementsSelectable={true}
+        elementsSelectable={hasEditRights}
       >
         <Background color="#ccc" gap={16} />
         <Controls />
       </ReactFlow>
 
       {/* Floating Add Project Button */}
-      <div className="absolute top-4 left-4 z-10">
-        <button
-          onClick={() => setAddProjectModalOpen(true)}
-          className="bg-white hover:bg-gray-50 text-gray-800 border border-gray-200 px-4 py-2 rounded-lg shadow-md font-medium transition flex items-center"
-        >
-          <FolderKanban className="w-4 h-4 mr-2 text-blue-600" />
-          Додати існуючий проєкт
-        </button>
-      </div>
+      {hasEditRights && (
+        <div className="absolute top-4 left-4 z-10">
+          <button
+            onClick={() => setAddProjectModalOpen(true)}
+            className="bg-white hover:bg-gray-50 text-gray-800 border border-gray-200 px-4 py-2 rounded-lg shadow-md font-medium transition flex items-center"
+          >
+            <FolderKanban className="w-4 h-4 mr-2 text-blue-600" />
+            Додати існуючий проєкт
+          </button>
+        </div>
+      )}
 
       {/* Add Project Modal */}
       {addProjectModalOpen && (
@@ -325,10 +332,10 @@ export default function ProcessTracker({ process }: Props) {
                   {currentNode.data.requirements.map(req => {
                     const isCompleted = selectedProject.completedRequirements?.[req.id] || false;
                     return (
-                      <label key={req.id} className={`flex items-start space-x-3 p-3 rounded-lg border cursor-pointer transition ${isCompleted ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
+                      <label key={req.id} className={`flex items-start space-x-3 p-3 rounded-lg border ${hasEditRights ? 'cursor-pointer' : ''} transition ${isCompleted ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
                         <div className="flex-shrink-0 mt-0.5">
                           {isCompleted ? (
-                            <CheckCircle2 className="w-5 h-5 text-green-500" />
+                            <CheckCircle2 className={`w-5 h-5 ${hasEditRights ? 'text-green-500' : 'text-gray-400'}`} />
                           ) : (
                             <div className="w-5 h-5 border-2 border-gray-300 rounded-sm" />
                           )}
@@ -342,7 +349,7 @@ export default function ProcessTracker({ process }: Props) {
                           )}
                         </div>
                         {/* Hidden checkbox for accessibility */}
-                        <input type="checkbox" className="sr-only" checked={isCompleted} onChange={() => toggleRequirement(req.id)} />
+                        <input type="checkbox" className="sr-only" checked={isCompleted} onChange={() => { if (hasEditRights) toggleRequirement(req.id); }} />
                       </label>
                     );
                   })}
@@ -351,56 +358,58 @@ export default function ProcessTracker({ process }: Props) {
             )}
 
             {/* Next Nodes */}
-            <div>
-              <p className="text-sm font-semibold text-gray-700 mb-2 uppercase tracking-wider">Перевести на наступний етап</p>
-              {nextNodes.length === 0 ? (
-                <div className="bg-gray-50 text-gray-500 p-4 rounded-lg text-sm text-center border border-gray-200">
-                  Це останній етап процесу (немає вихідних зв'язків).
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {nextNodes.map(nn => {
-                    const reqs = currentNode.data.requirements || [];
-                    const completed = selectedProject.completedRequirements || {};
-                    const allReqsMet = reqs.every(r => completed[r.id]);
-                    return (
-                      <button
-                        key={nn.id}
-                        onClick={() => moveProject([nn.id], true)}
-                        disabled={!allReqsMet}
-                        className={`w-full flex justify-between items-center p-3 rounded-lg border transition ${allReqsMet ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700 shadow-md' : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'}`}
-                      >
-                        <span className="font-medium">{nn.data.label}</span>
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                      </button>
-                    );
-                  })}
-                  
-                  {nextNodes.length > 1 && (
-                    <div className="pt-2 mt-2 border-t border-gray-200">
-                      {(() => {
-                         const reqs = currentNode.data.requirements || [];
-                         const completed = selectedProject.completedRequirements || {};
-                         const allReqsMet = reqs.every(r => completed[r.id]);
-                         return (
-                           <button
-                             onClick={() => moveProject(nextNodes.map(n => n.id), true)}
-                             disabled={!allReqsMet}
-                             className={`w-full flex justify-center items-center p-3 rounded-lg border transition ${allReqsMet ? 'bg-indigo-600 border-indigo-600 text-white hover:bg-indigo-700 shadow-md' : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'}`}
-                           >
-                             <FolderKanban className="w-4 h-4 mr-2" />
-                             <span className="font-medium">Розгалузити на всі наступні етапи</span>
-                           </button>
-                         );
-                      })()}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            {hasEditRights && (
+              <div>
+                <p className="text-sm font-semibold text-gray-700 mb-2 uppercase tracking-wider">Перевести на наступний етап</p>
+                {nextNodes.length === 0 ? (
+                  <div className="bg-gray-50 text-gray-500 p-4 rounded-lg text-sm text-center border border-gray-200">
+                    Це останній етап процесу (немає вихідних зв'язків).
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {nextNodes.map(nn => {
+                      const reqs = currentNode.data.requirements || [];
+                      const completed = selectedProject.completedRequirements || {};
+                      const allReqsMet = reqs.every(r => completed[r.id]);
+                      return (
+                        <button
+                          key={nn.id}
+                          onClick={() => moveProject([nn.id], true)}
+                          disabled={!allReqsMet}
+                          className={`w-full flex justify-between items-center p-3 rounded-lg border transition ${allReqsMet ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700 shadow-md' : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'}`}
+                        >
+                          <span className="font-medium">{nn.data.label}</span>
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                        </button>
+                      );
+                    })}
+                    
+                    {nextNodes.length > 1 && (
+                      <div className="pt-2 mt-2 border-t border-gray-200">
+                        {(() => {
+                           const reqs = currentNode.data.requirements || [];
+                           const completed = selectedProject.completedRequirements || {};
+                           const allReqsMet = reqs.every(r => completed[r.id]);
+                           return (
+                             <button
+                               onClick={() => moveProject(nextNodes.map(n => n.id), true)}
+                               disabled={!allReqsMet}
+                               className={`w-full flex justify-center items-center p-3 rounded-lg border transition ${allReqsMet ? 'bg-indigo-600 border-indigo-600 text-white hover:bg-indigo-700 shadow-md' : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'}`}
+                             >
+                               <FolderKanban className="w-4 h-4 mr-2" />
+                               <span className="font-medium">Розгалузити на всі наступні етапи</span>
+                             </button>
+                           );
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Previous Nodes */}
-            {previousNodes.length > 0 && (
+            {hasEditRights && previousNodes.length > 0 && (
               <div>
                 <p className="text-sm font-semibold text-gray-700 mb-2 uppercase tracking-wider">Повернути назад</p>
                 <div className="space-y-2">
@@ -419,14 +428,16 @@ export default function ProcessTracker({ process }: Props) {
             )}
           </div>
 
-          <div className="p-4 border-t border-gray-200">
-             <button
-                onClick={removeProjectFromProcess}
-                className="w-full py-2 text-red-600 hover:bg-red-50 rounded-lg transition font-medium text-sm"
-              >
-                Забрати проєкт з цього процесу
-              </button>
-          </div>
+          {hasEditRights && (
+            <div className="p-4 border-t border-gray-200">
+              <button
+                  onClick={removeProjectFromProcess}
+                  className="w-full py-2 text-red-600 hover:bg-red-50 rounded-lg transition font-medium text-sm"
+                >
+                  Забрати проєкт з цього процесу
+                </button>
+            </div>
+          )}
         </div>
       )}
     </div>

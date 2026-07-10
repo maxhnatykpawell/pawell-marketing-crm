@@ -29,7 +29,7 @@ interface Props {
 }
 
 export default function TagPicker({ cardId, selectedTagIds, onChange, compact }: Props) {
-  const { state, addTag, updateTag, deleteTag, updateCard } = useAppContext();
+  const { state, addTag, updateTag, deleteTag, updateCard, hasEditRights } = useAppContext();
   const [isOpen, setIsOpen] = useState(false);
   const [mode, setMode] = useState<'list' | 'create' | 'edit'>('list');
   const [editingTag, setEditingTag] = useState<Tag | null>(null);
@@ -109,7 +109,7 @@ export default function TagPicker({ cardId, selectedTagIds, onChange, compact }:
             style={{ backgroundColor: tag.color }}
           >
             {tag.name}
-            {compact && (
+            {hasEditRights && compact && (
               <button
                 type="button"
                 onClick={() => toggleTag(tag.id)}
@@ -121,7 +121,7 @@ export default function TagPicker({ cardId, selectedTagIds, onChange, compact }:
             )}
           </span>
         ))}
-        {compact && (
+        {hasEditRights && compact && (
           <button
             onClick={() => setIsOpen(true)}
             className="flex items-center px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-xs font-medium transition"
@@ -133,7 +133,7 @@ export default function TagPicker({ cardId, selectedTagIds, onChange, compact }:
         )}
       </div>
 
-      {!compact && (
+      {hasEditRights && !compact && (
         <button 
           onClick={() => setIsOpen(true)}
           className="w-full flex items-center px-4 py-2 bg-gray-100/80 hover:bg-gray-200/80 text-gray-700 rounded-lg text-sm font-medium transition backdrop-blur-sm whitespace-nowrap"

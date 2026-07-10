@@ -15,7 +15,7 @@ interface Props {
 }
 
 export default function BoardCard({ card, selectionMode, isSelected, onToggleSelect }: Props) {
-  const { state, updateCard, moveCard } = useAppContext();
+  const { state, updateCard, moveCard, hasEditRights } = useAppContext();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
 
@@ -45,18 +45,21 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
   return (
     <>
       <div 
-        draggable
+        draggable={hasEditRights}
         onDragStart={(e) => {
+          if (!hasEditRights) return;
           e.stopPropagation();
           e.dataTransfer.setData('cardId', card.id);
         }}
         onDragOver={(e) => {
+          if (!hasEditRights) return;
           e.preventDefault();
           e.stopPropagation();
           setIsDragOver(true);
         }}
         onDragLeave={() => setIsDragOver(false)}
         onDrop={(e) => {
+          if (!hasEditRights) return;
           e.preventDefault();
           e.stopPropagation();
           setIsDragOver(false);
@@ -109,10 +112,12 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
 
           <div className="flex justify-between items-start gap-2 mb-2">
             <div 
-              className="mt-0.5 cursor-pointer"
+              className={`mt-0.5 ${hasEditRights ? 'cursor-pointer' : ''}`}
               onClick={(e) => {
                 e.stopPropagation();
-                updateCard(card.id, { isCompleted: !card.isCompleted });
+                if (hasEditRights) {
+                  updateCard(card.id, { isCompleted: !card.isCompleted });
+                }
               }}
             >
               <div className={cn(

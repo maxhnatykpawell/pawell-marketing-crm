@@ -13,7 +13,7 @@ import { uk } from 'date-fns/locale';
 const UNGROUPED_KEY = '__ungrouped__';
 
 export default function ProjectsView() {
-  const { state, currentUser, deleteProject, updateProject, setActiveView, setActiveProjectId, confirmAction } = useAppContext();
+  const { state, currentUser, deleteProject, updateProject, setActiveView, setActiveProjectId, confirmAction, hasEditRights } = useAppContext();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | undefined>();
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'completed'>('all');
@@ -147,7 +147,7 @@ export default function ProjectsView() {
               </button>
             ))}
           </div>
-          {(isAdmin || currentUser) && (
+          {hasEditRights && (isAdmin || currentUser) && (
             <button
               onClick={() => { setEditingProject(undefined); setIsModalOpen(true); }}
               className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition shadow-sm flex items-center gap-2"
@@ -167,12 +167,14 @@ export default function ProjectsView() {
           </div>
           <h3 className="text-lg font-bold text-gray-900 mb-1">Немає проєктів</h3>
           <p className="text-gray-500 max-w-md mb-6">Створіть свій перший проєкт, щоб згрупувати задачі та відстежувати загальний прогрес.</p>
-          <button
-            onClick={() => { setEditingProject(undefined); setIsModalOpen(true); }}
-            className="px-5 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition"
-          >
-            Створити проєкт
-          </button>
+          {hasEditRights && (
+            <button
+              onClick={() => { setEditingProject(undefined); setIsModalOpen(true); }}
+              className="px-5 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition"
+            >
+              Створити проєкт
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-4">
@@ -242,7 +244,7 @@ export default function ProjectsView() {
                   </span>
 
                   {/* Group actions — only for named groups, admin */}
-                  {isAdmin && !isUngrouped && !isRenaming && (
+                  {hasEditRights && isAdmin && !isUngrouped && !isRenaming && (
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0" onClick={e => e.stopPropagation()}>
                       <button
                         onClick={() => setRenamingGroup({ key: groupKey, value: group.label })}
@@ -291,7 +293,7 @@ export default function ProjectsView() {
                                   {getStatusIcon(project.status)}
                                   {getStatusLabel(project.status)}
                                 </span>
-                                {(isAdmin || project.managerIds.includes(currentUser?.userId || '')) && (
+                                {hasEditRights && (isAdmin || project.managerIds.includes(currentUser?.userId || '')) && (
                                   <div className="flex items-center gap-1">
                                     <button onClick={() => handleEdit(project)} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition" title="Редагувати">
                                       <Edit2 className="w-3.5 h-3.5" />

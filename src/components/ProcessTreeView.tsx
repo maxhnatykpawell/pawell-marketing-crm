@@ -6,7 +6,7 @@ import ProcessEditor from './ProcessEditor';
 import ProcessTracker from './ProcessTracker';
 
 export default function ProcessTreeView() {
-  const { state, addProcess, deleteProcess, confirmAction } = useAppContext();
+  const { state, addProcess, deleteProcess, confirmAction, hasEditRights } = useAppContext();
   const processes = state.processes || [];
   
   const [selectedProcessId, setSelectedProcessId] = useState<string | null>(processes[0]?.id || null);
@@ -34,9 +34,11 @@ export default function ProcessTreeView() {
       <div className="w-64 border-r border-gray-200 bg-gray-50 flex flex-col shrink-0">
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
           <h2 className="font-bold text-gray-800">Процеси</h2>
-          <button onClick={handleCreateProcess} className="p-1 hover:bg-gray-200 rounded text-gray-600 transition" title="Створити новий процес">
-            <Plus className="w-5 h-5" />
-          </button>
+          {hasEditRights && (
+            <button onClick={handleCreateProcess} className="p-1 hover:bg-gray-200 rounded text-gray-600 transition" title="Створити новий процес">
+              <Plus className="w-5 h-5" />
+            </button>
+          )}
         </div>
         <div className="p-2 flex-1 overflow-y-auto hidden-scrollbar">
           {processes.length === 0 ? (
@@ -49,7 +51,7 @@ export default function ProcessTreeView() {
                 onClick={() => setSelectedProcessId(p.id)}
               >
                 <span className="truncate pr-2">{p.title}</span>
-                {selectedProcessId === p.id && (
+                {hasEditRights && selectedProcessId === p.id && (
                   <button onClick={(e) => { e.stopPropagation(); handleDelete(p.id); }} className="text-red-500 hover:text-red-700 p-1" title="Видалити">
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -73,12 +75,14 @@ export default function ProcessTreeView() {
                 >
                   <Kanban className="w-4 h-4 mr-2" /> Трекер
                 </button>
-                <button
-                  onClick={() => setMode('editor')}
-                  className={`flex items-center px-4 py-1.5 text-sm font-medium rounded-md transition ${mode === 'editor' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
-                >
-                  <Edit3 className="w-4 h-4 mr-2" /> Редактор
-                </button>
+                {hasEditRights && (
+                  <button
+                    onClick={() => setMode('editor')}
+                    className={`flex items-center px-4 py-1.5 text-sm font-medium rounded-md transition ${mode === 'editor' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                  >
+                    <Edit3 className="w-4 h-4 mr-2" /> Редактор
+                  </button>
+                )}
               </div>
             </div>
             <div className="flex-1 relative bg-gray-50/50">
