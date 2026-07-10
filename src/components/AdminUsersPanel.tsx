@@ -4,7 +4,8 @@ import { changePassword, setUserCredentials, resetUserPassword, getAuthList, gen
 import {
   Shield, User as UserIcon, Mail, Lock, Key, RefreshCw,
   Check, X, AlertCircle, Eye, EyeOff, ChevronDown, ChevronUp,
-  Copy, CheckCheck, Plus, Edit3, Link, Settings2, Send, MessageCircle
+  Copy, CheckCheck, Plus, Edit3, Link, Settings2, Send, MessageCircle,
+  ShieldCheck, ShieldOff, Sliders
 } from 'lucide-react';
 import { AccessRights } from '../types';
 
@@ -32,7 +33,7 @@ export default function AdminUsersPanel() {
   const [formError, setFormError] = useState('');
   const [formLoading, setFormLoading] = useState(false);
   const [rightsUserId, setRightsUserId] = useState<string | null>(null);
-  const [rightsForm, setRightsForm] = useState<{ useCustom: boolean; rights: AccessRights } | null>(null);
+  const [rightsForm, setRightsForm] = useState<{ useCustom: boolean; rights: AccessRights; groupId: string | null } | null>(null);
 
   const [tempPassword, setTempPassword] = useState<{ userId: string; pass: string } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -128,6 +129,46 @@ export default function AdminUsersPanel() {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const openRights = (userId: string) => {
+    const user = state.users.find(u => u.id === userId);
+    const group = state.userGroups?.find(g => g.id === user?.groupId);
+    const defaultRights: AccessRights = {
+      canEdit: true,
+      allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations'],
+    };
+    const hasCustom = !!user?.customRights;
+    setRightsUserId(userId);
+    setRightsForm({
+      useCustom: hasCustom,
+      groupId: user?.groupId ?? null,
+      rights: user?.customRights || group?.rights || { ...defaultRights },
+    });
+  };
+
+  const handleSaveRights = (userId: string) => {
+    if (!rightsForm) return;
+    if (!rightsForm.useCustom) {
+      // Use group or defaults — clear customRights
+      updateUser(userId, { customRights: null, groupId: rightsForm.groupId });
+    } else {
+      updateUser(userId, { customRights: rightsForm.rights, groupId: null });
+    }
+    setRightsUserId(null);
+    setRightsForm(null);
+  };
+
+  const toggleRightsView = (viewId: string) => {
+    if (!rightsForm) return;
+    const views = rightsForm.rights.allowedViews;
+    setRightsForm({
+      ...rightsForm,
+      rights: {
+        ...rightsForm.rights,
+        allowedViews: views.includes(viewId) ? views.filter(v => v !== viewId) : [...views, viewId],
+      },
     });
   };
 
@@ -234,6 +275,26 @@ export default function AdminUsersPanel() {
                           {isEditingThis ? 'Скасувати' : hasAccess ? 'Змінити' : 'Дати доступ'}
                         </button>
 
+                        {/* Rights button */}
+                        <button
+                          onClick={() => {
+                            if (rightsUserId === user.id) { setRightsUserId(null); setRightsForm(null); }
+                            else openRights(user.id);
+                          }}
+                          title="Налаштувати права доступу"
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                            rightsUserId === user.id
+                              ? 'bg-violet-100 text-violet-700'
+                              : user.customRights
+                              ? 'bg-violet-50 text-violet-700 border border-violet-200'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          }`}
+                        >
+                          <Sliders className="w-3.5 h-3.5" />
+                          Права
+                          {user.customRights && <ShieldCheck className="w-3 h-3 text-violet-500" />}
+                        </button>
+
                         {!hasAccess && !isEditingThis && (
                           <button
                             onClick={() => handleInvite(user.id)}
@@ -305,6 +366,121 @@ export default function AdminUsersPanel() {
                           {copied ? <CheckCheck className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                           {copied ? 'Скопійовано' : 'Копіювати'}
                         </button>
+                      </div>
+                    )}
+
+                    {/* ── Rights Panel ── */}
+                    {rightsUserId === user.id && rightsForm && (
+                      <div className="mt-3 bg-violet-50 border border-violet-200 rounded-xl p-4 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-bold text-violet-800 uppercase tracking-wider flex items-center gap-1.5">
+                            <Sliders className="w-3.5 h-3.5" />
+                            Права доступу &mdash; {user.name}
+                          </p>
+                        </div>
+
+                        {/* Mode selector */}
+                        <div className="grid grid-cols-3 gap-2 text-xs font-semibold">
+                          <button
+                            onClick={() => setRightsForm({ ...rightsForm, useCustom: false, groupId: null })}
+                            className={`py-2 px-2 rounded-lg border transition text-center ${
+                              !rightsForm.useCustom && !rightsForm.groupId ? 'bg-white border-violet-400 text-violet-700 shadow-sm' : 'bg-white/60 border-violet-100 text-gray-500 hover:border-violet-300'
+                            }`}
+                          >
+                            Стандартні
+                          </button>
+                          <button
+                            onClick={() => setRightsForm({ ...rightsForm, useCustom: false, groupId: rightsForm.groupId || (state.userGroups?.[0]?.id ?? null) })}
+                            className={`py-2 px-2 rounded-lg border transition text-center ${
+                              !rightsForm.useCustom && rightsForm.groupId ? 'bg-white border-violet-400 text-violet-700 shadow-sm' : 'bg-white/60 border-violet-100 text-gray-500 hover:border-violet-300'
+                            }`}
+                          >
+                            Група
+                          </button>
+                          <button
+                            onClick={() => setRightsForm({ ...rightsForm, useCustom: true, groupId: null })}
+                            className={`py-2 px-2 rounded-lg border transition text-center ${
+                              rightsForm.useCustom ? 'bg-white border-violet-400 text-violet-700 shadow-sm' : 'bg-white/60 border-violet-100 text-gray-500 hover:border-violet-300'
+                            }`}
+                          >
+                            Індивідуальні
+                          </button>
+                        </div>
+
+                        {/* Group selector */}
+                        {!rightsForm.useCustom && rightsForm.groupId !== null && (
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-600 mb-1">Група</label>
+                            {(state.userGroups || []).length === 0 ? (
+                              <p className="text-xs text-gray-400 italic">Немає жодної групи. Створіть групу у розділі «Групи та Права».</p>
+                            ) : (
+                              <select
+                                value={rightsForm.groupId || ''}
+                                onChange={e => setRightsForm({ ...rightsForm, groupId: e.target.value || null })}
+                                className="w-full px-3 py-2 text-sm border border-violet-200 rounded-lg outline-none focus:ring-2 focus:ring-violet-100 focus:border-violet-500 bg-white"
+                              >
+                                {(state.userGroups || []).map(g => (
+                                  <option key={g.id} value={g.id}>{g.name} ({g.rights.allowedViews.length} розділів{!g.rights.canEdit ? ', лише перегляд' : ''})</option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Custom rights editor */}
+                        {rightsForm.useCustom && (
+                          <div className="space-y-3">
+                            <label className="flex items-center gap-2 text-sm font-semibold text-gray-800 bg-white rounded-lg px-3 py-2 border border-violet-100">
+                              <input
+                                type="checkbox"
+                                checked={rightsForm.rights.canEdit}
+                                onChange={e => setRightsForm({ ...rightsForm, rights: { ...rightsForm.rights, canEdit: e.target.checked } })}
+                                className="rounded text-violet-600 focus:ring-violet-500"
+                              />
+                              Дозволити редагування (створювати/видаляти/змінювати)
+                            </label>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-600 mb-2">Доступні розділи</label>
+                              <div className="grid grid-cols-2 gap-2">
+                                {viewsList.map(v => (
+                                  <label key={v.id} className="flex items-center gap-2 text-xs text-gray-700 bg-white px-2.5 py-2 rounded-lg border border-violet-100 hover:border-violet-300 cursor-pointer transition">
+                                    <input
+                                      type="checkbox"
+                                      checked={rightsForm.rights.allowedViews.includes(v.id)}
+                                      onChange={() => toggleRightsView(v.id)}
+                                      className="rounded text-violet-600 focus:ring-violet-500"
+                                    />
+                                    {v.label}
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Standard rights notice */}
+                        {!rightsForm.useCustom && !rightsForm.groupId && (
+                          <p className="text-xs text-gray-500 bg-white/80 rounded-lg px-3 py-2 border border-violet-100">
+                            Користувач матиме повний доступ до всіх розділів із правом редагування.
+                          </p>
+                        )}
+
+                        <div className="flex gap-2 pt-1">
+                          <button
+                            onClick={() => handleSaveRights(user.id)}
+                            className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-lg transition"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            Зберегти
+                          </button>
+                          <button
+                            onClick={() => { setRightsUserId(null); setRightsForm(null); }}
+                            className="px-4 py-2 bg-white border border-violet-200 text-gray-600 text-xs font-semibold rounded-lg hover:bg-gray-50 transition"
+                          >
+                            Скасувати
+                          </button>
+                        </div>
                       </div>
                     )}
 
