@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useAppContext } from '../App';
 import { changePassword } from '../api';
+import { uploadFile } from '../api';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
 import { Card } from '../types';
@@ -10,19 +11,23 @@ import {
   CheckCircle2, AlertCircle, Lock, Eye, EyeOff, Check,
   LogOut, Calendar, Edit2, ArrowRight, Kanban,
   ChevronRight, Tag, CheckSquare, MessageSquare, Paperclip,
-  Settings, Sparkles
+  Settings, Sparkles, Camera
 } from 'lucide-react';
 
 export default function MyProfileView() {
   const { state, currentUser, logout, updateUser, setActiveBoardId, setActiveView } = useAppContext();
 
   const user = state.users.find(u => u.id === currentUser?.userId);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   // Tab state
   const [activeTab, setActiveTab] = useState<'overview' | 'settings'>('overview');
 
   // Card modal
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
+
+  // Avatar upload
+  const [avatarUploading, setAvatarUploading] = useState(false);
 
   // Password change form
   const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' });
@@ -122,6 +127,21 @@ export default function MyProfileView() {
     setTimeout(() => { setNameSaving(false); setEditName(false); }, 600);
   };
 
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+    setAvatarUploading(true);
+    try {
+      const attachment = await uploadFile(file);
+      updateUser(user.id, { avatar: attachment.url });
+    } catch {
+      alert('Помилка завантаження фото');
+    } finally {
+      setAvatarUploading(false);
+      if (avatarInputRef.current) avatarInputRef.current.value = '';
+    }
+  };
+
   if (!user || !currentUser) return null;
 
   const roleLabel = currentUser.role === 'admin' ? 'Адміністратор' : 'Член команди';
@@ -139,9 +159,32 @@ export default function MyProfileView() {
         </div>
         <div className="px-8 pb-6">
           <div className="flex items-end justify-between -mt-12 mb-4">
-            <div className="relative">
-              <img src={user.avatar} alt={user.name} className="w-24 h-24 rounded-2xl border-4 border-white shadow-lg object-cover" />
+            <div className="relative group/avatar">
+              {avatarUploading ? (
+                <div className="w-24 h-24 rounded-2xl border-4 border-white shadow-lg bg-gray-100 flex items-center justify-center">
+                  <div className="w-6 h-6 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin" />
+                </div>
+              ) : (
+                <img src={user.avatar} alt={user.name} className="w-24 h-24 rounded-2xl border-4 border-white shadow-lg object-cover" />
+              )}
               <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-green-400 border-2 border-white" title="Онлайн" />
+              {/* Upload overlay */}
+              <button
+                onClick={() => avatarInputRef.current?.click()}
+                disabled={avatarUploading}
+                className="absolute inset-0 rounded-2xl bg-black/50 opacity-0 group-hover/avatar:opacity-100 transition-opacity flex items-center justify-center gap-1 flex-col cursor-pointer disabled:cursor-wait"
+                title="Змінити фото"
+              >
+                <Camera className="w-6 h-6 text-white" />
+                <span className="text-white text-[10px] font-semibold">Фото</span>
+              </button>
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleAvatarUpload}
+              />
             </div>
             <button
               onClick={logout}
