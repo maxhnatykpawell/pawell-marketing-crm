@@ -555,7 +555,6 @@ export default function AdminSettingsPanel() {
               )}
             </div>
           </div>
-        </div>
 
           {/* ── Personal Notifications ────────────────────────────────────── */}
           <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
@@ -656,11 +655,11 @@ export default function AdminSettingsPanel() {
                   <div className="mt-3 space-y-3">
                     <div className="text-[10px] text-gray-400 bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
                       <span className="font-bold">Доступні змінні:</span>{' '}
-                      <code>{{taskTitle}}</code>{' '}·{' '}
-                      <code>{{assigneeName}}</code>{' '}·{' '}
-                      <code>{{deadline}}</code>{' '}·{' '}
-                      <code>{{projectName}}</code>{' '}·{' '}
-                      <code>{{daysOverdue}}</code>
+                      <code>{'{{taskTitle}}'}</code>{' '}·{' '}
+                      <code>{'{{assigneeName}}'}</code>{' '}·{' '}
+                      <code>{'{{deadline}}'}</code>{' '}·{' '}
+                      <code>{'{{projectName}}'}</code>{' '}·{' '}
+                      <code>{'{{daysOverdue}}'}</code>
                     </div>
 
                     {([

@@ -249,8 +249,6 @@ export default function AdminUsersPanel() {
                           </button>
                         )}
 
-                        )}
-
                         {hasAccess && (
                           <button
                             onClick={() => handleReset(user.id)}
