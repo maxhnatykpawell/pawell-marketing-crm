@@ -42,6 +42,7 @@ export default function MyProfileView() {
   const [nameSaving, setNameSaving] = useState(false);
 
   const myCards = state.cards.filter(c => c.assigneeId === currentUser?.userId);
+  const myActiveCards = myCards.filter(c => !c.isCompleted);
   const myContent = (state.contentPlans || []).filter(c => c.assigneeId === currentUser?.userId);
   const myEvents = (state.events || []).filter(e => e.assigneeIds?.includes(currentUser?.userId || ''));
 
@@ -77,7 +78,7 @@ export default function MyProfileView() {
     ok: { bg: 'bg-white', border: 'border-gray-100', text: 'text-gray-500', badge: 'bg-gray-100 text-gray-600', label: '' },
   };
 
-  const sortedCards = [...myCards].sort((a, b) => {
+  const sortedCards = [...myActiveCards].sort((a, b) => {
     const order = { overdue: 0, today: 1, soon: 2, ok: 3 };
     const sa = getDeadlineStatus(a.deadline, a.isCompleted) || 'ok';
     const sb = getDeadlineStatus(b.deadline, b.isCompleted) || 'ok';
@@ -147,8 +148,8 @@ export default function MyProfileView() {
   const roleLabel = currentUser.role === 'admin' ? 'Адміністратор' : 'Член команди';
   const roleColor = currentUser.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700';
 
-  const overdueCount = myCards.filter(c => !c.isCompleted && getDeadlineStatus(c.deadline, c.isCompleted) === 'overdue').length;
-  const todayCount = myCards.filter(c => !c.isCompleted && getDeadlineStatus(c.deadline, c.isCompleted) === 'today').length;
+  const overdueCount = myActiveCards.filter(c => getDeadlineStatus(c.deadline, c.isCompleted) === 'overdue').length;
+  const todayCount = myActiveCards.filter(c => getDeadlineStatus(c.deadline, c.isCompleted) === 'today').length;
 
   return (
     <div className="w-full max-w-5xl mx-auto space-y-6 pb-8">
@@ -230,7 +231,7 @@ export default function MyProfileView() {
             {/* Stats */}
             <div className="hidden md:flex gap-6 text-center">
               {[
-                { label: 'Задачі', value: myCards.length, icon: Kanban, color: 'text-blue-600' },
+                { label: 'Задачі', value: myActiveCards.length, icon: Kanban, color: 'text-blue-600' },
                 { label: 'Контент', value: myContent.length, icon: FileText, color: 'text-indigo-600' },
                 { label: 'Події', value: myEvents.length, icon: Calendar, color: 'text-purple-600' },
               ].map(stat => (
@@ -255,7 +256,7 @@ export default function MyProfileView() {
               <h3 className="font-bold text-gray-800 flex items-center gap-2">
                 <Kanban className="w-5 h-5 text-blue-600" />
                 Мої задачі
-                <span className="text-xs bg-blue-100 text-blue-700 font-semibold px-2 py-0.5 rounded-full">{myCards.length}</span>
+                <span className="text-xs bg-blue-100 text-blue-700 font-semibold px-2 py-0.5 rounded-full">{myActiveCards.length}</span>
                 <span className="text-xs bg-yellow-100 text-yellow-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
                   <Sparkles className="w-3 h-3" /> {myTotalStoryPoints} SP (місяць)
                 </span>
@@ -277,7 +278,7 @@ export default function MyProfileView() {
               </button>
             </div>
 
-            {myCards.length === 0 ? (
+            {myActiveCards.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-14 text-gray-400">
                 <CheckCircle2 className="w-10 h-10 mb-3 text-gray-300" />
                 <p className="text-sm font-medium">Задач немає — відпочивай! 🎉</p>
