@@ -60,7 +60,13 @@ export default function Board() {
       let destVisibleCards = state.cards
         .filter(c => c.listId === toListId && (!activeProjectId || c.projectId === activeProjectId))
         .filter(c => {
-          if (filterAssigneeId && c.assigneeId !== filterAssigneeId) return false;
+          if (filterAssigneeId) {
+            if (filterAssigneeId === 'unassigned') {
+              if (c.assigneeId) return false;
+            } else {
+              if (c.assigneeId !== filterAssigneeId) return false;
+            }
+          }
           if (filterTagId && (!c.tagIds || !c.tagIds.includes(filterTagId))) return false;
           if (filterOverdue) {
             const isOverdue = c.deadline && new Date(c.deadline) < new Date() && c.listId !== state.lists[state.lists.length - 1]?.id && !c.isCompleted;
@@ -172,6 +178,7 @@ export default function Board() {
           className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:ring-blue-500 focus:border-blue-500 outline-none bg-gray-50"
         >
           <option value="">Усі виконавці</option>
+          <option value="unassigned">Без виконавця</option>
           {state.users.map(u => (
             <option key={u.id} value={u.id}>{u.name}</option>
           ))}

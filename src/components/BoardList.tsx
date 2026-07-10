@@ -27,7 +27,13 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
   const cards = state.cards
     .filter(c => c.listId === list.id && (!activeProjectId || c.projectId === activeProjectId))
     .filter(c => {
-      if (filterAssigneeId && c.assigneeId !== filterAssigneeId) return false;
+      if (filterAssigneeId) {
+        if (filterAssigneeId === 'unassigned') {
+          if (c.assigneeId) return false;
+        } else {
+          if (c.assigneeId !== filterAssigneeId) return false;
+        }
+      }
       if (filterTagId && (!c.tagIds || !c.tagIds.includes(filterTagId))) return false;
       if (filterOverdue) {
         const isOverdue = c.deadline && new Date(c.deadline) < new Date() && c.listId !== state.lists[state.lists.length - 1]?.id && !c.isCompleted;
