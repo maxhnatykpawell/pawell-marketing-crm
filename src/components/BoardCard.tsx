@@ -3,6 +3,7 @@ import { Card } from '../types';
 import { useAppContext } from '../App';
 import { Calendar, AlignLeft, CheckSquare, MessageSquare, Paperclip, Clock, Sparkles, Check } from 'lucide-react';
 import { format } from 'date-fns';
+import { Draggable } from '@hello-pangea/dnd';
 import CardModal from './CardModal';
 import { cn } from '../utils';
 
@@ -11,13 +12,12 @@ interface Props {
   selectionMode?: boolean;
   isSelected?: boolean;
   onToggleSelect?: () => void;
-  key?: React.Key;
+  index: number;
 }
 
-export default function BoardCard({ card, selectionMode, isSelected, onToggleSelect }: Props) {
-  const { state, updateCard, moveCard, hasEditRights } = useAppContext();
+export default function BoardCard({ card, selectionMode, isSelected, onToggleSelect, index }: Props) {
+  const { state, updateCard, hasEditRights } = useAppContext();
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isDragOver, setIsDragOver] = useState(false);
 
   const assignee = card.assigneeId ? state.users.find(u => u.id === card.assigneeId) : null;
   
@@ -44,43 +44,26 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
 
   return (
     <>
-      <div 
-        draggable={hasEditRights}
-        onDragStart={(e) => {
-          if (!hasEditRights) return;
-          e.stopPropagation();
-          e.dataTransfer.setData('cardId', card.id);
-        }}
-        onDragOver={(e) => {
-          if (!hasEditRights) return;
-          e.preventDefault();
-          e.stopPropagation();
-          setIsDragOver(true);
-        }}
-        onDragLeave={() => setIsDragOver(false)}
-        onDrop={(e) => {
-          if (!hasEditRights) return;
-          e.preventDefault();
-          e.stopPropagation();
-          setIsDragOver(false);
-          const draggedCardId = e.dataTransfer.getData('cardId');
-          if (draggedCardId && draggedCardId !== card.id) {
-            moveCard(draggedCardId, card.listId, card.id);
-          }
-        }}
-        onClick={() => {
-          if (selectionMode && onToggleSelect) {
-            onToggleSelect();
-          } else {
-            setIsModalOpen(true);
-          }
-        }}
-        className={cn(
-          "rounded-lg shadow-sm hover:shadow-md border border-b-gray-300 cursor-pointer overflow-hidden group hover:ring-1 hover:ring-blue-500/50 transition-all flex flex-col relative",
-          isSelected ? "border-blue-500 ring-2 ring-blue-500 bg-blue-50/50" : "border-gray-200 bg-white",
-          isDragOver && "border-t-4 border-t-blue-500 rounded-none shadow-xl"
-        )}
-      >
+      <Draggable draggableId={card.id} index={index} isDragDisabled={!hasEditRights || selectionMode}>
+        {(provided, snapshot) => (
+          <div 
+            ref={provided.innerRef}
+            {...provided.draggableProps}
+            {...provided.dragHandleProps}
+            style={provided.draggableProps.style}
+            onClick={() => {
+              if (selectionMode && onToggleSelect) {
+                onToggleSelect();
+              } else {
+                setIsModalOpen(true);
+              }
+            }}
+            className={cn(
+              "rounded-lg shadow-sm hover:shadow-md border border-b-gray-300 cursor-pointer overflow-hidden group hover:ring-1 hover:ring-blue-500/50 transition-all flex flex-col relative mb-3",
+              isSelected ? "border-blue-500 ring-2 ring-blue-500 bg-blue-50/50" : "border-gray-200 bg-white",
+              snapshot.isDragging && "shadow-xl border-blue-500 ring-2 ring-blue-500 rotate-2 opacity-90 scale-105 z-50 bg-white"
+            )}
+          >
         {selectionMode && (
           <div className="absolute top-2 right-2 z-10">
             <div className={cn(
@@ -220,7 +203,9 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
             </div>
           </div>
         </div>
-      </div>
+          </div>
+        )}
+      </Draggable>
 
       {isModalOpen && (
         <CardModal card={card} onClose={() => setIsModalOpen(false)} />

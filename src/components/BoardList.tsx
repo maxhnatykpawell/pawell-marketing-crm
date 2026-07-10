@@ -3,6 +3,7 @@ import { List } from '../types';
 import { useAppContext } from '../App';
 import BoardCard from './BoardCard';
 import { Plus, MoreHorizontal, Trash2, Eye, EyeOff, CheckSquare, X, Check, ArrowDownAZ } from 'lucide-react';
+import { Draggable, Droppable } from '@hello-pangea/dnd';
 import { cn } from '../utils';
 
 interface Props {
@@ -10,14 +11,13 @@ interface Props {
   filterAssigneeId?: string | null;
   filterTagId?: string | null;
   filterOverdue?: boolean;
-  key?: React.Key;
+  index: number;
 }
 
-export default function BoardList({ list, filterAssigneeId, filterTagId, filterOverdue }: Props) {
-  const { state, addCard, deleteList, clearList, moveCard, moveList, activeProjectId, confirmAction, updateList, updateCard, deleteCard, hasEditRights } = useAppContext();
+export default function BoardList({ list, filterAssigneeId, filterTagId, filterOverdue, index }: Props) {
+  const { state, addCard, deleteList, clearList, updateList, updateCard, deleteCard, confirmAction, hasEditRights, activeProjectId } = useAppContext();
   const [isAdding, setIsAdding] = useState(false);
   const [newCardTitle, setNewCardTitle] = useState('');
-  const [isDragOver, setIsDragOver] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [limit, setLimit] = useState(10);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -71,39 +71,19 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
     });
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(false);
-    
-    const cardId = e.dataTransfer.getData('cardId');
-    if (cardId) {
-      moveCard(cardId, list.id);
-      return;
-    }
-    
-    const draggedListId = e.dataTransfer.getData('listId');
-    if (draggedListId && draggedListId !== list.id) {
-      moveList(draggedListId, list.id);
-    }
-  };
-
   return (
-    <div 
-      draggable={hasEditRights}
-      onDragStart={(e) => {
-        // Only set data if not dragging a card (handled by stopPropagation in Card)
-        if (hasEditRights) e.dataTransfer.setData('listId', list.id);
-      }}
-      className={cn(
-        "w-80 shrink-0 bg-gray-100 rounded-xl flex flex-col max-h-full border border-transparent transition duration-200 shadow-sm",
-        hasEditRights && "cursor-grab active:cursor-grabbing",
-        isDragOver && "bg-blue-50/70 border-blue-300 shadow-md ring-2 ring-blue-500/20"
-      )}
-      onDragOver={(e) => { if (hasEditRights) { e.preventDefault(); setIsDragOver(true); } }}
-      onDragLeave={() => setIsDragOver(false)}
-      onDrop={hasEditRights ? handleDrop : undefined}
-    >
+    <Draggable draggableId={list.id} index={index} isDragDisabled={!hasEditRights}>
+      {(providedList, snapshotList) => (
+        <div 
+          ref={providedList.innerRef}
+          {...providedList.draggableProps}
+          {...providedList.dragHandleProps}
+          style={providedList.draggableProps.style}
+          className={cn(
+            "w-80 shrink-0 bg-gray-100 rounded-xl flex flex-col max-h-full border border-transparent transition duration-200 shadow-sm",
+            snapshotList.isDragging && "shadow-xl border-blue-300 ring-2 ring-blue-500/20 rotate-1 opacity-95"
+          )}
+        >
       {selectionMode ? (
         <div className="px-4 py-3 flex items-center justify-between bg-blue-50 border-b border-blue-100 rounded-t-xl min-h-[48px]">
           <div className="flex items-center gap-2">
@@ -283,22 +263,35 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-3 hidden-scrollbar h-full min-h-[50px]">
-        {cards.slice(0, limit).map(card => (
-          <BoardCard 
-            key={card.id} 
-            card={card} 
-            selectionMode={selectionMode}
-            isSelected={selectedCardIds.includes(card.id)}
-            onToggleSelect={() => {
-              if (selectedCardIds.includes(card.id)) {
-                setSelectedCardIds(prev => prev.filter(id => id !== card.id));
-              } else {
-                setSelectedCardIds(prev => [...prev, card.id]);
-              }
-            }}
-          />
-        ))}
+      <Droppable droppableId={list.id} type="CARD">
+        {(providedDrop, snapshotDrop) => (
+          <div 
+            ref={providedDrop.innerRef}
+            {...providedDrop.droppableProps}
+            className={cn(
+              "flex-1 overflow-y-auto px-3 pb-3 hidden-scrollbar h-full min-h-[50px] transition-colors",
+              snapshotDrop.isDraggingOver && "bg-blue-50/50 rounded-b-xl"
+            )}
+          >
+            <div className="min-h-[10px]">
+              {cards.slice(0, limit).map((card, cardIndex) => (
+                <BoardCard 
+                  key={card.id} 
+                  card={card} 
+                  index={cardIndex}
+                  selectionMode={selectionMode}
+                  isSelected={selectedCardIds.includes(card.id)}
+                  onToggleSelect={() => {
+                    if (selectedCardIds.includes(card.id)) {
+                      setSelectedCardIds(prev => prev.filter(id => id !== card.id));
+                    } else {
+                      setSelectedCardIds(prev => [...prev, card.id]);
+                    }
+                  }}
+                />
+              ))}
+              {providedDrop.placeholder}
+            </div>
         {cards.length > limit && (
           <button
             onClick={() => setLimit(l => l + 10)}
@@ -307,8 +300,12 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
             Показати ще ({cards.length - limit})
           </button>
         )}
-      </div>
+          </div>
+        )}
+      </Droppable>
 
-    </div>
+        </div>
+      )}
+    </Draggable>
   );
 }

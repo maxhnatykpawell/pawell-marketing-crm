@@ -3,9 +3,10 @@ import { useAppContext } from '../App';
 import BoardList from './BoardList';
 import { Plus, Trash2, DownloadCloud, FolderKanban, Filter } from 'lucide-react';
 import TrelloImportModal from './TrelloImportModal';
+import { DragDropContext, Droppable, DropResult } from '@hello-pangea/dnd';
 
 export default function Board() {
-  const { state, addList, activeBoardId, setActiveBoardId, activeProjectId, setActiveProjectId, addBoard, deleteBoard, confirmAction, hasEditRights } = useAppContext();
+  const { state, addList, activeBoardId, setActiveBoardId, activeProjectId, setActiveProjectId, addBoard, deleteBoard, confirmAction, hasEditRights, moveList, moveCard } = useAppContext();
   const [isAddingList, setIsAddingList] = useState(false);
   const [newListTitle, setNewListTitle] = useState('');
   const [isAddingBoard, setIsAddingBoard] = useState(false);
@@ -39,6 +40,42 @@ export default function Board() {
       addBoard(newBoardTitle.trim());
       setNewBoardTitle('');
       setIsAddingBoard(false);
+    }
+  };
+
+  const handleDragEnd = (result: DropResult) => {
+    const { destination, source, draggableId, type } = result;
+
+    if (!destination) return;
+    if (destination.droppableId === source.droppableId && destination.index === source.index) return;
+
+    if (type === 'LIST') {
+      const targetList = sortedLists[destination.index];
+      if (targetList) {
+        moveList(draggableId, targetList.id);
+      }
+    } else if (type === 'CARD') {
+      const toListId = destination.droppableId;
+      
+      let destVisibleCards = state.cards
+        .filter(c => c.listId === toListId && (!activeProjectId || c.projectId === activeProjectId))
+        .filter(c => {
+          if (filterAssigneeId && c.assigneeId !== filterAssigneeId) return false;
+          if (filterTagId && (!c.tagIds || !c.tagIds.includes(filterTagId))) return false;
+          if (filterOverdue) {
+            const isOverdue = c.deadline && new Date(c.deadline) < new Date() && c.listId !== state.lists[state.lists.length - 1]?.id && !c.isCompleted;
+            if (!isOverdue) return false;
+          }
+          return true;
+        })
+        .sort((a, b) => a.order - b.order);
+      
+      if (source.droppableId === destination.droppableId) {
+        destVisibleCards = destVisibleCards.filter(c => c.id !== draggableId);
+      }
+      
+      const targetCardId = destVisibleCards[destination.index]?.id;
+      moveCard(draggableId, toListId, targetCardId);
     }
   };
 
@@ -163,17 +200,26 @@ export default function Board() {
       </div>
 
       <div className="flex-1 overflow-x-auto overflow-y-hidden pb-4 custom-scrollbar">
-        <div className="flex items-start space-x-6 h-full w-max shrink-0">
-          {sortedLists.map(list => (
-            <BoardList 
-              key={list.id} 
-              list={list} 
-              filterAssigneeId={filterAssigneeId}
-              filterTagId={filterTagId}
-              filterOverdue={filterOverdue}
-            />
-          ))}
-          {hasEditRights && (
+        <DragDropContext onDragEnd={handleDragEnd}>
+          <Droppable droppableId="board" type="LIST" direction="horizontal">
+            {(provided) => (
+              <div 
+                ref={provided.innerRef}
+                {...provided.droppableProps}
+                className="flex items-start space-x-6 h-full w-max shrink-0"
+              >
+                {sortedLists.map((list, index) => (
+                  <BoardList 
+                    key={list.id} 
+                    list={list} 
+                    index={index}
+                    filterAssigneeId={filterAssigneeId}
+                    filterTagId={filterTagId}
+                    filterOverdue={filterOverdue}
+                  />
+                ))}
+                {provided.placeholder}
+                {hasEditRights && (
             <div className="w-80 shrink-0">
               {isAddingList ? (
                 <form onSubmit={handleAddList} className="bg-gray-100/80 backdrop-blur rounded-xl p-3 shadow-sm border border-gray-200">
@@ -213,7 +259,10 @@ export default function Board() {
               )}
             </div>
           )}
-        </div>
+              </div>
+            )}
+          </Droppable>
+        </DragDropContext>
       </div>
       
       {isImportModalOpen && (
