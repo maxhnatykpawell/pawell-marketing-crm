@@ -10,9 +10,18 @@ export default function EventCalendarView() {
   const [editingEvent, setEditingEvent] = useState<EventItem | null>(null);
 
   const events = state.events || [];
-  
-  // Sort events chronologically
-  const sortedEvents = [...events].sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
+  // Upcoming: endDate >= today, sorted ascending (nearest first)
+  const upcomingEvents = [...events]
+    .filter(e => new Date(e.endDate).getTime() >= now.getTime())
+    .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+
+  // Past: endDate < today, sorted descending (most recent first)
+  const pastEvents = [...events]
+    .filter(e => new Date(e.endDate).getTime() < now.getTime())
+    .sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
 
   const handleOpenDetails = (event: EventItem) => {
     setActiveEventId(event.id);
@@ -45,6 +54,79 @@ export default function EventCalendarView() {
     return `${d1.toLocaleDateString('uk-UA', options)} - ${d2.toLocaleDateString('uk-UA', { ...options, year: 'numeric' })}`;
   };
 
+  const renderEventCard = (event: EventItem, isPast: boolean) => (
+    <div
+      key={event.id}
+      onClick={() => handleOpenDetails(event)}
+      className={`bg-white rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition group cursor-pointer ${
+        isPast
+          ? 'border-gray-200 opacity-55 saturate-50 hover:opacity-70 hover:saturate-75'
+          : 'border-gray-200 hover:border-blue-200'
+      }`}
+    >
+      <div className="p-6 sm:flex sm:items-start gap-6">
+        {/* Date Block */}
+        <div className={`flex-shrink-0 rounded-lg p-4 text-center sm:w-32 mb-4 sm:mb-0 ${isPast ? 'bg-gray-100 text-gray-500' : 'bg-blue-50 text-blue-700'}`}>
+          <CalendarIcon className="w-6 h-6 mx-auto mb-2 opacity-80" />
+          <div className="text-sm font-semibold tracking-tight leading-tight">
+            {formatDateRange(event.startDate, event.endDate)}
+          </div>
+        </div>
+
+        {/* Content Block */}
+        <div className="flex-grow min-w-0">
+          <div className="flex justify-between items-start">
+            <h3 className="text-xl font-bold text-gray-900 truncate pr-4">{event.title}</h3>
+            <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                onClick={(e) => { e.stopPropagation(); confirmAction('Видалити подію?', () => deleteEvent(event.id)); }}
+                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
+                title="Видалити"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {event.description && (
+            <p className="text-gray-600 mt-2 text-sm leading-relaxed whitespace-pre-wrap line-clamp-3">
+              {event.description}
+            </p>
+          )}
+
+          <div className="mt-4 flex flex-wrap gap-4 items-center text-sm">
+            {event.websiteUrl && (
+              <a
+                href={event.websiteUrl.startsWith('http') ? event.websiteUrl : `https://${event.websiteUrl}`}
+                target="_blank"
+                rel="noreferrer"
+                onClick={e => e.stopPropagation()}
+                className="inline-flex items-center text-blue-600 hover:text-blue-800 transition font-medium"
+              >
+                <Globe className="w-4 h-4 mr-1.5 opacity-70" />
+                Сайт події
+                <ArrowUpRight className="w-3.5 h-3.5 ml-0.5 opacity-70" />
+              </a>
+            )}
+
+            {event.assigneeIds && event.assigneeIds.length > 0 && (
+              <div className="flex items-center text-gray-500 bg-gray-50 px-2.5 py-1 rounded-md border border-gray-100">
+                <Users className="w-4 h-4 mr-2" />
+                <div className="flex -space-x-1.5">
+                  {event.assigneeIds.map(id => {
+                    const u = state.users.find(u => u.id === id);
+                    if (!u) return null;
+                    return <img key={id} src={u.avatar} alt={u.name} title={u.name} className="w-5 h-5 rounded-full border border-white" />;
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="max-w-4xl mx-auto h-full flex flex-col transition-all duration-300">
       <div className="flex justify-between items-center mb-6 flex-shrink-0">
@@ -64,7 +146,7 @@ export default function EventCalendarView() {
       </div>
 
       <div className="flex-1 overflow-y-auto hidden-scrollbar pb-10 space-y-4">
-        {sortedEvents.length === 0 ? (
+        {events.length === 0 ? (
           <div className="text-center py-20 bg-white rounded-xl border border-gray-200 border-dashed">
             <div className="w-16 h-16 bg-blue-50 text-blue-400 rounded-full flex items-center justify-center mx-auto mb-4">
               <CalendarIcon className="w-8 h-8" />
@@ -80,79 +162,41 @@ export default function EventCalendarView() {
             </button>
           </div>
         ) : (
-          sortedEvents.map(event => {
-            const hasPassed = new Date(event.endDate).getTime() < new Date().setHours(0, 0, 0, 0);
-            
-            return (
-              <div 
-                key={event.id} 
-                onClick={() => handleOpenDetails(event)}
-                className={`bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition group cursor-pointer ${hasPassed ? 'opacity-60 saturate-50' : ''}`}
-              >
-                <div className="p-6 sm:flex sm:items-start gap-6">
-                  {/* Date Block */}
-                  <div className="flex-shrink-0 bg-blue-50 text-blue-700 rounded-lg p-4 text-center sm:w-32 mb-4 sm:mb-0">
-                    <CalendarIcon className="w-6 h-6 mx-auto mb-2 opacity-80" />
-                    <div className="text-sm font-semibold tracking-tight leading-tight">
-                      {formatDateRange(event.startDate, event.endDate)}
-                    </div>
-                  </div>
-                  
-                  {/* Content Block */}
-                  <div className="flex-grow min-w-0">
-                    <div className="flex justify-between items-start">
-                      <h3 className="text-xl font-bold text-gray-900 truncate pr-4">{event.title}</h3>
-                      <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); confirmAction('Видалити подію?', () => deleteEvent(event.id)); }} 
-                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded" 
-                          title="Видалити"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                    
-                    {event.description && (
-                      <p className="text-gray-600 mt-2 text-sm leading-relaxed whitespace-pre-wrap line-clamp-3">
-                        {event.description}
-                      </p>
-                    )}
-                    
-                    <div className="mt-4 flex flex-wrap gap-4 items-center text-sm">
-                      {event.websiteUrl && (
-                        <a 
-                          href={event.websiteUrl.startsWith('http') ? event.websiteUrl : `https://${event.websiteUrl}`} 
-                          target="_blank" 
-                          rel="noreferrer"
-                          className="inline-flex items-center text-blue-600 hover:text-blue-800 transition font-medium"
-                        >
-                          <Globe className="w-4 h-4 mr-1.5 opacity-70" />
-                          Сайт події
-                          <ArrowUpRight className="w-3.5 h-3.5 ml-0.5 opacity-70" />
-                        </a>
-                      )}
-                      
-                      {event.assigneeIds && event.assigneeIds.length > 0 && (
-                        <div className="flex items-center text-gray-500 bg-gray-50 px-2.5 py-1 rounded-md border border-gray-100">
-                          <Users className="w-4 h-4 mr-2" />
-                          <div className="flex -space-x-1.5">
-                            {event.assigneeIds.map(id => {
-                              const u = state.users.find(u => u.id === id);
-                              if (!u) return null;
-                              return <img key={id} src={u.avatar} alt={u.name} title={u.name} className="w-5 h-5 rounded-full border border-white" />;
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+          <>
+            {/* ── Upcoming ── */}
+            {upcomingEvents.length > 0 && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold text-blue-600 uppercase tracking-widest">Найближчі події</span>
+                  <span className="flex-1 h-px bg-blue-100" />
+                  <span className="text-xs font-semibold text-blue-500 bg-blue-50 px-2 py-0.5 rounded-full">{upcomingEvents.length}</span>
                 </div>
+                {upcomingEvents.map(event => renderEventCard(event, false))}
               </div>
-            );
-          })
+            )}
+
+            {upcomingEvents.length === 0 && (
+              <div className="flex items-center gap-3 py-2">
+                <CalendarIcon className="w-4 h-4 text-gray-300" />
+                <p className="text-sm text-gray-400 italic">Найближчих подій немає — додайте нову</p>
+              </div>
+            )}
+
+            {/* ── Past ── */}
+            {pastEvents.length > 0 && (
+              <div className="space-y-3 mt-4">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Минулі події</span>
+                  <span className="flex-1 h-px bg-gray-200" />
+                  <span className="text-xs font-semibold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{pastEvents.length}</span>
+                </div>
+                {pastEvents.map(event => renderEventCard(event, true))}
+              </div>
+            )}
+          </>
         )}
       </div>
+
 
       {dialogOpen && (
         <EventDialog event={editingEvent} onClose={handleCloseDialog} />
