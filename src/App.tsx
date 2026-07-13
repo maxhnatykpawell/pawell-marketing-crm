@@ -118,7 +118,7 @@ export default function App() {
   const createNotification = useCallback((notification: NotificationItem) => {
     if (!state) return;
     setState(prev => prev ? { ...prev, notifications: [...(prev.notifications || []), notification] } : prev);
-    updateEntity('notifications', notification.id, notification).catch(console.error);
+    createEntity('notifications', notification).catch(console.error);
   }, [state]);
 
   const markNotificationAsRead = useCallback((id: string) => {
