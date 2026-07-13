@@ -353,7 +353,19 @@ export default function App() {
     estimateTaskTime(title, '').then(estimatedMinutes => {
       updateCardAsync(newCard.id, { estimatedMinutes });
     });
-  }, [state, activeProjectId, updateCardAsync]);
+
+    // Notify assignee if assigned on creation
+    if (newCard.assigneeId && newCard.assigneeId !== currentUser?.userId) {
+      createNotification({
+        id: uuidv4(),
+        userId: newCard.assigneeId,
+        title: 'Нове завдання',
+        message: `Вам призначено завдання: "${newCard.title}"`,
+        read: false,
+        createdAt: new Date().toISOString()
+      });
+    }
+  }, [state, activeProjectId, updateCardAsync, currentUser, createNotification]);
 
   const updateCard = useCallback((cardId: string, updates: Partial<Card>) => {
     if (!state) return;
@@ -363,8 +375,37 @@ export default function App() {
     // Trigger Telegram notification if assignee changed
     if (updates.assigneeId && updates.assigneeId !== prevCard?.assigneeId) {
       sendCardAssignedNotification(cardId, updates.assigneeId);
+      
+      // Also trigger in-app notification
+      if (updates.assigneeId !== currentUser?.userId) {
+        createNotification({
+          id: uuidv4(),
+          userId: updates.assigneeId,
+          title: 'Нове завдання',
+          message: `Вам призначено завдання: "${updates.title || prevCard?.title || 'Без назви'}"`,
+          read: false,
+          createdAt: new Date().toISOString()
+        });
+      }
     }
-  }, [state]);
+
+    // Check for subtask assignee changes
+    if (updates.subtasks && prevCard?.subtasks) {
+      updates.subtasks.forEach(newSt => {
+        const oldSt = prevCard.subtasks?.find(s => s.id === newSt.id);
+        if (newSt.assigneeId && newSt.assigneeId !== oldSt?.assigneeId && newSt.assigneeId !== currentUser?.userId) {
+          createNotification({
+            id: uuidv4(),
+            userId: newSt.assigneeId,
+            title: 'Нова підзадача',
+            message: `Вам призначено підзадачу "${newSt.title}" у картці "${updates.title || prevCard.title || 'Без назви'}"`,
+            read: false,
+            createdAt: new Date().toISOString()
+          });
+        }
+      });
+    }
+  }, [state, currentUser, createNotification]);
 
   const deleteCard = useCallback((cardId: string) => {
     if (!state) return;
