@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Metric, Project, Process, UserGroup, AccessRights } from './types';
+import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Metric, Project, Process, UserGroup, AccessRights, NotificationItem } from './types';
 import { fetchState, syncState, getMe, estimateTaskTime, createEntity, updateEntity, deleteEntity, processOfflineQueue, sendCardAssignedNotification } from './api';
 import { v4 as uuidv4 } from 'uuid';
 import Board from './components/Board';
@@ -111,24 +111,27 @@ export default function App() {
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
 
+  // Use a ref so callbacks always have the latest currentUser without re-creating on every render
+  const currentUserRef = React.useRef<AuthUser | null>(null);
+  React.useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
+
   const confirmAction = useCallback((message: string, onConfirm: () => void) => {
     setConfirmDialog({ message, onConfirm });
   }, []);
 
+  // createNotification: stable ref, no stale closure issues
   const createNotification = useCallback((notification: NotificationItem) => {
-    if (!state) return;
     setState(prev => prev ? { ...prev, notifications: [...(prev.notifications || []), notification] } : prev);
     createEntity('notifications', notification).catch(console.error);
-  }, [state]);
+  }, []); // no deps — uses setState functional form which is always safe
 
   const markNotificationAsRead = useCallback((id: string) => {
-    if (!state) return;
     setState(prev => prev ? {
       ...prev,
       notifications: (prev.notifications || []).map(n => n.id === id ? { ...n, read: true } : n)
     } : prev);
     updateEntity('notifications', id, { read: true }).catch(console.error);
-  }, [state]);
+  }, []); // no deps
 
   // ── Network listeners ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -368,44 +371,58 @@ export default function App() {
   }, [state, activeProjectId, updateCardAsync, currentUser, createNotification]);
 
   const updateCard = useCallback((cardId: string, updates: Partial<Card>) => {
-    if (!state) return;
-    const prevCard = state.cards.find(c => c.id === cardId);
-    setState(prev => prev ? { ...prev, cards: prev.cards.map(c => c.id === cardId ? { ...c, ...updates } : c) } : prev);
-    updateEntity('cards', cardId, updates).catch(console.error);
-    // Trigger Telegram notification if assignee changed
-    if (updates.assigneeId && updates.assigneeId !== prevCard?.assigneeId) {
-      sendCardAssignedNotification(cardId, updates.assigneeId);
+    setState(prev => {
+      if (!prev) return prev;
+      const prevCard = prev.cards.find(c => c.id === cardId);
       
-      // Also trigger in-app notification
-      if (updates.assigneeId !== currentUser?.userId) {
-        createNotification({
-          id: uuidv4(),
-          userId: updates.assigneeId,
-          title: 'Нове завдання',
-          message: `Вам призначено завдання: "${updates.title || prevCard?.title || 'Без назви'}"`,
-          read: false,
-          createdAt: new Date().toISOString()
-        });
-      }
-    }
-
-    // Check for subtask assignee changes
-    if (updates.subtasks && prevCard?.subtasks) {
-      updates.subtasks.forEach(newSt => {
-        const oldSt = prevCard.subtasks?.find(s => s.id === newSt.id);
-        if (newSt.assigneeId && newSt.assigneeId !== oldSt?.assigneeId && newSt.assigneeId !== currentUser?.userId) {
-          createNotification({
+      // Trigger in-app notification if assignee changed
+      if (updates.assigneeId && updates.assigneeId !== prevCard?.assigneeId) {
+        const cu = currentUserRef.current;
+        if (updates.assigneeId !== cu?.userId) {
+          const notif: NotificationItem = {
             id: uuidv4(),
-            userId: newSt.assigneeId,
-            title: 'Нова підзадача',
-            message: `Вам призначено підзадачу "${newSt.title}" у картці "${updates.title || prevCard.title || 'Без назви'}"`,
+            userId: updates.assigneeId,
+            title: 'Нове завдання',
+            message: `Вам призначено завдання: "${updates.title || prevCard?.title || 'Без назви'}"`,
             read: false,
             createdAt: new Date().toISOString()
-          });
+          };
+          // fire-and-forget outside setState to avoid nested state updates
+          setTimeout(() => {
+            setState(p => p ? { ...p, notifications: [...(p.notifications || []), notif] } : p);
+            createEntity('notifications', notif).catch(console.error);
+          }, 0);
         }
-      });
-    }
-  }, [state, currentUser, createNotification]);
+        // Telegram notification
+        sendCardAssignedNotification(cardId, updates.assigneeId);
+      }
+
+      // Subtask assignee changes
+      if (updates.subtasks && prevCard?.subtasks) {
+        const cu = currentUserRef.current;
+        updates.subtasks.forEach(newSt => {
+          const oldSt = prevCard.subtasks?.find(s => s.id === newSt.id);
+          if (newSt.assigneeId && newSt.assigneeId !== oldSt?.assigneeId && newSt.assigneeId !== cu?.userId) {
+            const notif: NotificationItem = {
+              id: uuidv4(),
+              userId: newSt.assigneeId,
+              title: 'Нова підзадача',
+              message: `Вам призначено підзадачу "${newSt.title}" у картці "${updates.title || prevCard.title || 'Без назви'}"`,
+              read: false,
+              createdAt: new Date().toISOString()
+            };
+            setTimeout(() => {
+              setState(p => p ? { ...p, notifications: [...(p.notifications || []), notif] } : p);
+              createEntity('notifications', notif).catch(console.error);
+            }, 0);
+          }
+        });
+      }
+
+      return { ...prev, cards: prev.cards.map(c => c.id === cardId ? { ...c, ...updates } : c) };
+    });
+    updateEntity('cards', cardId, updates).catch(console.error);
+  }, []); // stable — reads state via setState functional form, user via ref
 
   const deleteCard = useCallback((cardId: string) => {
     if (!state) return;
