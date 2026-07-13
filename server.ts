@@ -831,6 +831,7 @@ async function startServer() {
   // ── App State Routes ─────────────────────────────────────────────────────────
 
   app.get('/api/state', requireAuth, async (req, res) => {
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.json(await getDb());
   });
 
@@ -1007,6 +1008,7 @@ Reply ONLY with a number representing the estimated minutes. Do not include any 
     try {
       const { type } = req.params;
       const data = req.body;
+      console.log(`[entity] POST /${type}`, data?.id || '(no id)');
       const db = initFirebase();
       if (db) {
         if (!data.id) return res.status(400).json({ error: 'Missing ID' });
@@ -1015,6 +1017,8 @@ Reply ONLY with a number representing the estimated minutes. Do not include any 
         // Fallback for local files: read, append, save
         const state = await getDb();
         if (!state[type]) state[type] = [];
+        // Avoid duplicate IDs
+        state[type] = state[type].filter((item: any) => item.id !== data.id);
         state[type].push(data);
         await saveDb(state);
       }
