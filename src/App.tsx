@@ -15,7 +15,7 @@ import LoginPage from './components/LoginPage';
 import InvitePage from './components/InvitePage';
 import ProjectsView from './components/ProjectsView';
 import ProcessTreeView from './components/ProcessTreeView';
-import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge } from 'lucide-react';
+import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check } from 'lucide-react';
 
 type ActiveView = 'dashboard' | 'projects' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile';
 
@@ -69,6 +69,8 @@ interface AppContextType {
   updateMetric: (id: string, updates: Partial<Metric>) => void;
   importTrelloBoard: (trelloJson: string) => void;
   confirmAction: (message: string, onConfirm: () => void) => void;
+  createNotification: (notification: NotificationItem) => void;
+  markNotificationAsRead: (id: string) => void;
 }
 
 export const AppContext = createContext<AppContextType | null>(null);
@@ -107,10 +109,26 @@ export default function App() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string, onConfirm: () => void } | null>(null);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   const confirmAction = useCallback((message: string, onConfirm: () => void) => {
     setConfirmDialog({ message, onConfirm });
   }, []);
+
+  const createNotification = useCallback((notification: NotificationItem) => {
+    if (!state) return;
+    setState(prev => prev ? { ...prev, notifications: [...(prev.notifications || []), notification] } : prev);
+    updateEntity('notifications', notification.id, notification).catch(console.error);
+  }, [state]);
+
+  const markNotificationAsRead = useCallback((id: string) => {
+    if (!state) return;
+    setState(prev => prev ? {
+      ...prev,
+      notifications: (prev.notifications || []).map(n => n.id === id ? { ...n, read: true } : n)
+    } : prev);
+    updateEntity('notifications', id, { read: true }).catch(console.error);
+  }, [state]);
 
   // ── Network listeners ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -467,7 +485,6 @@ export default function App() {
       events: (prev.events || []).map(e => ({ ...e, assigneeIds: (e.assigneeIds || []).filter(id => id !== userId) }))
     } : prev);
     deleteEntity('users', userId).catch(console.error);
-    // Ideally update all associated cards via API, omitted for brevity since user mostly deleted
   }, [state]);
 
   const addContentPlan = useCallback((item: Omit<ContentPlanItem, 'id'>) => {
@@ -523,7 +540,7 @@ export default function App() {
 
   const updateSettings = useCallback((updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule'>>) => {
     if (!state) return;
-    saveState({ ...state, ...updates }); // settings are grouped in saveState logic
+    saveState({ ...state, ...updates });
   }, [state, saveState]);
 
   const addEvent = useCallback((item: Omit<EventItem, 'id'>) => {
@@ -605,7 +622,6 @@ export default function App() {
       return { ...prev, boards: remainingBoards, lists: prev.lists.filter(l => l.boardId !== id), cards: prev.cards.filter(c => !listsToRemove.includes(c.listId)) };
     });
     deleteEntity('boards', id).catch(console.error);
-    // Ideally we would delete associated lists via API here
     if (activeBoardId === id) {
       const remainingBoards = (state.boards || []).filter(b => b.id !== id);
       setActiveBoardId(remainingBoards.length > 0 ? remainingBoards[0].id : null);
@@ -680,7 +696,6 @@ export default function App() {
 
   if (!authChecked || loading) return <LoadingScreen />;
   
-  // Check for invite token
   const urlParams = new URLSearchParams(window.location.search);
   const inviteToken = urlParams.get('invite');
   
@@ -693,7 +708,6 @@ export default function App() {
   
   if (!state) return <LoadingScreen />;
 
-  // RBAC Logic
   const userRecord = state.users.find(u => u.id === currentUser.userId);
   const userGroup = state.userGroups?.find(g => g.id === userRecord?.groupId);
   
@@ -720,6 +734,9 @@ export default function App() {
   ];
 
   const navItems = allNavItems.filter(item => currentRights.allowedViews.includes(item.view));
+
+  const myNotifications = (state.notifications || []).filter(n => n.userId === currentUser.userId).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const unreadCount = myNotifications.filter(n => !n.read).length;
 
   return (
     <AppContext.Provider value={{
@@ -758,21 +775,62 @@ export default function App() {
           </div>
 
           {/* Right side */}
-          <div className="flex items-center space-x-3">
-            {isOffline && (
-              <div className="hidden md:flex items-center px-3 py-1.5 bg-yellow-100 text-yellow-800 rounded-lg text-xs font-medium border border-yellow-200 shadow-sm animate-pulse">
-                <span className="w-2 h-2 rounded-full bg-yellow-500 mr-2"></span>
-                Офлайн. Зміни зберігаються локально
+            <div className="flex items-center space-x-3 relative">
+              {/* Notifications */}
+              <div className="relative">
+                <button
+                  onClick={() => setNotificationsOpen(!notificationsOpen)}
+                  className="relative p-2 text-gray-500 hover:bg-gray-100 rounded-full transition"
+                >
+                  <Bell className="w-5 h-5" />
+                  {unreadCount > 0 && (
+                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white"></span>
+                  )}
+                </button>
+                {notificationsOpen && (
+                  <div className="absolute right-0 mt-2 w-80 bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                      <h3 className="font-semibold text-gray-800">Сповіщення</h3>
+                      {unreadCount > 0 && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{unreadCount} нових</span>}
+                    </div>
+                    <div className="max-h-96 overflow-y-auto">
+                      {myNotifications.length === 0 ? (
+                        <div className="p-6 text-center text-sm text-gray-500">Немає сповіщень</div>
+                      ) : (
+                        myNotifications.map(notif => (
+                          <div key={notif.id} className={`p-4 border-b border-gray-50 hover:bg-gray-50 transition flex gap-3 ${notif.read ? 'opacity-60' : 'bg-blue-50/30'}`}>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-semibold text-gray-900">{notif.title}</p>
+                              <p className="text-sm text-gray-600 mt-0.5 break-words">{notif.message}</p>
+                              <span className="text-xs text-gray-400 mt-2 block">{new Date(notif.createdAt).toLocaleString('uk-UA')}</span>
+                            </div>
+                            {!notif.read && (
+                              <button onClick={() => markNotificationAsRead(notif.id)} className="shrink-0 p-1.5 h-fit text-blue-600 hover:bg-blue-100 rounded-lg transition" title="Позначити прочитаним">
+                                <Check className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-            <div className="flex -space-x-2">
-              {state.users.slice(0, 5).map(u => (
-                <img key={u.id} src={u.avatar} alt={u.name} title={u.name} className="w-8 h-8 rounded-full border-2 border-white" />
-              ))}
-              {state.users.length > 5 && (
-                <div className="w-8 h-8 rounded-full border-2 border-white bg-gray-100 flex items-center justify-center text-xs font-medium text-gray-600 z-10">
-                  +{state.users.length - 5}
+
+              {isOffline && (
+                <div className="hidden md:flex items-center px-3 py-1.5 bg-yellow-100 text-yellow-800 rounded-lg text-xs font-medium border border-yellow-200 shadow-sm animate-pulse">
+                  <span className="w-2 h-2 rounded-full bg-yellow-500 mr-2"></span>
+                  Офлайн. Зміни зберігаються локально
                 </div>
+              )}
+              <div className="flex -space-x-2">
+                {state.users.slice(0, 5).map(u => (
+                  <img key={u.id} src={u.avatar} alt={u.name} title={u.name} className="w-8 h-8 rounded-full border-2 border-white" />
+                ))}
+                {state.users.length > 5 && (
+                  <div className="w-8 h-8 rounded-full border-2 border-white bg-gray-100 flex items-center justify-center text-xs font-medium text-gray-600 z-10">
+                    +{state.users.length - 5}
+                  </div>
               )}
             </div>
 

@@ -32,7 +32,7 @@ function AvatarFallback({ name, color }: { name: string; color?: string }) {
 }
 
 export default function CardModal({ card, onClose }: Props) {
-  const { state, updateCard, deleteCard, confirmAction, currentUser, hasEditRights } = useAppContext();
+  const { state, updateCard, deleteCard, confirmAction, currentUser, hasEditRights, createNotification } = useAppContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const currentUserRecord = state.users.find(u => u.id === currentUser?.userId) || state.users[0];
@@ -116,12 +116,24 @@ export default function CardModal({ card, onClose }: Props) {
   };
 
   const updateSubtaskAssignee = (subtaskId: string, assigneeId: string | null) => {
-    const currentSubtasks = (state.cards.find(c => c.id === card.id) || card).subtasks || [];
+    if (!hasEditRights) return;
+    const subtask = card.subtasks?.find(st => st.id === subtaskId);
     handleUpdate({
-      subtasks: currentSubtasks.map(st =>
+      subtasks: (card.subtasks || []).map(st =>
         st.id === subtaskId ? { ...st, assigneeId } : st
       )
     });
+
+    if (assigneeId && subtask && assigneeId !== subtask.assigneeId && assigneeId !== currentUser?.userId) {
+      createNotification({
+        id: uuidv4(),
+        userId: assigneeId,
+        title: 'Нова підзадача',
+        message: `Вам призначено підзадачу "${subtask.title}" у картці "${card.title}"`,
+        read: false,
+        createdAt: new Date().toISOString()
+      });
+    }
     setSubtaskAssigneeOpen(null);
   };
 
@@ -343,7 +355,21 @@ export default function CardModal({ card, onClose }: Props) {
                 </div>
                 <select
                   value={card.assigneeId || ''}
-                  onChange={e => handleUpdate({ assigneeId: e.target.value || null })}
+                  onChange={e => {
+                    const newAssigneeId = e.target.value || null;
+                    handleUpdate({ assigneeId: newAssigneeId });
+                    
+                    if (newAssigneeId && newAssigneeId !== card.assigneeId && newAssigneeId !== currentUser?.userId) {
+                      createNotification({
+                        id: uuidv4(),
+                        userId: newAssigneeId,
+                        title: 'Нове завдання',
+                        message: `Вам призначено завдання: "${card.title}"`,
+                        read: false,
+                        createdAt: new Date().toISOString()
+                      });
+                    }
+                  }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
                 >
                   <option value="">Не призначено</option>

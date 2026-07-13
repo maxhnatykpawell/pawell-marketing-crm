@@ -1,10 +1,20 @@
 export interface ScheduledAnnouncement {
   id: string;
-  label: string;         // Назва для зручності
-  text: string;          // Текст повідомлення (Telegram Markdown)
-  time: string;          // "HH:mm"
-  days: number[];        // 0=Нд, 1=Пн, 2=Вт, 3=Ср, 4=Чт, 5=Пт, 6=Сб
+  label: string;
+  text: string;
+  time: string;
+  days: number[];
   enabled: boolean;
+  createdAt: string;
+}
+
+export interface NotificationItem {
+  id: string;
+  userId: string;
+  title: string;
+  message: string;
+  link?: string;
+  read: boolean;
   createdAt: string;
 }
 
@@ -234,5 +244,6 @@ export interface AppState {
   aiReportSchedule?: string;
   announcements?: ScheduledAnnouncement[];
   personalNotifications?: PersonalNotificationSettings;
+  notifications?: NotificationItem[];
   lastModified?: string;
 }

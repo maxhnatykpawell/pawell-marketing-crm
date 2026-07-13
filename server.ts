@@ -105,7 +105,7 @@ const INITIAL_APP_STATE = {
   lastModified: new Date().toISOString(),
 };
 
-const ATOMIC_COLLECTIONS = ['users', 'userGroups', 'lists', 'cards', 'tags', 'contentPlans', 'events', 'projects', 'metrics', 'boards', 'processes'];
+const ATOMIC_COLLECTIONS = ['users', 'userGroups', 'lists', 'cards', 'tags', 'contentPlans', 'events', 'projects', 'metrics', 'boards', 'processes', 'notifications'];
 const SETTINGS_DOC = 'settings';
 
 const DEFAULT_NOTIFICATION_TEMPLATES = {
@@ -716,6 +716,7 @@ async function startServer() {
   });
 
   app.get('/api/auth/me', requireAuth, async (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     const jwtUser = (req as any).user as JWTPayload;
     const appState = await getDb();
     const user = appState.users?.find((u: any) => u.id === jwtUser.userId);
