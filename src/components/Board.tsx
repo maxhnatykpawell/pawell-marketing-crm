@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
 import BoardList from './BoardList';
+import CardModal from './CardModal';
 import { Plus, Trash2, DownloadCloud, FolderKanban, Filter } from 'lucide-react';
 import TrelloImportModal from './TrelloImportModal';
 import { DragDropContext, Droppable, DropResult } from '@hello-pangea/dnd';
 
 export default function Board() {
-  const { state, addList, activeBoardId, setActiveBoardId, activeProjectId, setActiveProjectId, addBoard, deleteBoard, confirmAction, hasEditRights, moveList, moveCard } = useAppContext();
+  const { state, addList, activeBoardId, setActiveBoardId, activeProjectId, setActiveProjectId, addBoard, deleteBoard, confirmAction, hasEditRights, moveList, moveCard, openCardId, setOpenCardId } = useAppContext();
   const [isAddingList, setIsAddingList] = useState(false);
   const [newListTitle, setNewListTitle] = useState('');
   const [isAddingBoard, setIsAddingBoard] = useState(false);
@@ -15,6 +16,22 @@ export default function Board() {
   const [filterAssigneeId, setFilterAssigneeId] = useState<string | null>(null);
   const [filterTagId, setFilterTagId] = useState<string | null>(null);
   const [filterOverdue, setFilterOverdue] = useState(false);
+  const [notifCard, setNotifCard] = useState<typeof state.cards[0] | null>(null);
+
+  // When openCardId is set (from notification click), find the card and open its modal
+  useEffect(() => {
+    if (!openCardId) return;
+    const card = state.cards.find(c => c.id === openCardId);
+    if (card) {
+      // Switch to the correct board first
+      const list = state.lists.find(l => l.id === card.listId);
+      if (list?.boardId && list.boardId !== activeBoardId) {
+        setActiveBoardId(list.boardId);
+      }
+      setNotifCard(card);
+      setOpenCardId(null);
+    }
+  }, [openCardId, state.cards]);
 
   const boards = state.boards || [];
   const projects = state.projects || [];
@@ -274,6 +291,11 @@ export default function Board() {
       
       {isImportModalOpen && (
         <TrelloImportModal onClose={() => setIsImportModalOpen(false)} />
+      )}
+
+      {/* Card modal opened from a notification */}
+      {notifCard && (
+        <CardModal card={notifCard} onClose={() => setNotifCard(null)} />
       )}
     </div>
   );

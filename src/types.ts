@@ -13,6 +13,7 @@ export interface NotificationItem {
   userId: string;
   title: string;
   message: string;
+  cardId?: string;   // for direct navigation
   link?: string;
   read: boolean;
   createdAt: string;

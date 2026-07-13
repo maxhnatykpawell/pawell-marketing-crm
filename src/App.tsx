@@ -71,6 +71,8 @@ interface AppContextType {
   confirmAction: (message: string, onConfirm: () => void) => void;
   createNotification: (notification: NotificationItem) => void;
   markNotificationAsRead: (id: string) => void;
+  openCardId: string | null;
+  setOpenCardId: (id: string | null) => void;
 }
 
 export const AppContext = createContext<AppContextType | null>(null);
@@ -110,6 +112,7 @@ export default function App() {
   const [confirmDialog, setConfirmDialog] = useState<{ message: string, onConfirm: () => void } | null>(null);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [openCardId, setOpenCardId] = useState<string | null>(null);
 
   // Use a ref so callbacks always have the latest currentUser without re-creating on every render
   const currentUserRef = React.useRef<AuthUser | null>(null);
@@ -364,6 +367,7 @@ export default function App() {
         userId: newCard.assigneeId,
         title: 'Нове завдання',
         message: `Вам призначено завдання: "${newCard.title}"`,
+        cardId: newCard.id,
         read: false,
         createdAt: new Date().toISOString()
       });
@@ -384,6 +388,7 @@ export default function App() {
             userId: updates.assigneeId,
             title: 'Нове завдання',
             message: `Вам призначено завдання: "${updates.title || prevCard?.title || 'Без назви'}"`,
+            cardId,
             read: false,
             createdAt: new Date().toISOString()
           };
@@ -408,6 +413,7 @@ export default function App() {
               userId: newSt.assigneeId,
               title: 'Нова підзадача',
               message: `Вам призначено підзадачу "${newSt.title}" у картці "${updates.title || prevCard.title || 'Без назви'}"`,
+              cardId,
               read: false,
               createdAt: new Date().toISOString()
             };
@@ -805,7 +811,9 @@ export default function App() {
       addUserGroup, updateUserGroup, deleteUserGroup, updateSettings,
       addEvent, updateEvent, deleteEvent, addProject, updateProject, deleteProject, addProcess, updateProcess, deleteProcess, addBoard, deleteBoard,
       activeBoardId, setActiveBoardId, activeEventId, setActiveEventId, activeProjectId, setActiveProjectId,
-      activeView, setActiveView, updateMetric, importTrelloBoard, confirmAction
+      activeView, setActiveView, updateMetric, importTrelloBoard, confirmAction,
+      createNotification, markNotificationAsRead,
+      openCardId, setOpenCardId
     }}>
       <div className="min-h-screen bg-blue-50/50 flex flex-col font-sans text-gray-900">
         {/* Header */}
@@ -856,14 +864,32 @@ export default function App() {
                         <div className="p-6 text-center text-sm text-gray-500">Немає сповіщень</div>
                       ) : (
                         myNotifications.map(notif => (
-                          <div key={notif.id} className={`p-4 border-b border-gray-50 hover:bg-gray-50 transition flex gap-3 ${notif.read ? 'opacity-60' : 'bg-blue-50/30'}`}>
+                          <div
+                            key={notif.id}
+                            className={`p-4 border-b border-gray-50 transition flex gap-3 ${notif.read ? 'opacity-60' : 'bg-blue-50/30'} ${notif.cardId ? 'cursor-pointer hover:bg-blue-50' : 'hover:bg-gray-50'}`}
+                            onClick={() => {
+                              if (notif.cardId) {
+                                markNotificationAsRead(notif.id);
+                                setNotificationsOpen(false);
+                                setActiveView('board');
+                                setOpenCardId(notif.cardId);
+                              }
+                            }}
+                          >
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-semibold text-gray-900">{notif.title}</p>
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <p className="text-sm font-semibold text-gray-900">{notif.title}</p>
+                                {notif.cardId && <span className="text-xs text-blue-500 font-medium">→ відкрити</span>}
+                              </div>
                               <p className="text-sm text-gray-600 mt-0.5 break-words">{notif.message}</p>
                               <span className="text-xs text-gray-400 mt-2 block">{new Date(notif.createdAt).toLocaleString('uk-UA')}</span>
                             </div>
                             {!notif.read && (
-                              <button onClick={() => markNotificationAsRead(notif.id)} className="shrink-0 p-1.5 h-fit text-blue-600 hover:bg-blue-100 rounded-lg transition" title="Позначити прочитаним">
+                              <button
+                                onClick={e => { e.stopPropagation(); markNotificationAsRead(notif.id); }}
+                                className="shrink-0 p-1.5 h-fit text-blue-600 hover:bg-blue-100 rounded-lg transition"
+                                title="Позначити прочитаним"
+                              >
                                 <Check className="w-4 h-4" />
                               </button>
                             )}
