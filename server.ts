@@ -793,17 +793,20 @@ async function syncKeepInCRM(): Promise<void> {
   console.log(`🔄 KeepInCRM синхронізація за ${today}...`);
 
   try {
-    // У KeepInCRM ліди та клієнти - це один ендпоінт /clients (фільтр по даті реєстрації)
-    // q[registered_at_gteq] - створено після (включно)
-    // q[registered_at_lteq] - створено до (включно)
+    // Використовуємо універсальні системні поля created_at_gteq/lteq для фільтрації по даті
     const allClientsRaw = await keepinFetchAll('/clients', { 
-      'q[registered_at_gteq]': today, 
-      'q[registered_at_lteq]': today 
+      'q[created_at_gteq]': today, 
+      'q[created_at_lteq]': today 
     });
 
     // Ліди мають поле lead: true, клієнти lead: false (або undefined)
-    const leadsRaw = allClientsRaw.filter(c => c.lead === true);
-    const clientsRaw = allClientsRaw.filter(c => c.lead === false || c.lead == null);
+    const leadsRaw = allClientsRaw.filter(c => c.lead === true || String(c.lead) === 'true');
+    const clientsRaw = allClientsRaw.filter(c => c.lead === false || c.lead == null || String(c.lead) === 'false');
+
+    console.log(`🐞 KeepInCRM Debug: Отримано всього записів з API: ${allClientsRaw.length}`);
+    if (allClientsRaw.length > 0) {
+      console.log(`🐞 KeepInCRM Debug First Item: id=${allClientsRaw[0].id}, lead=${allClientsRaw[0].lead} (type: ${typeof allClientsRaw[0].lead})`);
+    }
 
     const leadsToday = groupBySource(leadsRaw);
     const clientsToday = groupBySource(clientsRaw);
