@@ -700,20 +700,38 @@ function todayKyiv(): string {
 
 /**
  * Запитати всі сторінки ендпоінту з пагінацією.
- * KeepInCRM повертає { data: [...], total, per_page, current_page, last_page }
+ * Кей передає API-ключ одночасно через заголовок X-Auth-Token і query-параметр token.
  */
 async function keepinFetchAll(endpoint: string, params: Record<string, string> = {}): Promise<any[]> {
   const base = keepinCRMBaseUrl();
-  const headers = keepinCRMHeaders();
+  const apiKey = KEEPINCRM_API_KEY();
   const allItems: any[] = [];
   let page = 1;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const query = new URLSearchParams({ ...params, page: String(page), per_page: '100' }).toString();
+    // Передаємо токен одночасно через query-параметр і заголовок
+    const query = new URLSearchParams({
+      ...params,
+      token: apiKey,   // Деякі версії KeepInCRM потребують query-токен
+      page: String(page),
+      per_page: '100',
+    }).toString();
     const url = `${base}${endpoint}?${query}`;
 
-    const res = await fetch(url, { headers });
+    // Діагностика: показуємо URL (без токену) для перевірки
+    if (page === 1) {
+      const safeUrl = `${base}${endpoint}?${new URLSearchParams({ ...params, token: '***', page: '1', per_page: '100' })}` ;
+      console.log(`🔍 KeepInCRM запит: ${safeUrl}  |ключ наявний: ${!!apiKey}`);
+    }
+
+    const res = await fetch(url, {
+      headers: {
+        'X-Auth-Token': apiKey,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+    });
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
