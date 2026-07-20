@@ -612,13 +612,14 @@ interface SourceCardProps {
   title: string;
   total: number;
   stats: KeepInCRMSourceStat[];
-  color: 'blue' | 'green';
+  color: 'blue' | 'green' | 'yellow';
   icon: React.ReactNode;
   change?: number | null;  // % зміна відносно попереднього періоду
+  subTotal?: string;       // додатковий текст під тоталом (напр. сума в грн)
 }
 
-function KeepInCRMSourceCard({ title, total, stats, color, icon, change }: SourceCardProps) {
-  const colorMap = {
+function KeepInCRMSourceCard({ title, total, stats, color, icon, change, subTotal }: SourceCardProps) {
+  const colors = {
     blue: {
       bg: 'from-blue-50 to-sky-50',
       border: 'border-blue-100',
@@ -637,20 +638,46 @@ function KeepInCRMSourceCard({ title, total, stats, color, icon, change }: Sourc
       icon: 'bg-emerald-100 text-emerald-600',
       label: 'text-emerald-500',
     },
-  }[color];
+    yellow: {
+      bg: 'from-amber-50 to-yellow-50',
+      border: 'border-amber-100',
+      text: 'text-amber-700',
+      bar: 'bg-gradient-to-r from-amber-400 to-yellow-500',
+      barBg: 'bg-amber-100',
+      icon: 'bg-amber-100 text-amber-600',
+      label: 'text-amber-500',
+    }
+  }[color] || {
+    bg: 'from-gray-50 to-gray-100',
+    border: 'border-gray-200',
+    text: 'text-gray-700',
+    bar: 'bg-gray-400',
+    barBg: 'bg-gray-200',
+    icon: 'bg-gray-200 text-gray-600',
+    label: 'text-gray-500',
+  };
 
   const maxCount = stats.length > 0 ? Math.max(...stats.map(s => s.count)) : 1;
 
   return (
     <div className="flex flex-col">
       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">{title}</p>
-      <div className={`flex-1 bg-gradient-to-br ${colorMap.bg} rounded-xl border ${colorMap.border} p-4`}>
+      <div className={`flex-1 bg-gradient-to-br ${colors.bg} rounded-xl border ${colors.border} p-4`}>
         {/* Total */}
         <div className="flex items-center gap-2 mb-4 flex-wrap">
-          <div className={`w-7 h-7 rounded-lg ${colorMap.icon} flex items-center justify-center flex-shrink-0`}>
+          <div className={`w-7 h-7 rounded-lg ${colors.icon} flex items-center justify-center flex-shrink-0`}>
             {icon}
           </div>
-          <span className={`text-3xl font-black ${colorMap.text} leading-none`}>{total}</span>
+          <div className="flex items-baseline gap-2">
+            <span className={`text-3xl font-black ${colors.text} leading-none`}>
+              {total}
+            </span>
+            {subTotal && (
+              <span className={`text-sm font-bold ${colors.label} whitespace-nowrap`}>
+                {subTotal}
+              </span>
+            )}
+          </div>
           {change !== null && change !== undefined ? (
             <span className={`flex items-center gap-0.5 text-[11px] font-bold px-1.5 py-0.5 rounded-full ${
               change >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
@@ -674,15 +701,15 @@ function KeepInCRMSourceCard({ title, total, stats, color, icon, change }: Sourc
                   <span className="text-[11px] text-gray-600 font-medium truncate max-w-[120px]" title={s.source}>
                     {s.source}
                   </span>
-                  <span className={`text-[11px] font-bold ${colorMap.label}`}>{s.count}</span>
+                  <span className={`text-[11px] font-bold ${colors.label}`}>{s.count}</span>
                 </div>
-                <div className={`w-full ${colorMap.barBg} rounded-full h-1.5`}>
-                  <div
-                    className={`${colorMap.bar} h-1.5 rounded-full transition-all duration-700`}
-                    style={{ width: `${maxCount > 0 ? (s.count / maxCount) * 100 : 0}%` }}
-                  />
-                </div>
+                <div className="flex-1 ml-2 bg-gray-100 rounded-full h-1.5 mt-1">
+                <div 
+                  className={`h-1.5 rounded-full ${colors.bar}`}
+                  style={{ width: `${Math.max(5, (s.count / maxCount) * 100)}%` }}
+                />
               </div>
+            </div>
             ))}
           </div>
         )}
