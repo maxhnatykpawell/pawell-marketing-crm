@@ -737,11 +737,11 @@ async function keepinFetchAll(endpoint: string, params: Record<string, string> =
 
     const body = await res.json();
 
-    // Підтримка двох форматів відповіді: { data: [...] } або прямий масив
-    const items: any[] = Array.isArray(body) ? body : (body.data ?? []);
+    // В KeepInCRM масив знаходиться в `body.items`, а пагінація в `body.pagination.total_pages`
+    const items: any[] = Array.isArray(body) ? body : (body.items ?? body.data ?? []);
     allItems.push(...items);
 
-    const lastPage: number = body.last_page ?? 1;
+    const lastPage: number = body.pagination?.total_pages ?? body.last_page ?? 1;
     if (page >= lastPage) break;
     page++;
   }
