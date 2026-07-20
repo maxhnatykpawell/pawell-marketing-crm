@@ -330,7 +330,7 @@ export default function DashboardView() {
           )}
 
           {/* Chart Section */}
-          {kData && kData.entries.length > 1 && (
+          {kData && kData.entries.length > 0 && (
             <div className="mt-8 pt-6 border-t border-gray-100">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="text-sm font-bold text-gray-800">Динаміка залучення (ліди та клієнти)</h3>
