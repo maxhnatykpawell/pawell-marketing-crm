@@ -1,16 +1,43 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, isToday } from 'date-fns';
 import { uk } from 'date-fns/locale';
-import { TrendingUp, TrendingDown, Target, Edit2, Check, Calendar as CalendarIcon, Send, Loader2 } from 'lucide-react';
-import { Metric } from '../types';
+import { TrendingUp, TrendingDown, Target, Edit2, Check, Calendar as CalendarIcon, Send, Loader2, RefreshCw, Users, Zap, AlertCircle } from 'lucide-react';
+import { Metric, KeepInCRMSnapshot, KeepInCRMSourceStat } from '../types';
+import { getKeepInCRMSnapshot, triggerKeepInCRMSync } from '../api';
 
 export default function DashboardView() {
-  const { state, updateMetric, setActiveView, setActiveEventId } = useAppContext();
+  const { state, updateMetric, setActiveView, setActiveEventId, currentUser } = useAppContext();
   
   const [editingMetric, setEditingMetric] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<Metric>>({});
   const [isSendingReport, setIsSendingReport] = useState(false);
+
+  // ── KeepInCRM State ──────────────────────────────────────────────────────────
+  const [kSnapshot, setKSnapshot] = useState<KeepInCRMSnapshot | null>(null);
+  const [kLoading, setKLoading] = useState(true);
+  const [kSyncing, setKSyncing] = useState(false);
+  const [kError, setKError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getKeepInCRMSnapshot()
+      .then(snap => setKSnapshot(snap))
+      .catch(() => setKError('Не вдалось завантажити дані KeepInCRM'))
+      .finally(() => setKLoading(false));
+  }, []);
+
+  const handleKSync = async () => {
+    setKSyncing(true);
+    setKError(null);
+    try {
+      const { snapshot } = await triggerKeepInCRMSync();
+      setKSnapshot(snapshot);
+    } catch (e: any) {
+      setKError(e.message || 'Помилка синхронізації');
+    } finally {
+      setKSyncing(false);
+    }
+  };
 
   const today = new Date();
   const weekStart = startOfWeek(today, { weekStartsOn: 1 });
@@ -144,7 +171,105 @@ export default function DashboardView() {
         ))}
       </div>
 
-      {/* Weekly Calendar */}
+      {/* KeepInCRM Block */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex-shrink-0">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/50">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm">
+              <Zap className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-gray-800">KeepInCRM · Сьогодні</h3>
+              {kSnapshot?.lastSyncedAt && (
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  Оновлено: {new Date(kSnapshot.lastSyncedAt).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              )}
+            </div>
+          </div>
+          {currentUser?.role === 'admin' && (
+            <button
+              onClick={handleKSync}
+              disabled={kSyncing}
+              title="Синхронізувати зараз"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-violet-600 bg-violet-50 hover:bg-violet-100 rounded-lg transition disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${kSyncing ? 'animate-spin' : ''}`} />
+              {kSyncing ? 'Синхронізація...' : 'Оновити'}
+            </button>
+          )}
+        </div>
+
+        {/* Content */}
+        <div className="p-6">
+          {kLoading ? (
+            <div className="flex items-center justify-center py-8 text-gray-400">
+              <Loader2 className="w-5 h-5 animate-spin mr-2" />
+              <span className="text-sm">Завантаження даних...</span>
+            </div>
+          ) : kError ? (
+            <div className="flex items-center gap-2 text-sm text-red-500 bg-red-50 rounded-lg px-4 py-3">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              {kError}
+            </div>
+          ) : !kSnapshot ? (
+            <div className="text-center py-8 text-gray-400">
+              <Zap className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              <p className="text-sm">Дані ще не синхронізовані.</p>
+              <p className="text-xs mt-1">Додайте KEEPINCRM_API_KEY у змінні середовища.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+              {/* Leads Today */}
+              <KeepInCRMSourceCard
+                title="Ліди за сьогодні"
+                total={kSnapshot.totalLeadsToday}
+                stats={kSnapshot.leadsToday}
+                color="blue"
+                icon={<Users className="w-4 h-4" />}
+              />
+
+              {/* Clients Today */}
+              <KeepInCRMSourceCard
+                title="Клієнти за сьогодні"
+                total={kSnapshot.totalClientsToday}
+                stats={kSnapshot.clientsToday}
+                color="green"
+                icon={<Target className="w-4 h-4" />}
+              />
+
+              {/* Conversion Rate */}
+              <div className="flex flex-col">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Конверсія лід → клієнт</p>
+                <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-br from-violet-50 to-indigo-50 rounded-xl border border-violet-100 p-6">
+                  <span className="text-5xl font-black text-violet-700 leading-none">
+                    {kSnapshot.conversionRateToday}%
+                  </span>
+                  <p className="text-xs text-violet-500 mt-2 font-medium">
+                    {kSnapshot.totalClientsToday} з {kSnapshot.totalLeadsToday} лідів
+                  </p>
+                  {/* Mini progress bar */}
+                  <div className="w-full mt-4 bg-violet-100 rounded-full h-2">
+                    <div
+                      className="bg-gradient-to-r from-violet-500 to-indigo-500 h-2 rounded-full transition-all duration-700"
+                      style={{ width: `${Math.min(kSnapshot.conversionRateToday, 100)}%` }}
+                    />
+                  </div>
+                  {kSnapshot.lastSyncError && (
+                    <p className="text-[10px] text-amber-500 mt-3 text-center">
+                      ⚠️ Остання синхронізація завершилась з помилкою
+                    </p>
+                  )}
+                </div>
+              </div>
+
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col min-h-[400px]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex-shrink-0">
           <h3 className="text-lg font-bold text-gray-800 flex items-center">
@@ -240,6 +365,84 @@ export default function DashboardView() {
         </div>
       </div>
       
+    </div>
+  );
+}
+
+// ── KeepInCRM Source Bar Card ─────────────────────────────────────────────────
+
+interface SourceCardProps {
+  title: string;
+  total: number;
+  stats: KeepInCRMSourceStat[];
+  color: 'blue' | 'green';
+  icon: React.ReactNode;
+}
+
+function KeepInCRMSourceCard({ title, total, stats, color, icon }: SourceCardProps) {
+  const colorMap = {
+    blue: {
+      bg: 'from-blue-50 to-sky-50',
+      border: 'border-blue-100',
+      text: 'text-blue-700',
+      bar: 'bg-gradient-to-r from-blue-400 to-sky-500',
+      barBg: 'bg-blue-100',
+      icon: 'bg-blue-100 text-blue-600',
+      label: 'text-blue-500',
+    },
+    green: {
+      bg: 'from-emerald-50 to-teal-50',
+      border: 'border-emerald-100',
+      text: 'text-emerald-700',
+      bar: 'bg-gradient-to-r from-emerald-400 to-teal-500',
+      barBg: 'bg-emerald-100',
+      icon: 'bg-emerald-100 text-emerald-600',
+      label: 'text-emerald-500',
+    },
+  }[color];
+
+  const maxCount = stats.length > 0 ? Math.max(...stats.map(s => s.count)) : 1;
+
+  return (
+    <div className="flex flex-col">
+      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">{title}</p>
+      <div className={`flex-1 bg-gradient-to-br ${colorMap.bg} rounded-xl border ${colorMap.border} p-4`}>
+        {/* Total */}
+        <div className="flex items-center gap-2 mb-4">
+          <div className={`w-7 h-7 rounded-lg ${colorMap.icon} flex items-center justify-center flex-shrink-0`}>
+            {icon}
+          </div>
+          <span className={`text-3xl font-black ${colorMap.text} leading-none`}>{total}</span>
+          <span className="text-xs text-gray-400 mt-1">сьогодні</span>
+        </div>
+
+        {/* Source bars */}
+        {stats.length === 0 ? (
+          <p className="text-xs text-gray-400 italic">Дані відсутні</p>
+        ) : (
+          <div className="space-y-2.5">
+            {stats.slice(0, 5).map(s => (
+              <div key={s.source}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] text-gray-600 font-medium truncate max-w-[120px]" title={s.source}>
+                    {s.source}
+                  </span>
+                  <span className={`text-[11px] font-bold ${colorMap.label}`}>{s.count}</span>
+                </div>
+                <div className={`w-full ${colorMap.barBg} rounded-full h-1.5`}>
+                  <div
+                    className={`${colorMap.bar} h-1.5 rounded-full transition-all duration-700`}
+                    style={{ width: `${(s.count / maxCount) * 100}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+            {stats.length > 5 && (
+              <p className="text-[10px] text-gray-400 mt-1">+ ще {stats.length - 5} джерел</p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
