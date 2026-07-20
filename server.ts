@@ -763,9 +763,6 @@ function extractSource(item: any): string {
   );
 }
 
-/**
- * Згрупувати масив записів по джерелу і повернути масив { source, count }[].
- */
 function groupBySource(items: any[], allSourceNames: string[] = []): { source: string; count: number }[] {
   const map: Record<string, number> = {};
   
@@ -787,10 +784,31 @@ function groupBySource(items: any[], allSourceNames: string[] = []): { source: s
     .sort((a, b) => b.count - a.count); // спадання за кількістю
 }
 
+function groupAgreementsBySource(agreements: any[], allSourceNames: string[] = []): { source: string; count: number; totalSum: number }[] {
+  const map: Record<string, { count: number; sum: number }> = {};
+  
+  for (const name of allSourceNames) {
+    if (name) map[name] = { count: 0, sum: 0 };
+  }
+
+  for (const item of agreements) {
+    const src = extractSource(item);
+    if (src !== 'Не вказано' && map[src] === undefined) {
+      map[src] = { count: 0, sum: 0 };
+    }
+    map[src].count = (map[src].count || 0) + 1;
+    map[src].sum = (map[src].sum || 0) + (Number(item.total) || 0);
+  }
+  
+  return Object.entries(map)
+    .map(([source, data]) => ({ source, count: data.count, totalSum: data.sum }))
+    .sort((a, b) => b.count - a.count);
+}
+
 /**
  * Основна функція синхронізації: запитує KeepInCRM, рахує метрики, зберігає в стан.
  */
-async function syncKeepInCRM(): Promise<void> {
+async function syncKeepInCRM(targetDate?: string): Promise<void> {
   const apiKey = KEEPINCRM_API_KEY();
   const subdomain = KEEPINCRM_SUBDOMAIN();
 
@@ -799,7 +817,7 @@ async function syncKeepInCRM(): Promise<void> {
     return;
   }
 
-  const today = todayKyiv(); // YYYY-MM-DD
+  const today = targetDate || todayKyiv(); // YYYY-MM-DD
   console.log(`🔄 KeepInCRM синхронізація за ${today}...`);
 
   try {
@@ -824,14 +842,25 @@ async function syncKeepInCRM(): Promise<void> {
     const sourcesRaw = await keepinFetchAll('/sources', {});
     const allSourceNames = sourcesRaw.map(s => s.name);
 
+    // Отримуємо угоди за день
+    const allAgreementsRaw = await keepinFetchAll('/agreements', {
+      'q[created_at_gteq]': `${today}T00:00:00.000+03:00`,
+      'q[created_at_lteq]': `${today}T23:59:59.999+03:00`
+    });
+
     const leadsToday = groupBySource(leadsRaw, allSourceNames);
     const clientsToday = groupBySource(clientsRaw, allSourceNames);
+    const agreementsToday = groupAgreementsBySource(allAgreementsRaw, allSourceNames);
+    
     const totalLeadsToday = leadsRaw.length;
     const totalClientsToday = clientsRaw.length;
     const conversionRateToday =
       totalLeadsToday > 0
         ? Math.round((totalClientsToday / totalLeadsToday) * 1000) / 10
         : 0;
+        
+    const totalAgreementsToday = allAgreementsRaw.length;
+    const totalAgreementsSumToday = allAgreementsRaw.reduce((sum, a) => sum + (Number(a.total) || 0), 0);
 
     const snapshot = {
       date: today,
@@ -840,6 +869,9 @@ async function syncKeepInCRM(): Promise<void> {
       totalLeadsToday,
       totalClientsToday,
       conversionRateToday,
+      agreementsToday,
+      totalAgreementsToday,
+      totalAgreementsSumToday,
       lastSyncedAt: new Date().toISOString(),
     };
 
@@ -889,32 +921,50 @@ function dateRange(from: string, to: string): string[] {
   return dates;
 }
 
-/** Агрегувати масив snapshot-ів у зведені показники */
 function aggregateEntries(entries: any[]) {
   const sourceLeads: Record<string, number> = {};
   const sourceClients: Record<string, number> = {};
+  const sourceAgreements: Record<string, { count: number; sum: number }> = {};
+  
   let totalLeads = 0;
   let totalClients = 0;
+  let totalAgreements = 0;
+  let totalAgreementsSum = 0;
   let convSum = 0;
   let convDays = 0;
 
   for (const e of entries) {
     totalLeads += e.totalLeadsToday || 0;
     totalClients += e.totalClientsToday || 0;
+    totalAgreements += e.totalAgreementsToday || 0;
+    totalAgreementsSum += e.totalAgreementsSumToday || 0;
+    
     if (typeof e.conversionRateToday === 'number') { convSum += e.conversionRateToday; convDays++; }
     for (const s of (e.leadsToday || [])) sourceLeads[s.source] = (sourceLeads[s.source] || 0) + s.count;
     for (const s of (e.clientsToday || [])) sourceClients[s.source] = (sourceClients[s.source] || 0) + s.count;
+    for (const s of (e.agreementsToday || [])) {
+      if (!sourceAgreements[s.source]) sourceAgreements[s.source] = { count: 0, sum: 0 };
+      sourceAgreements[s.source].count += s.count;
+      sourceAgreements[s.source].sum += s.totalSum;
+    }
   }
 
   const toArr = (map: Record<string, number>) =>
     Object.entries(map).map(([source, count]) => ({ source, count })).sort((a, b) => b.count - a.count);
 
+  const aggArr = Object.entries(sourceAgreements)
+    .map(([source, data]) => ({ source, count: data.count, totalSum: data.sum }))
+    .sort((a, b) => b.count - a.count);
+
   return {
     totalLeads,
     totalClients,
+    totalAgreements,
+    totalAgreementsSum,
     avgConversionRate: convDays > 0 ? Math.round((convSum / convDays) * 10) / 10 : 0,
     leadsBySource: toArr(sourceLeads),
     clientsBySource: toArr(sourceClients),
+    agreementsBySource: aggArr,
   };
 }
 
@@ -1244,12 +1294,38 @@ async function startServer() {
           leadsChange:       pctChange(aggregated.totalLeads,        prevAgg.totalLeads),
           clientsChange:     pctChange(aggregated.totalClients,      prevAgg.totalClients),
           conversionChange:  pctChange(aggregated.avgConversionRate, prevAgg.avgConversionRate),
+          agreementsChange:  pctChange(aggregated.totalAgreements,   prevAgg.totalAgreements),
+          agreementsSumChange: pctChange(aggregated.totalAgreementsSum, prevAgg.totalAgreementsSum),
         };
       }
 
       res.json({ entries, period: { from, to }, aggregated, comparison });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** POST /api/keepincrm/sync-history — синхронізувати останні N днів */
+  app.post('/api/keepincrm/sync-history', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const days = Number(req.body.days) || 30;
+      
+      const toDate = new Date(todayKyiv() + 'T00:00:00Z');
+      const datesToSync: string[] = [];
+      for (let i = 0; i < days; i++) {
+        const d = new Date(toDate);
+        d.setUTCDate(d.getUTCDate() - i);
+        datesToSync.push(d.toISOString().slice(0, 10));
+      }
+
+      // Sync sequentially to avoid API rate limits
+      for (const d of datesToSync.reverse()) {
+        await syncKeepInCRM(d);
+      }
+
+      res.json({ success: true, message: `Синхронізовано ${days} днів` });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
     }
   });
 

@@ -257,6 +257,12 @@ export interface KeepInCRMSourceStat {
   count: number;    // кількість за день
 }
 
+export interface KeepInCRMAgreementStat {
+  source: string;
+  count: number;
+  totalSum: number;
+}
+
 export interface KeepInCRMSnapshot {
   /** Дата, за яку знято зріз (ISO-рядок, тільки дата: 2026-07-20) */
   date: string;
@@ -270,6 +276,12 @@ export interface KeepInCRMSnapshot {
   totalClientsToday: number;
   /** Конверсія лід → клієнт за день (0–100 %) */
   conversionRateToday: number;
+  /** Угоди за поточний день по джерелах */
+  agreementsToday?: KeepInCRMAgreementStat[];
+  /** Загальна кількість угод за день */
+  totalAgreementsToday?: number;
+  /** Загальна сума угод за день */
+  totalAgreementsSumToday?: number;
   /** Час останньої синхронізації */
   lastSyncedAt: string;
   /** Помилка останньої синхронізації (якщо є) */
@@ -281,8 +293,11 @@ export interface KeepInCRMPeriodAggregated {
   totalLeads: number;
   totalClients: number;
   avgConversionRate: number;               // середній % конверсії по дням
+  totalAgreements?: number;
+  totalAgreementsSum?: number;
   leadsBySource: KeepInCRMSourceStat[];    // зведені по джерелу за весь період
   clientsBySource: KeepInCRMSourceStat[];
+  agreementsBySource?: KeepInCRMAgreementStat[];
 }
 
 /** Порівняння поточного і попереднього еквівалентного периоду */
@@ -293,6 +308,8 @@ export interface KeepInCRMComparison {
   leadsChange: number;       // % зміна (позитивне = ріст)
   clientsChange: number;
   conversionChange: number;
+  agreementsChange?: number;
+  agreementsSumChange?: number;
 }
 
 /** Відповідь /api/keepincrm/history */

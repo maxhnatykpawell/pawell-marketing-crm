@@ -365,6 +365,22 @@ export const triggerKeepInCRMSync = async (): Promise<{ success: boolean; snapsh
 };
 
 /**
+ * Примусово завантажити історію з KeepInCRM за останні N днів (тільки для адмінів).
+ */
+export const triggerKeepInCRMHistorySync = async (days: number = 30): Promise<{ success: boolean; message: string }> => {
+  const res = await fetch('/api/keepincrm/sync-history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ days }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to sync KeepInCRM history');
+  }
+  return res.json();
+};
+
+/**
  * Повернути історичні дані KeepInCRM за діапазон дат.
  * @param from  YYYY-MM-DD (за замовчув: 30 днів тому)
  * @param to    YYYY-MM-DD (за замовчув: сьогодні)

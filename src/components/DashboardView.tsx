@@ -4,8 +4,9 @@ import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, isToday, 
 import { uk } from 'date-fns/locale';
 import { TrendingUp, TrendingDown, Target, Edit2, Check, Calendar as CalendarIcon, Send, Loader2, RefreshCw, Users, Zap, AlertCircle } from 'lucide-react';
 import { Metric, KeepInCRMHistoryResponse, KeepInCRMSourceStat } from '../types';
-import { getKeepInCRMHistory, triggerKeepInCRMSync } from '../api';
+import { getKeepInCRMHistory, triggerKeepInCRMSync, triggerKeepInCRMHistorySync } from '../api';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { DollarSign } from 'lucide-react';
 
 export default function DashboardView() {
   const { state, updateMetric, setActiveView, setActiveEventId, currentUser } = useAppContext();
@@ -20,6 +21,7 @@ export default function DashboardView() {
   const [kData, setKData]         = useState<KeepInCRMHistoryResponse | null>(null);
   const [kLoading, setKLoading]   = useState(true);
   const [kSyncing, setKSyncing]   = useState(false);
+  const [kHistorySyncing, setKHistorySyncing] = useState(false);
   const [kError, setKError]       = useState<string | null>(null);
 
   /** YYYY-MM-DD для поточного дня */
@@ -65,6 +67,20 @@ export default function DashboardView() {
       setKError(e.message || 'Помилка синхронізації');
     } finally {
       setKSyncing(false);
+    }
+  };
+
+  const handleKHistorySync = async () => {
+    if (!window.confirm('Це завантажить історію за останні 30 днів (по одному дню). Це може зайняти хвилину. Продовжити?')) return;
+    setKHistorySyncing(true);
+    setKError(null);
+    try {
+      await triggerKeepInCRMHistorySync(30);
+      await loadKData(kPeriod);
+    } catch (e: any) {
+      setKError(e.message || 'Помилка синхронізації історії');
+    } finally {
+      setKHistorySyncing(false);
     }
   };
 
@@ -242,15 +258,26 @@ export default function DashboardView() {
 
           {/* Sync button (admin only) */}
           {currentUser?.role === 'admin' && (
-            <button
-              onClick={handleKSync}
-              disabled={kSyncing}
-              title="Синхронізувати зараз"
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-violet-600 bg-violet-50 hover:bg-violet-100 rounded-lg transition disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${kSyncing ? 'animate-spin' : ''}`} />
-              {kSyncing ? 'Синх...' : 'Оновити'}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={handleKHistorySync}
+                disabled={kHistorySyncing || kSyncing}
+                title="Синхронізувати історію (30 днів)"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-orange-600 bg-orange-50 hover:bg-orange-100 rounded-lg transition disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${kHistorySyncing ? 'animate-spin' : ''}`} />
+                {kHistorySyncing ? 'Синх...' : 'Синх. історію (30д)'}
+              </button>
+              <button
+                onClick={handleKSync}
+                disabled={kSyncing || kHistorySyncing}
+                title="Синхронізувати зараз"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-violet-600 bg-violet-50 hover:bg-violet-100 rounded-lg transition disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${kSyncing ? 'animate-spin' : ''}`} />
+                {kSyncing ? 'Синх...' : 'Оновити'}
+              </button>
+            </div>
           )}
         </div>
 
@@ -272,7 +299,7 @@ export default function DashboardView() {
               <p className="text-xs mt-1">Додайте KEEPINCRM_API_KEY у змінні середовища.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
 
               {/* Leads */}
               <KeepInCRMSourceCard
@@ -292,6 +319,17 @@ export default function DashboardView() {
                 color="green"
                 icon={<Target className="w-4 h-4" />}
                 change={kData.comparison?.clientsChange ?? null}
+              />
+              
+              {/* Agreements */}
+              <KeepInCRMSourceCard
+                title="Угоди за період"
+                total={kData.aggregated.totalAgreements || 0}
+                stats={(kData.aggregated.agreementsBySource || []).map(s => ({ source: s.source, count: s.count }))}
+                color="yellow"
+                icon={<DollarSign className="w-4 h-4" />}
+                change={kData.comparison?.agreementsChange ?? null}
+                subTotal={kData.aggregated.totalAgreementsSum ? `${kData.aggregated.totalAgreementsSum.toLocaleString('uk-UA')} ₴` : undefined}
               />
 
               {/* Conversion */}
@@ -350,6 +388,10 @@ export default function DashboardView() {
                         <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
                         <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
                       </linearGradient>
+                      <linearGradient id="colorAgreements" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                      </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
                     <XAxis 
@@ -392,6 +434,70 @@ export default function DashboardView() {
                       fillOpacity={1} 
                       fill="url(#colorClients)" 
                       activeDot={{ r: 4, strokeWidth: 0, fill: '#10b981' }}
+                    />
+                    <Area 
+                      type="monotone" 
+                      name="Угоди"
+                      dataKey="totalAgreementsToday" 
+                      stroke="#f59e0b" 
+                      strokeWidth={2}
+                      fillOpacity={1} 
+                      fill="url(#colorAgreements)" 
+                      activeDot={{ r: 4, strokeWidth: 0, fill: '#f59e0b' }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Revenue Chart */}
+              <div className="flex items-center justify-between mt-8 mb-6">
+                <h3 className="text-sm font-bold text-gray-800">Дохід по днях (грн)</h3>
+              </div>
+              <div className="h-[280px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart
+                    data={kData.entries}
+                    margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+                  >
+                    <defs>
+                      <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                    <XAxis 
+                      dataKey="date" 
+                      tickFormatter={(val) => {
+                        const [, month, day] = val.split('-');
+                        return `${day}.${month}`;
+                      }}
+                      tick={{ fontSize: 11, fill: '#6b7280' }} 
+                      tickLine={false}
+                      axisLine={{ stroke: '#e5e7eb' }}
+                      minTickGap={20}
+                    />
+                    <YAxis 
+                      tickFormatter={(val) => `${val.toLocaleString('uk-UA')} ₴`}
+                      tick={{ fontSize: 11, fill: '#6b7280' }} 
+                      tickLine={false}
+                      axisLine={false}
+                      width={80}
+                    />
+                    <Tooltip 
+                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', fontSize: '12px' }}
+                      labelFormatter={(label) => `Дата: ${label}`}
+                      formatter={(value: number) => [`${value.toLocaleString('uk-UA')} ₴`, 'Дохід']}
+                    />
+                    <Area 
+                      type="monotone" 
+                      name="Дохід"
+                      dataKey="totalAgreementsSumToday" 
+                      stroke="#8b5cf6" 
+                      strokeWidth={2}
+                      fillOpacity={1} 
+                      fill="url(#colorRevenue)" 
+                      activeDot={{ r: 4, strokeWidth: 0, fill: '#8b5cf6' }}
                     />
                   </AreaChart>
                 </ResponsiveContainer>
