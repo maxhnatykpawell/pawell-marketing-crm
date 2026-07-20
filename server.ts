@@ -793,11 +793,11 @@ function groupAgreementsBySource(agreements: any[], allSourceNames: string[] = [
 
   for (const item of agreements) {
     const src = extractSource(item);
-    if (src !== 'Не вказано' && map[src] === undefined) {
+    if (map[src] === undefined) {
       map[src] = { count: 0, sum: 0 };
     }
-    map[src].count = (map[src].count || 0) + 1;
-    map[src].sum = (map[src].sum || 0) + (Number(item.total) || 0);
+    map[src].count += 1;
+    map[src].sum += (Number(item.total) || 0);
   }
   
   return Object.entries(map)
