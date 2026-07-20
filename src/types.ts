@@ -247,4 +247,31 @@ export interface AppState {
   personalNotifications?: PersonalNotificationSettings;
   notifications?: NotificationItem[];
   lastModified?: string;
+  keepincrm?: KeepInCRMSnapshot;
+}
+
+// ── KeepInCRM Integration Types ───────────────────────────────────────────────
+
+export interface KeepInCRMSourceStat {
+  source: string;   // назва джерела
+  count: number;    // кількість за день
+}
+
+export interface KeepInCRMSnapshot {
+  /** Дата, за яку знято зріз (ISO-рядок, тільки дата: 2026-07-20) */
+  date: string;
+  /** Ліди за поточний день по джерелах */
+  leadsToday: KeepInCRMSourceStat[];
+  /** Клієнти (контрагенти) за поточний день по джерелах */
+  clientsToday: KeepInCRMSourceStat[];
+  /** Загальна кількість лідів за день */
+  totalLeadsToday: number;
+  /** Загальна кількість клієнтів за день */
+  totalClientsToday: number;
+  /** Конверсія лід → клієнт за день (0–100 %) */
+  conversionRateToday: number;
+  /** Час останньої синхронізації */
+  lastSyncedAt: string;
+  /** Помилка останньої синхронізації (якщо є) */
+  lastSyncError?: string;
 }

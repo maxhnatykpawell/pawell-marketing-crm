@@ -677,6 +677,189 @@ function setupPersonalNotificationCrons(settings: any) {
   }
 }
 
+// ── KeepInCRM Integration ─────────────────────────────────────────────────────
+
+const KEEPINCRM_API_KEY = () => process.env.KEEPINCRM_API_KEY || '';
+const KEEPINCRM_SUBDOMAIN = () => process.env.KEEPINCRM_SUBDOMAIN || '';
+
+/** Базовий URL API (https://<субдомен>.keepincrm.com/api/v1) */
+const keepinCRMBaseUrl = () =>
+  `https://${KEEPINCRM_SUBDOMAIN()}.keepincrm.com/api/v1`;
+
+/** Заголовки авторизації */
+const keepinCRMHeaders = () => ({
+  'X-Auth-Token': KEEPINCRM_API_KEY(),
+  'Content-Type': 'application/json',
+  Accept: 'application/json',
+});
+
+/** Повернути YYYY-MM-DD для поточного дня (Kyiv) */
+function todayKyiv(): string {
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Kyiv' }); // 'sv-SE' → YYYY-MM-DD
+}
+
+/**
+ * Запитати всі сторінки ендпоінту з пагінацією.
+ * KeepInCRM повертає { data: [...], total, per_page, current_page, last_page }
+ */
+async function keepinFetchAll(endpoint: string, params: Record<string, string> = {}): Promise<any[]> {
+  const base = keepinCRMBaseUrl();
+  const headers = keepinCRMHeaders();
+  const allItems: any[] = [];
+  let page = 1;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const query = new URLSearchParams({ ...params, page: String(page), per_page: '100' }).toString();
+    const url = `${base}${endpoint}?${query}`;
+
+    const res = await fetch(url, { headers });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`KeepInCRM ${endpoint} [${res.status}]: ${errText}`);
+    }
+
+    const body = await res.json();
+
+    // Підтримка двох форматів відповіді: { data: [...] } або прямий масив
+    const items: any[] = Array.isArray(body) ? body : (body.data ?? []);
+    allItems.push(...items);
+
+    const lastPage: number = body.last_page ?? 1;
+    if (page >= lastPage) break;
+    page++;
+  }
+
+  return allItems;
+}
+
+/**
+ * Повернути назву джерела з об'єкту KeepInCRM.
+ * Поле може зватися source, channel, referer тощо.
+ */
+function extractSource(item: any): string {
+  return (
+    item?.source?.name ||
+    item?.channel?.name ||
+    item?.referer ||
+    item?.utm_source ||
+    'Не вказано'
+  );
+}
+
+/**
+ * Згрупувати масив записів по джерелу і повернути масив { source, count }[].
+ */
+function groupBySource(items: any[]): { source: string; count: number }[] {
+  const map: Record<string, number> = {};
+  for (const item of items) {
+    const src = extractSource(item);
+    map[src] = (map[src] || 0) + 1;
+  }
+  return Object.entries(map)
+    .map(([source, count]) => ({ source, count }))
+    .sort((a, b) => b.count - a.count); // спадння за кількістю
+}
+
+/**
+ * Основна функція синхронізації: запитує KeepInCRM, рахує метрики, зберігає в стан.
+ */
+async function syncKeepInCRM(): Promise<void> {
+  const apiKey = KEEPINCRM_API_KEY();
+  const subdomain = KEEPINCRM_SUBDOMAIN();
+
+  if (!apiKey || !subdomain) {
+    console.log('⚠️ KeepInCRM синхронізація пропущена: KEEPINCRM_API_KEY або KEEPINCRM_SUBDOMAIN не задані.');
+    return;
+  }
+
+  const today = todayKyiv(); // YYYY-MM-DD
+  console.log(`🔄 KeepInCRM синхронізація за ${today}...`);
+
+  try {
+    // --- Ліди ---
+    // Фільтруємо по created_at (date_from / date_to — док-ція KeepInCRM)
+    const leadsRaw = await keepinFetchAll('/leads', {
+      date_from: today,
+      date_to: today,
+    });
+
+    // --- Клієнти (контрагенти) ---
+    const clientsRaw = await keepinFetchAll('/contacts', {
+      date_from: today,
+      date_to: today,
+    });
+
+    const leadsToday = groupBySource(leadsRaw);
+    const clientsToday = groupBySource(clientsRaw);
+
+    const totalLeadsToday = leadsRaw.length;
+    const totalClientsToday = clientsRaw.length;
+    const conversionRateToday =
+      totalLeadsToday > 0
+        ? Math.round((totalClientsToday / totalLeadsToday) * 1000) / 10 // заокруглення до 1 дес.
+        : 0;
+
+    const snapshot = {
+      date: today,
+      leadsToday,
+      clientsToday,
+      totalLeadsToday,
+      totalClientsToday,
+      conversionRateToday,
+      lastSyncedAt: new Date().toISOString(),
+    };
+
+    // Зберегти в Firebase або локальний JSON
+    const db = initFirebase();
+    if (db) {
+      await db.collection(CRM_COLLECTION).doc('keepincrm_snapshot').set(snapshot);
+    } else {
+      const state = await getDb();
+      state.keepincrm = snapshot;
+      await saveDb(state);
+    }
+
+    console.log(
+      `✅ KeepInCRM синх: лідів=${totalLeadsToday}, клієнтів=${totalClientsToday}, конверсія=${conversionRateToday}%`
+    );
+  } catch (err: any) {
+    console.error('❌ KeepInCRM синх помилка:', err.message || err);
+
+    // Зберегти помилку в снімку, щоб дашборд єїї відображав без перезапису значень
+    const db = initFirebase();
+    if (db) {
+      const snap = await db.collection(CRM_COLLECTION).doc('keepincrm_snapshot').get();
+      const existing = snap.exists ? (snap.data() as any) : {};
+      await db.collection(CRM_COLLECTION).doc('keepincrm_snapshot').set({
+        ...existing,
+        lastSyncError: err.message || String(err),
+        lastSyncedAt: new Date().toISOString(),
+      }, { merge: true });
+    }
+  }
+}
+
+let keepinCRMCronTask: any = null;
+
+function setupKeepInCRMCron() {
+  if (keepinCRMCronTask) {
+    keepinCRMCronTask.stop();
+    keepinCRMCronTask = null;
+  }
+
+  const minutes = parseInt(process.env.KEEPINCRM_SYNC_INTERVAL_MINUTES || '30', 10);
+  const interval = isNaN(minutes) || minutes < 1 ? 30 : minutes;
+  const cronExpr = `*/${interval} * * * *`;
+
+  keepinCRMCronTask = cron.schedule(cronExpr, async () => {
+    await syncKeepInCRM();
+  }, { timezone: 'Europe/Kyiv' });
+
+  console.log(`📈 KeepInCRM синхронізація: кожні ${interval} хв. (${cronExpr})`);
+}
+
 // ── Main Server ───────────────────────────────────────────────────────────────
 
 async function startServer() {
@@ -696,6 +879,10 @@ async function startServer() {
   setupTelegramCron(initialState.aiReportSchedule || '0 8 * * *');
   setupAnnouncementCrons(initialState.announcements || []);
   setupPersonalNotificationCrons(initialState.personalNotifications || DEFAULT_PERSONAL_NOTIFICATIONS);
+
+  // KeepInCRM: запускаємо cron + першу синхронізацію при старті сервера
+  setupKeepInCRMCron();
+  syncKeepInCRM().catch(() => { /* помилка записується в снімок */ });
 
   // ── Auth Routes ──────────────────────────────────────────────────────────────
 
@@ -874,6 +1061,42 @@ async function startServer() {
       res.json({ lastModified: new Date().toISOString() });
     } catch (e: any) {
       res.json({ lastModified: new Date().toISOString() });
+    }
+  });
+
+  // ── KeepInCRM Routes ─────────────────────────────────────────────────────────
+
+  /** GET /api/keepincrm/snapshot — повернути останній збережений зріз */
+  app.get('/api/keepincrm/snapshot', requireAuth, async (req, res) => {
+    try {
+      const db = initFirebase();
+      if (db) {
+        const snap = await db.collection(CRM_COLLECTION).doc('keepincrm_snapshot').get();
+        if (snap.exists) return res.json(snap.data());
+        return res.json(null);
+      }
+      // fallback: local json
+      const state = await getDb();
+      res.json(state.keepincrm || null);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** POST /api/keepincrm/sync — примусова ручна синхронізація (тільки admin) */
+  app.post('/api/keepincrm/sync', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      await syncKeepInCRM();
+      // повернути оновлений знімок
+      const db = initFirebase();
+      if (db) {
+        const snap = await db.collection(CRM_COLLECTION).doc('keepincrm_snapshot').get();
+        return res.json({ success: true, snapshot: snap.exists ? snap.data() : null });
+      }
+      const state = await getDb();
+      res.json({ success: true, snapshot: state.keepincrm || null });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
     }
   });
 

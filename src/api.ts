@@ -1,4 +1,4 @@
-import { AppState, Attachment, AuthUser } from './types';
+import { AppState, Attachment, AuthUser, KeepInCRMSnapshot } from './types';
 import { v4 as uuidv4 } from 'uuid';
 
 const getToken = () => localStorage.getItem('auth_token');
@@ -335,3 +335,32 @@ export const sendCardAssignedNotification = async (cardId: string, assigneeId: s
     body: JSON.stringify({ cardId, assigneeId }),
   }).catch(() => { /* silent */ });
 };
+
+// ── KeepInCRM ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Повернути останній збережений знімок KeepInCRM (ліди, клієнти, конверсія).
+ * Повертає null, якщо синхронізація ще не відбувалась або ключ не налаштовано.
+ */
+export const getKeepInCRMSnapshot = async (): Promise<KeepInCRMSnapshot | null> => {
+  const res = await fetch('/api/keepincrm/snapshot', { headers: authHeaders() });
+  if (!res.ok) throw new Error('Failed to load KeepInCRM snapshot');
+  return res.json();
+};
+
+/**
+ * Примусово запустити синхронізацію з KeepInCRM (тільки для адмінів).
+ * Повертає оновлений знімок.
+ */
+export const triggerKeepInCRMSync = async (): Promise<{ success: boolean; snapshot: KeepInCRMSnapshot | null }> => {
+  const res = await fetch('/api/keepincrm/sync', {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to sync KeepInCRM');
+  }
+  return res.json();
+};
+
