@@ -766,15 +766,25 @@ function extractSource(item: any): string {
 /**
  * Згрупувати масив записів по джерелу і повернути масив { source, count }[].
  */
-function groupBySource(items: any[]): { source: string; count: number }[] {
+function groupBySource(items: any[], allSourceNames: string[] = []): { source: string; count: number }[] {
   const map: Record<string, number> = {};
+  
+  // Ініціалізуємо всі джерела нулями
+  for (const name of allSourceNames) {
+    if (name) map[name] = 0;
+  }
+
   for (const item of items) {
     const src = extractSource(item);
+    if (src !== 'Не вказано' && map[src] === undefined) {
+      map[src] = 0;
+    }
     map[src] = (map[src] || 0) + 1;
   }
+  
   return Object.entries(map)
     .map(([source, count]) => ({ source, count }))
-    .sort((a, b) => b.count - a.count); // спадння за кількістю
+    .sort((a, b) => b.count - a.count); // спадання за кількістю
 }
 
 /**
@@ -810,8 +820,12 @@ async function syncKeepInCRM(): Promise<void> {
       console.log(`🐞 KeepInCRM Debug First Item: id=${allClientsRaw[0].id}, lead=${allClientsRaw[0].lead} (type: ${typeof allClientsRaw[0].lead})`);
     }
 
-    const leadsToday = groupBySource(leadsRaw);
-    const clientsToday = groupBySource(clientsRaw);
+    // Отримуємо ВСІ існуючі джерела з CRM
+    const sourcesRaw = await keepinFetchAll('/sources', {});
+    const allSourceNames = sourcesRaw.map(s => s.name);
+
+    const leadsToday = groupBySource(leadsRaw, allSourceNames);
+    const clientsToday = groupBySource(clientsRaw, allSourceNames);
     const totalLeadsToday = leadsRaw.length;
     const totalClientsToday = clientsRaw.length;
     const conversionRateToday =

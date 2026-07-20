@@ -491,7 +491,7 @@ function KeepInCRMSourceCard({ title, total, stats, color, icon, change }: Sourc
           <p className="text-xs text-gray-400 italic">Дані відсутні</p>
         ) : (
           <div className="space-y-2.5">
-            {stats.slice(0, 5).map(s => (
+            {stats.map(s => (
               <div key={s.source}>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-[11px] text-gray-600 font-medium truncate max-w-[120px]" title={s.source}>
@@ -502,14 +502,11 @@ function KeepInCRMSourceCard({ title, total, stats, color, icon, change }: Sourc
                 <div className={`w-full ${colorMap.barBg} rounded-full h-1.5`}>
                   <div
                     className={`${colorMap.bar} h-1.5 rounded-full transition-all duration-700`}
-                    style={{ width: `${(s.count / maxCount) * 100}%` }}
+                    style={{ width: `${maxCount > 0 ? (s.count / maxCount) * 100 : 0}%` }}
                   />
                 </div>
               </div>
             ))}
-            {stats.length > 5 && (
-              <p className="text-[10px] text-gray-400 mt-1">+ ще {stats.length - 5} джерел</p>
-            )}
           </div>
         )}
       </div>
