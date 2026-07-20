@@ -794,9 +794,11 @@ async function syncKeepInCRM(): Promise<void> {
 
   try {
     // Використовуємо універсальні системні поля created_at_gteq/lteq для фільтрації по даті
+    // Вказуємо повний час від 00:00:00 до 23:59:59, оскільки KeepInCRM (Ransack) інакше 
+    // шукає точний збіг на 00:00:00, і через це повертає 0 записів за день!
     const allClientsRaw = await keepinFetchAll('/clients', { 
-      'q[created_at_gteq]': today, 
-      'q[created_at_lteq]': today 
+      'q[created_at_gteq]': `${today}T00:00:00.000+03:00`, 
+      'q[created_at_lteq]': `${today}T23:59:59.999+03:00` 
     });
 
     // Ліди мають поле lead: true, клієнти lead: false (або undefined)
