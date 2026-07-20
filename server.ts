@@ -684,7 +684,7 @@ const KEEPINCRM_SUBDOMAIN = () => process.env.KEEPINCRM_SUBDOMAIN || '';
 
 /** Базовий URL API (https://<субдомен>.keepincrm.com/api/v1) */
 const keepinCRMBaseUrl = () =>
-  `https://${KEEPINCRM_SUBDOMAIN()}.keepincrm.com/api/v1`;
+  `https://api.keepincrm.com/v1`;
 
 /** Заголовки авторизації */
 const keepinCRMHeaders = () => ({
@@ -710,19 +710,16 @@ async function keepinFetchAll(endpoint: string, params: Record<string, string> =
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    // Передаємо токен одночасно через query-параметр і заголовок
     const query = new URLSearchParams({
       ...params,
-      token: apiKey,   // Деякі версії KeepInCRM потребують query-токен
       page: String(page),
       per_page: '100',
     }).toString();
     const url = `${base}${endpoint}?${query}`;
 
-    // Діагностика: показуємо URL (без токену) для перевірки
+    // Діагностика: показуємо URL для перевірки
     if (page === 1) {
-      const safeUrl = `${base}${endpoint}?${new URLSearchParams({ ...params, token: '***', page: '1', per_page: '100' })}` ;
-      console.log(`🔍 KeepInCRM запит: ${safeUrl}  |ключ наявний: ${!!apiKey}`);
+      console.log(`🔍 KeepInCRM запит: ${url}  |ключ наявний: ${!!apiKey}`);
     }
 
     const res = await fetch(url, {
@@ -787,8 +784,8 @@ async function syncKeepInCRM(): Promise<void> {
   const apiKey = KEEPINCRM_API_KEY();
   const subdomain = KEEPINCRM_SUBDOMAIN();
 
-  if (!apiKey || !subdomain) {
-    console.log('⚠️ KeepInCRM синхронізація пропущена: KEEPINCRM_API_KEY або KEEPINCRM_SUBDOMAIN не задані.');
+  if (!apiKey) {
+    console.log('⚠️ KeepInCRM синхронізація пропущена: KEEPINCRM_API_KEY не задано.');
     return;
   }
 
@@ -796,8 +793,17 @@ async function syncKeepInCRM(): Promise<void> {
   console.log(`🔄 KeepInCRM синхронізація за ${today}...`);
 
   try {
-    const leadsRaw = await keepinFetchAll('/leads', { date_from: today, date_to: today });
-    const clientsRaw = await keepinFetchAll('/contacts', { date_from: today, date_to: today });
+    // У KeepInCRM ліди та клієнти - це один ендпоінт /clients (фільтр по даті реєстрації)
+    // q[registered_at_gteq] - створено після (включно)
+    // q[registered_at_lteq] - створено до (включно)
+    const allClientsRaw = await keepinFetchAll('/clients', { 
+      'q[registered_at_gteq]': today, 
+      'q[registered_at_lteq]': today 
+    });
+
+    // Ліди мають поле lead: true, клієнти lead: false (або undefined)
+    const leadsRaw = allClientsRaw.filter(c => c.lead === true);
+    const clientsRaw = allClientsRaw.filter(c => c.lead === false || c.lead == null);
 
     const leadsToday = groupBySource(leadsRaw);
     const clientsToday = groupBySource(clientsRaw);
