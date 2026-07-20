@@ -778,27 +778,16 @@ async function syncKeepInCRM(): Promise<void> {
   console.log(`🔄 KeepInCRM синхронізація за ${today}...`);
 
   try {
-    // --- Ліди ---
-    // Фільтруємо по created_at (date_from / date_to — док-ція KeepInCRM)
-    const leadsRaw = await keepinFetchAll('/leads', {
-      date_from: today,
-      date_to: today,
-    });
-
-    // --- Клієнти (контрагенти) ---
-    const clientsRaw = await keepinFetchAll('/contacts', {
-      date_from: today,
-      date_to: today,
-    });
+    const leadsRaw = await keepinFetchAll('/leads', { date_from: today, date_to: today });
+    const clientsRaw = await keepinFetchAll('/contacts', { date_from: today, date_to: today });
 
     const leadsToday = groupBySource(leadsRaw);
     const clientsToday = groupBySource(clientsRaw);
-
     const totalLeadsToday = leadsRaw.length;
     const totalClientsToday = clientsRaw.length;
     const conversionRateToday =
       totalLeadsToday > 0
-        ? Math.round((totalClientsToday / totalLeadsToday) * 1000) / 10 // заокруглення до 1 дес.
+        ? Math.round((totalClientsToday / totalLeadsToday) * 1000) / 10
         : 0;
 
     const snapshot = {
@@ -811,35 +800,103 @@ async function syncKeepInCRM(): Promise<void> {
       lastSyncedAt: new Date().toISOString(),
     };
 
-    // Зберегти в Firebase або локальний JSON
     const db = initFirebase();
     if (db) {
+      // 1) Поточний знімок (сьогодні) — для швидкого доступу
       await db.collection(CRM_COLLECTION).doc('keepincrm_snapshot').set(snapshot);
+      // 2) Щоденна колекція — зберігаємо назавжди (ключ = дата)
+      await db.collection('crm_keepincrm').doc(today).set(snapshot);
     } else {
+      // Fallback: локальний JSON — зберігаємо останні 90 днів
       const state = await getDb();
       state.keepincrm = snapshot;
+      const hist: any[] = state.keepincrmHistory || [];
+      const idx = hist.findIndex((e: any) => e.date === today);
+      if (idx >= 0) hist[idx] = snapshot; else hist.push(snapshot);
+      // Обмежуємо до 90 записів (сортуємо, беремо останні)
+      hist.sort((a: any, b: any) => a.date.localeCompare(b.date));
+      state.keepincrmHistory = hist.slice(-90);
       await saveDb(state);
     }
 
-    console.log(
-      `✅ KeepInCRM синх: лідів=${totalLeadsToday}, клієнтів=${totalClientsToday}, конверсія=${conversionRateToday}%`
-    );
+    console.log(`✅ KeepInCRM синх: лідів=${totalLeadsToday}, клієнтів=${totalClientsToday}, конверсія=${conversionRateToday}%`);
   } catch (err: any) {
     console.error('❌ KeepInCRM синх помилка:', err.message || err);
-
-    // Зберегти помилку в снімку, щоб дашборд єїї відображав без перезапису значень
     const db = initFirebase();
     if (db) {
-      const snap = await db.collection(CRM_COLLECTION).doc('keepincrm_snapshot').get();
-      const existing = snap.exists ? (snap.data() as any) : {};
       await db.collection(CRM_COLLECTION).doc('keepincrm_snapshot').set({
-        ...existing,
         lastSyncError: err.message || String(err),
         lastSyncedAt: new Date().toISOString(),
       }, { merge: true });
     }
   }
 }
+
+// ── KeepInCRM History Helpers ─────────────────────────────────────────────────
+
+/** Список дат (YYYY-MM-DD) у діапазоні [from, to] включно */
+function dateRange(from: string, to: string): string[] {
+  const dates: string[] = [];
+  const cur = new Date(from + 'T00:00:00Z');
+  const end = new Date(to + 'T00:00:00Z');
+  while (cur <= end) {
+    dates.push(cur.toISOString().slice(0, 10));
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+/** Агрегувати масив snapshot-ів у зведені показники */
+function aggregateEntries(entries: any[]) {
+  const sourceLeads: Record<string, number> = {};
+  const sourceClients: Record<string, number> = {};
+  let totalLeads = 0;
+  let totalClients = 0;
+  let convSum = 0;
+  let convDays = 0;
+
+  for (const e of entries) {
+    totalLeads += e.totalLeadsToday || 0;
+    totalClients += e.totalClientsToday || 0;
+    if (typeof e.conversionRateToday === 'number') { convSum += e.conversionRateToday; convDays++; }
+    for (const s of (e.leadsToday || [])) sourceLeads[s.source] = (sourceLeads[s.source] || 0) + s.count;
+    for (const s of (e.clientsToday || [])) sourceClients[s.source] = (sourceClients[s.source] || 0) + s.count;
+  }
+
+  const toArr = (map: Record<string, number>) =>
+    Object.entries(map).map(([source, count]) => ({ source, count })).sort((a, b) => b.count - a.count);
+
+  return {
+    totalLeads,
+    totalClients,
+    avgConversionRate: convDays > 0 ? Math.round((convSum / convDays) * 10) / 10 : 0,
+    leadsBySource: toArr(sourceLeads),
+    clientsBySource: toArr(sourceClients),
+  };
+}
+
+/** Порахувати % зміну; повертає null якщо base = 0 */
+function pctChange(current: number, base: number): number {
+  if (base === 0) return current > 0 ? 100 : 0;
+  return Math.round(((current - base) / base) * 1000) / 10;
+}
+
+/** Завантажити знімки за діапазон дат з Firebase або локального JSON */
+async function loadEntriesForRange(from: string, to: string): Promise<any[]> {
+  const db = initFirebase();
+  if (db) {
+    const dates = dateRange(from, to);
+    const docs = await Promise.all(
+      dates.map(d => db.collection('crm_keepincrm').doc(d).get())
+    );
+    return docs.filter(d => d.exists).map(d => d.data());
+  }
+  // Fallback: локальний JSON
+  const state = await getDb();
+  const hist: any[] = state.keepincrmHistory || [];
+  return hist.filter((e: any) => e.date >= from && e.date <= to);
+}
+
 
 let keepinCRMCronTask: any = null;
 
@@ -1097,6 +1154,59 @@ async function startServer() {
       res.json({ success: true, snapshot: state.keepincrm || null });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/keepincrm/history
+   * Query params:
+   *   from     YYYY-MM-DD  (default: 30 днів тому)
+   *   to       YYYY-MM-DD  (default: сьогодні)
+   *   compare  '1' | 'true' — повернути порівняння з попереднім еквівалентним пер.
+   */
+  app.get('/api/keepincrm/history', requireAuth, async (req, res) => {
+    try {
+      const to   = (req.query.to   as string) || todayKyiv();
+      const fromDefault = (() => {
+        const d = new Date(to + 'T00:00:00Z');
+        d.setUTCDate(d.getUTCDate() - 29); // 30 днів включно
+        return d.toISOString().slice(0, 10);
+      })();
+      const from    = (req.query.from    as string) || fromDefault;
+      const compare = req.query.compare === '1' || req.query.compare === 'true';
+
+      // Поточний діапазон
+      const entries = await loadEntriesForRange(from, to);
+      const aggregated = aggregateEntries(entries);
+
+      // Попередній еквівалентний діапазон (для порівняння)
+      let comparison = null;
+      if (compare) {
+        const periodDays = dateRange(from, to).length;
+        const prevTo   = new Date(from + 'T00:00:00Z');
+        prevTo.setUTCDate(prevTo.getUTCDate() - 1);
+        const prevFrom = new Date(prevTo);
+        prevFrom.setUTCDate(prevFrom.getUTCDate() - periodDays + 1);
+
+        const prevEntries = await loadEntriesForRange(
+          prevFrom.toISOString().slice(0, 10),
+          prevTo.toISOString().slice(0, 10)
+        );
+        const prevAgg = aggregateEntries(prevEntries);
+
+        comparison = {
+          totalLeads:        prevAgg.totalLeads,
+          totalClients:      prevAgg.totalClients,
+          avgConversionRate: prevAgg.avgConversionRate,
+          leadsChange:       pctChange(aggregated.totalLeads,        prevAgg.totalLeads),
+          clientsChange:     pctChange(aggregated.totalClients,      prevAgg.totalClients),
+          conversionChange:  pctChange(aggregated.avgConversionRate, prevAgg.avgConversionRate),
+        };
+      }
+
+      res.json({ entries, period: { from, to }, aggregated, comparison });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 

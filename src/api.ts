@@ -1,4 +1,4 @@
-import { AppState, Attachment, AuthUser, KeepInCRMSnapshot } from './types';
+import { AppState, Attachment, AuthUser, KeepInCRMSnapshot, KeepInCRMHistoryResponse } from './types';
 import { v4 as uuidv4 } from 'uuid';
 
 const getToken = () => localStorage.getItem('auth_token');
@@ -364,3 +364,25 @@ export const triggerKeepInCRMSync = async (): Promise<{ success: boolean; snapsh
   return res.json();
 };
 
+/**
+ * Повернути історичні дані KeepInCRM за діапазон дат.
+ * @param from  YYYY-MM-DD (за замовчув: 30 днів тому)
+ * @param to    YYYY-MM-DD (за замовчув: сьогодні)
+ * @param compare true = додати порівняння з попереднім еквівалентним періодом
+ */
+export const getKeepInCRMHistory = async (
+  from?: string,
+  to?: string,
+  compare = true
+): Promise<KeepInCRMHistoryResponse> => {
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to)   params.set('to', to);
+  if (compare) params.set('compare', '1');
+  const res = await fetch(`/api/keepincrm/history?${params}`, { headers: authHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to load KeepInCRM history');
+  }
+  return res.json();
+};

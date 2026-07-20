@@ -275,3 +275,30 @@ export interface KeepInCRMSnapshot {
   /** Помилка останньої синхронізації (якщо є) */
   lastSyncError?: string;
 }
+
+/** Агреговані показники за довільний період */
+export interface KeepInCRMPeriodAggregated {
+  totalLeads: number;
+  totalClients: number;
+  avgConversionRate: number;               // середній % конверсії по дням
+  leadsBySource: KeepInCRMSourceStat[];    // зведені по джерелу за весь період
+  clientsBySource: KeepInCRMSourceStat[];
+}
+
+/** Порівняння поточного і попереднього еквівалентного периоду */
+export interface KeepInCRMComparison {
+  totalLeads: number;
+  totalClients: number;
+  avgConversionRate: number;
+  leadsChange: number;       // % зміна (позитивне = ріст)
+  clientsChange: number;
+  conversionChange: number;
+}
+
+/** Відповідь /api/keepincrm/history */
+export interface KeepInCRMHistoryResponse {
+  entries: KeepInCRMSnapshot[];            // знімки по дням
+  period: { from: string; to: string };   // YYYY-MM-DD
+  aggregated: KeepInCRMPeriodAggregated;
+  comparison: KeepInCRMComparison | null; // null якщо порівняння не запитувалось
+}

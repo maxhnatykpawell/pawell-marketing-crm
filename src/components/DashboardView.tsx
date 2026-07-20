@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAppContext } from '../App';
-import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, isToday } from 'date-fns';
+import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, isToday, subDays, startOfMonth } from 'date-fns';
 import { uk } from 'date-fns/locale';
 import { TrendingUp, TrendingDown, Target, Edit2, Check, Calendar as CalendarIcon, Send, Loader2, RefreshCw, Users, Zap, AlertCircle } from 'lucide-react';
-import { Metric, KeepInCRMSnapshot, KeepInCRMSourceStat } from '../types';
-import { getKeepInCRMSnapshot, triggerKeepInCRMSync } from '../api';
+import { Metric, KeepInCRMHistoryResponse, KeepInCRMSourceStat } from '../types';
+import { getKeepInCRMHistory, triggerKeepInCRMSync } from '../api';
 
 export default function DashboardView() {
   const { state, updateMetric, setActiveView, setActiveEventId, currentUser } = useAppContext();
@@ -14,24 +14,52 @@ export default function DashboardView() {
   const [isSendingReport, setIsSendingReport] = useState(false);
 
   // ── KeepInCRM State ──────────────────────────────────────────────────────────
-  const [kSnapshot, setKSnapshot] = useState<KeepInCRMSnapshot | null>(null);
-  const [kLoading, setKLoading] = useState(true);
-  const [kSyncing, setKSyncing] = useState(false);
-  const [kError, setKError] = useState<string | null>(null);
+  type KPeriod = 'today' | 'yesterday' | '7d' | '30d' | 'month';
+  const [kPeriod, setKPeriod]     = useState<KPeriod>('today');
+  const [kData, setKData]         = useState<KeepInCRMHistoryResponse | null>(null);
+  const [kLoading, setKLoading]   = useState(true);
+  const [kSyncing, setKSyncing]   = useState(false);
+  const [kError, setKError]       = useState<string | null>(null);
 
-  useEffect(() => {
-    getKeepInCRMSnapshot()
-      .then(snap => setKSnapshot(snap))
-      .catch(() => setKError('Не вдалось завантажити дані KeepInCRM'))
-      .finally(() => setKLoading(false));
-  }, []);
+  /** YYYY-MM-DD для поточного дня */
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+
+  /** Повернути from/to для вибраного періоду */
+  const periodRange = useCallback((p: KPeriod): { from: string; to: string } => {
+    const now = new Date();
+    switch (p) {
+      case 'today':     return { from: todayStr, to: todayStr };
+      case 'yesterday': { const d = format(subDays(now, 1), 'yyyy-MM-dd'); return { from: d, to: d }; }
+      case '7d':        return { from: format(subDays(now, 6), 'yyyy-MM-dd'), to: todayStr };
+      case '30d':       return { from: format(subDays(now, 29), 'yyyy-MM-dd'), to: todayStr };
+      case 'month':     return { from: format(startOfMonth(now), 'yyyy-MM-dd'), to: todayStr };
+    }
+  }, [todayStr]);
+
+  const loadKData = useCallback(async (p: KPeriod) => {
+    setKLoading(true);
+    setKError(null);
+    try {
+      const { from, to } = periodRange(p);
+      const data = await getKeepInCRMHistory(from, to, true);
+      setKData(data);
+    } catch (e: any) {
+      setKError(e.message || 'Не вдалось завантажити дані KeepInCRM');
+    } finally {
+      setKLoading(false);
+    }
+  }, [periodRange]);
+
+  useEffect(() => { loadKData(kPeriod); }, [kPeriod, loadKData]);
+
+  const handleKPeriod = (p: KPeriod) => { setKPeriod(p); };
 
   const handleKSync = async () => {
     setKSyncing(true);
     setKError(null);
     try {
-      const { snapshot } = await triggerKeepInCRMSync();
-      setKSnapshot(snapshot);
+      await triggerKeepInCRMSync();
+      await loadKData(kPeriod);
     } catch (e: any) {
       setKError(e.message || 'Помилка синхронізації');
     } finally {
@@ -174,20 +202,44 @@ export default function DashboardView() {
       {/* KeepInCRM Block */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex-shrink-0">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/50">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm">
+        <div className="flex flex-wrap items-center gap-3 px-6 py-4 border-b border-gray-100 bg-gray-50/50">
+          {/* Icon + title */}
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm flex-shrink-0">
               <Zap className="w-4 h-4 text-white" />
             </div>
-            <div>
-              <h3 className="text-sm font-bold text-gray-800">KeepInCRM · Сьогодні</h3>
-              {kSnapshot?.lastSyncedAt && (
+            <div className="min-w-0">
+              <h3 className="text-sm font-bold text-gray-800 truncate">KeepInCRM Analytics</h3>
+              {kData && (
                 <p className="text-[11px] text-gray-400 mt-0.5">
-                  Оновлено: {new Date(kSnapshot.lastSyncedAt).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' })}
+                  {kData.period.from === kData.period.to
+                    ? kData.period.from
+                    : `${kData.period.from} — ${kData.period.to}`
+                  }
+                  {' · '}{kData.entries.length} днів з даними
                 </p>
               )}
             </div>
           </div>
+
+          {/* Period picker */}
+          <div className="flex items-center bg-gray-100 rounded-lg p-0.5 gap-0.5">
+            {(['today','yesterday','7d','30d','month'] as const).map(p => (
+              <button
+                key={p}
+                onClick={() => handleKPeriod(p)}
+                className={`px-2.5 py-1 text-xs font-medium rounded-md transition ${
+                  kPeriod === p
+                    ? 'bg-white text-violet-700 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {{ today: 'Сьогодні', yesterday: 'Вчора', '7d': '7 днів', '30d': '30 днів', month: 'Місяць' }[p]}
+              </button>
+            ))}
+          </div>
+
+          {/* Sync button (admin only) */}
           {currentUser?.role === 'admin' && (
             <button
               onClick={handleKSync}
@@ -196,7 +248,7 @@ export default function DashboardView() {
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-violet-600 bg-violet-50 hover:bg-violet-100 rounded-lg transition disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${kSyncing ? 'animate-spin' : ''}`} />
-              {kSyncing ? 'Синхронізація...' : 'Оновити'}
+              {kSyncing ? 'Синх...' : 'Оновити'}
             </button>
           )}
         </div>
@@ -210,10 +262,9 @@ export default function DashboardView() {
             </div>
           ) : kError ? (
             <div className="flex items-center gap-2 text-sm text-red-500 bg-red-50 rounded-lg px-4 py-3">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              {kError}
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />{kError}
             </div>
-          ) : !kSnapshot ? (
+          ) : !kData ? (
             <div className="text-center py-8 text-gray-400">
               <Zap className="w-8 h-8 mx-auto mb-2 opacity-30" />
               <p className="text-sm">Дані ще не синхронізовані.</p>
@@ -222,45 +273,54 @@ export default function DashboardView() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 
-              {/* Leads Today */}
+              {/* Leads */}
               <KeepInCRMSourceCard
-                title="Ліди за сьогодні"
-                total={kSnapshot.totalLeadsToday}
-                stats={kSnapshot.leadsToday}
+                title="Ліди за період"
+                total={kData.aggregated.totalLeads}
+                stats={kData.aggregated.leadsBySource}
                 color="blue"
                 icon={<Users className="w-4 h-4" />}
+                change={kData.comparison?.leadsChange ?? null}
               />
 
-              {/* Clients Today */}
+              {/* Clients */}
               <KeepInCRMSourceCard
-                title="Клієнти за сьогодні"
-                total={kSnapshot.totalClientsToday}
-                stats={kSnapshot.clientsToday}
+                title="Клієнти за період"
+                total={kData.aggregated.totalClients}
+                stats={kData.aggregated.clientsBySource}
                 color="green"
                 icon={<Target className="w-4 h-4" />}
+                change={kData.comparison?.clientsChange ?? null}
               />
 
-              {/* Conversion Rate */}
+              {/* Conversion */}
               <div className="flex flex-col">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Конверсія лід → клієнт</p>
                 <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-br from-violet-50 to-indigo-50 rounded-xl border border-violet-100 p-6">
                   <span className="text-5xl font-black text-violet-700 leading-none">
-                    {kSnapshot.conversionRateToday}%
+                    {kData.aggregated.avgConversionRate}%
                   </span>
                   <p className="text-xs text-violet-500 mt-2 font-medium">
-                    {kSnapshot.totalClientsToday} з {kSnapshot.totalLeadsToday} лідів
+                    {kData.aggregated.totalClients} з {kData.aggregated.totalLeads} лідів
                   </p>
-                  {/* Mini progress bar */}
                   <div className="w-full mt-4 bg-violet-100 rounded-full h-2">
                     <div
                       className="bg-gradient-to-r from-violet-500 to-indigo-500 h-2 rounded-full transition-all duration-700"
-                      style={{ width: `${Math.min(kSnapshot.conversionRateToday, 100)}%` }}
+                      style={{ width: `${Math.min(kData.aggregated.avgConversionRate, 100)}%` }}
                     />
                   </div>
-                  {kSnapshot.lastSyncError && (
-                    <p className="text-[10px] text-amber-500 mt-3 text-center">
-                      ⚠️ Остання синхронізація завершилась з помилкою
-                    </p>
+                  {/* Comparison badge */}
+                  {kData.comparison !== null && (
+                    <div className={`mt-3 flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full ${
+                      kData.comparison.conversionChange >= 0
+                        ? 'bg-green-50 text-green-700'
+                        : 'bg-red-50 text-red-700'
+                    }`}>
+                      {kData.comparison.conversionChange >= 0
+                        ? <TrendingUp className="w-3 h-3" />
+                        : <TrendingDown className="w-3 h-3" />}
+                      {kData.comparison.conversionChange >= 0 ? '+' : ''}{kData.comparison.conversionChange}% відносно поп. пер.
+                    </div>
                   )}
                 </div>
               </div>
@@ -377,9 +437,10 @@ interface SourceCardProps {
   stats: KeepInCRMSourceStat[];
   color: 'blue' | 'green';
   icon: React.ReactNode;
+  change?: number | null;  // % зміна відносно попереднього періоду
 }
 
-function KeepInCRMSourceCard({ title, total, stats, color, icon }: SourceCardProps) {
+function KeepInCRMSourceCard({ title, total, stats, color, icon, change }: SourceCardProps) {
   const colorMap = {
     blue: {
       bg: 'from-blue-50 to-sky-50',
@@ -408,12 +469,21 @@ function KeepInCRMSourceCard({ title, total, stats, color, icon }: SourceCardPro
       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">{title}</p>
       <div className={`flex-1 bg-gradient-to-br ${colorMap.bg} rounded-xl border ${colorMap.border} p-4`}>
         {/* Total */}
-        <div className="flex items-center gap-2 mb-4">
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
           <div className={`w-7 h-7 rounded-lg ${colorMap.icon} flex items-center justify-center flex-shrink-0`}>
             {icon}
           </div>
           <span className={`text-3xl font-black ${colorMap.text} leading-none`}>{total}</span>
-          <span className="text-xs text-gray-400 mt-1">сьогодні</span>
+          {change !== null && change !== undefined ? (
+            <span className={`flex items-center gap-0.5 text-[11px] font-bold px-1.5 py-0.5 rounded-full ${
+              change >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+            }`}>
+              {change >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+              {change >= 0 ? '+' : ''}{change}%
+            </span>
+          ) : (
+            <span className="text-xs text-gray-400 mt-1">за період</span>
+          )}
         </div>
 
         {/* Source bars */}
