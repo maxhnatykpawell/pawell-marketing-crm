@@ -455,6 +455,19 @@ export default function DashboardView() {
             </div>
           )}
 
+          {/* ── Sales Funnel ─────────────────────────────────────────────── */}
+          {kData && (
+            <SalesFunnel
+              leads={kData.aggregated.totalLeads}
+              clients={kData.aggregated.totalClients}
+              agreements={kData.aggregated.totalAgreements ?? 0}
+              agreementsSum={kData.aggregated.totalAgreementsSum ?? 0}
+              leadsChange={kData.comparison?.leadsChange ?? null}
+              clientsChange={kData.comparison?.clientsChange ?? null}
+              agreementsChange={kData.comparison?.agreementsChange ?? null}
+            />
+          )}
+
           {/* Chart Section */}
           {kData && kData.entries.length > 0 && (
             <div className="mt-8 pt-6 border-t border-gray-100">
@@ -690,6 +703,204 @@ export default function DashboardView() {
         </div>
       </div>
       
+    </div>
+  );
+}
+
+// ── Sales Funnel ─────────────────────────────────────────────────────────────
+
+interface SalesFunnelProps {
+  leads: number;
+  clients: number;
+  agreements: number;
+  agreementsSum: number;
+  leadsChange: number | null;
+  clientsChange: number | null;
+  agreementsChange: number | null;
+}
+
+function SalesFunnel({ leads, clients, agreements, agreementsSum, leadsChange, clientsChange, agreementsChange }: SalesFunnelProps) {
+  // Конверсії між рівнями
+  const conv1 = leads > 0 ? Math.round((clients / leads) * 1000) / 10 : 0;
+  const conv2 = clients > 0 ? Math.round((agreements / clients) * 1000) / 10 : 0;
+  const convTotal = leads > 0 ? Math.round((agreements / leads) * 1000) / 10 : 0;
+
+  const stages = [
+    {
+      key: 'leads',
+      label: 'Ліди',
+      value: leads,
+      pct: 100,
+      color: { fill: '#3b82f6', light: '#eff6ff', border: '#bfdbfe', text: '#1d4ed8' },
+      change: leadsChange,
+      sub: null,
+    },
+    {
+      key: 'clients',
+      label: 'Клієнти',
+      value: clients,
+      pct: leads > 0 ? (clients / leads) * 100 : 0,
+      color: { fill: '#10b981', light: '#ecfdf5', border: '#a7f3d0', text: '#065f46' },
+      change: clientsChange,
+      sub: null,
+    },
+    {
+      key: 'agreements',
+      label: 'Угоди',
+      value: agreements,
+      pct: leads > 0 ? (agreements / leads) * 100 : 0,
+      color: { fill: '#8b5cf6', light: '#f5f3ff', border: '#ddd6fe', text: '#5b21b6' },
+      change: agreementsChange,
+      sub: agreementsSum > 0 ? `${agreementsSum.toLocaleString('uk-UA')} ₴` : null,
+    },
+  ];
+
+  const conversions = [
+    { label: 'Лід → Клієнт', value: conv1 },
+    { label: 'Клієнт → Угода', value: conv2 },
+  ];
+
+  return (
+    <div className="mt-8 pt-6 border-t border-gray-100">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="text-sm font-bold text-gray-800">Воронка продажів</h3>
+        {leads > 0 && (
+          <span className="text-xs text-gray-400 font-medium">
+            Загальна конверсія: <span className="text-gray-600 font-semibold">{convTotal}%</span>
+          </span>
+        )}
+      </div>
+
+      {/* Funnel + stats layout */}
+      <div className="flex flex-col lg:flex-row gap-6 items-center">
+
+        {/* SVG Funnel */}
+        <div className="flex-1 w-full max-w-lg mx-auto lg:mx-0">
+          <svg
+            viewBox="0 0 320 200"
+            className="w-full"
+            style={{ filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.06))' }}
+          >
+            <defs>
+              {stages.map((s) => (
+                <linearGradient key={s.key} id={`fg-${s.key}`} x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor={s.color.fill} stopOpacity="0.85" />
+                  <stop offset="100%" stopColor={s.color.fill} stopOpacity="0.65" />
+                </linearGradient>
+              ))}
+            </defs>
+
+            {stages.map((s, i) => {
+              const topW   = Math.max(30, (s.pct / 100) * 280);
+              const nextPct = i < stages.length - 1 ? stages[i + 1].pct : s.pct;
+              const botW   = i < stages.length - 1 ? Math.max(30, (nextPct / 100) * 280) : Math.max(30, (s.pct / 100) * 280);
+              const h   = 52;
+              const gap = 8;
+              const y   = i * (h + gap);
+              const cx  = 160;
+
+              const tl = cx - topW / 2;
+              const tr = cx + topW / 2;
+              const bl = cx - botW / 2;
+              const br = cx + botW / 2;
+
+              return (
+                <g key={s.key}>
+                  {/* Trapezoid */}
+                  <path
+                    d={`M${tl},${y} L${tr},${y} L${br},${y + h} L${bl},${y + h} Z`}
+                    fill={`url(#fg-${s.key})`}
+                    rx="4"
+                  />
+                  {/* Rounded cap top */}
+                  <rect x={tl} y={y} width={topW} height={4} rx={2} fill={s.color.fill} opacity="0.9" />
+
+                  {/* Label inside */}
+                  <text
+                    x={cx}
+                    y={y + h / 2 - 6}
+                    textAnchor="middle"
+                    fill="white"
+                    fontSize="11"
+                    fontWeight="600"
+                    fontFamily="system-ui, sans-serif"
+                    opacity="0.95"
+                  >
+                    {s.label}
+                  </text>
+                  <text
+                    x={cx}
+                    y={y + h / 2 + 9}
+                    textAnchor="middle"
+                    fill="white"
+                    fontSize="15"
+                    fontWeight="800"
+                    fontFamily="system-ui, sans-serif"
+                    opacity="0.97"
+                  >
+                    {s.value.toLocaleString('uk-UA')}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+
+        {/* Stats column */}
+        <div className="flex-1 w-full space-y-3">
+          {/* Stage stats */}
+          {stages.map((s) => (
+            <div
+              key={s.key}
+              className="flex items-center gap-4 rounded-xl px-4 py-3 border"
+              style={{ background: s.color.light, borderColor: s.color.border }}
+            >
+              {/* Color dot */}
+              <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: s.color.fill }} />
+
+              {/* Label + value */}
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: s.color.text }}>
+                  {s.label}
+                </p>
+                <div className="flex items-baseline gap-2 mt-0.5">
+                  <span className="text-xl font-black text-gray-900">
+                    {s.value.toLocaleString('uk-UA')}
+                  </span>
+                  {s.sub && (
+                    <span className="text-xs font-semibold" style={{ color: s.color.fill }}>
+                      {s.sub}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Change badge */}
+              {s.change !== null && (
+                <span
+                  className={`flex-shrink-0 text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                    s.change >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                  }`}
+                >
+                  {s.change >= 0 ? '+' : ''}{s.change}%
+                </span>
+              )}
+            </div>
+          ))}
+
+          {/* Conversion rates */}
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            {conversions.map((c, i) => (
+              <div key={i} className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3 text-center">
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{c.label}</p>
+                <p className="text-2xl font-black text-gray-800 mt-1">{c.value}<span className="text-sm font-semibold text-gray-400">%</span></p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+      </div>
     </div>
   );
 }
