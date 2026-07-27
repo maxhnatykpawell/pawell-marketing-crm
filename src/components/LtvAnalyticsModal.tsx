@@ -60,10 +60,11 @@ function calculateCohorts(clients: ClientLTV[]): Record<string, CohortData> {
   return cohorts;
 }
 
-interface Bottleneck {
+interface StageStat {
   stage: string;
   count: number;
-  avgDays: number;
+  avgOpenDays: number;
+  avgCycleDays: number;
 }
 
 interface LtvAnalyticsModalProps {
@@ -73,8 +74,7 @@ interface LtvAnalyticsModalProps {
     uniqueClientsCount: number;
     ltv: number;
     clients: ClientLTV[];
-    avgSalesCycle?: number;
-    bottlenecks?: Bottleneck[];
+    stageStats?: StageStat[];
   };
 }
 
@@ -84,6 +84,22 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
   const [rfmSegment, setRfmSegment] = useState<string>('all');
   const [searchTag, setSearchTag] = useState<string>('');
   const [topN, setTopN] = useState<number | 'all'>('all');
+  
+  const [closedStages, setClosedStages] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('pawell_closed_stages');
+      if (stored) return JSON.parse(stored);
+    } catch (e) {}
+    return ['Успішно реалізовано', 'Відмова'];
+  });
+
+  const toggleClosedStage = (stage: string) => {
+    setClosedStages(prev => {
+      const next = prev.includes(stage) ? prev.filter(s => s !== stage) : [...prev, stage];
+      localStorage.setItem('pawell_closed_stages', JSON.stringify(next));
+      return next;
+    });
+  };
 
   const allClients = data.clients || [];
 
@@ -126,15 +142,25 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
   // Когорти
   const cohortsData = useMemo(() => calculateCohorts(filteredClients), [filteredClients]);
   const sortedCohortKeys = Object.keys(cohortsData).sort().reverse(); 
-  const maxMonthOffset = Math.max(0, ...Object.values(cohortsData).flatMap(c => Object.keys(c.retention).map(Number)));
+  const maxMonthOffset = Math.max(0, ...Object.values(cohortsData).flatMap((c: any) => Object.keys(c.retention).map(Number)));
 
   // Перерахунок LTV для поточної вибірки
   const sampleRevenue = filteredClients.reduce((sum, c) => sum + c.revenue, 0);
   const sampleCount = filteredClients.length;
   const sampleLtv = sampleCount > 0 ? Math.round(sampleRevenue / sampleCount) : 0;
 
+  // Funnel calculations
+  const allStages = data.stageStats || [];
+  const wonStages = allStages.filter(s => closedStages.includes(s.stage));
+  const openStages = allStages.filter(s => !closedStages.includes(s.stage)).sort((a, b) => b.avgOpenDays - a.avgOpenDays);
+
+  const totalWonCount = wonStages.reduce((sum, s) => sum + s.count, 0);
+  const totalCycleDays = wonStages.reduce((sum, s) => sum + (s.avgCycleDays * s.count), 0);
+  const avgSalesCycle = totalWonCount > 0 ? Math.round(totalCycleDays / totalWonCount) : 0;
+  const totalOpenCount = openStages.reduce((sum, s) => sum + s.count, 0);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
         
         {/* Header */}
@@ -355,6 +381,35 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
         {activeTab === 'funnel' && (
           <div className="flex-1 overflow-auto bg-gray-50 p-6 flex flex-col gap-6">
             
+            {/* Configuration Panel */}
+            <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 flex flex-col gap-3">
+              <div className="flex items-center gap-2 text-purple-800 font-bold text-sm">
+                <span className="text-lg">⚙️</span>
+                Налаштування воронки: Оберіть, які етапи є фінальними (Успішні або Відмова)
+              </div>
+              <p className="text-xs text-purple-600">
+                Щоб ми могли правильно порахувати середній цикл угоди (Sales Cycle) і не враховувати закриті угоди у "вузьких місцях", виберіть ваші фінальні статуси нижче. (Натисніть на статуси, які є кінцевими).
+              </p>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {allStages.map(s => {
+                  const isClosed = closedStages.includes(s.stage);
+                  return (
+                    <button
+                      key={s.stage}
+                      onClick={() => toggleClosedStage(s.stage)}
+                      className={`px-3 py-1.5 text-[11px] font-bold rounded-lg border transition-all ${
+                        isClosed 
+                          ? 'bg-purple-600 text-white border-purple-700 shadow-md scale-105' 
+                          : 'bg-white text-gray-600 border-gray-200 hover:border-purple-300 hover:text-purple-600 opacity-70'
+                      }`}
+                    >
+                      {s.stage} ({s.count})
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Summary Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-4">
@@ -364,10 +419,10 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
                 <div>
                   <p className="text-sm text-gray-500 font-semibold uppercase tracking-wider mb-1">Середній цикл угоди</p>
                   <div className="flex items-baseline gap-2">
-                    <p className="text-4xl font-black text-gray-900">{data.avgSalesCycle ?? 0}</p>
+                    <p className="text-4xl font-black text-gray-900">{avgSalesCycle}</p>
                     <p className="text-sm font-semibold text-gray-400">днів</p>
                   </div>
-                  <p className="text-xs text-gray-400 mt-1">від створення до закриття</p>
+                  <p className="text-xs text-gray-400 mt-1">на основі {totalWonCount} закритих угод</p>
                 </div>
               </div>
 
@@ -378,7 +433,7 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
                 <div>
                   <p className="text-sm text-gray-500 font-semibold uppercase tracking-wider mb-1">Відкритих угод у воронці</p>
                   <p className="text-4xl font-black text-gray-900">
-                    {data.bottlenecks?.reduce((sum, b) => sum + b.count, 0) ?? 0}
+                    {totalOpenCount}
                   </p>
                   <p className="text-xs text-gray-400 mt-1">аналізуються на вузькі місця</p>
                 </div>
@@ -391,14 +446,14 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
                 Вузькі місця (Скільки днів висять поточні відкриті угоди)
               </h3>
               
-              {(!data.bottlenecks || data.bottlenecks.length === 0) ? (
+              {openStages.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">Немає відкритих угод для аналізу</div>
               ) : (
                 <div className="flex-1 flex items-end gap-4 overflow-x-auto pb-4 pt-10">
-                  {data.bottlenecks.map((b, i) => {
+                  {openStages.map((b, i) => {
                     // Знаходимо максимальне значення для пропорції висоти
-                    const maxDays = Math.max(...data.bottlenecks!.map(x => x.avgDays));
-                    const heightPercent = maxDays > 0 ? (b.avgDays / maxDays) * 100 : 0;
+                    const maxDays = Math.max(...openStages.map(x => x.avgOpenDays));
+                    const heightPercent = maxDays > 0 ? (b.avgOpenDays / maxDays) * 100 : 0;
                     
                     return (
                       <div key={i} className="flex flex-col items-center flex-1 min-w-[80px] group relative">
@@ -410,7 +465,7 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
                             className="w-12 bg-gradient-to-t from-orange-200 to-orange-400 rounded-t-md transition-all duration-500 hover:from-orange-300 hover:to-orange-500 relative flex justify-center"
                             style={{ height: `${Math.max(10, heightPercent)}%` }}
                           >
-                            <span className="absolute -top-6 text-sm font-black text-gray-700">{b.avgDays} д.</span>
+                            <span className="absolute -top-6 text-sm font-black text-gray-700">{b.avgOpenDays} д.</span>
                           </div>
                         </div>
                         <div className="mt-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider text-center h-10 overflow-hidden text-ellipsis line-clamp-2 px-1">

@@ -994,9 +994,7 @@ export async function syncKeepInCRMLTV(year?: string): Promise<any> {
     const clientsMap = new Map<string, any>();
     
     // Нові змінні для Воронки
-    let totalSalesCycleDays = 0;
-    let wonAgreementsCount = 0;
-    const bottlenecksMap = new Map<string, { count: number; totalDays: number }>();
+    const stageStatsMap = new Map<string, { count: number; openDaysTotal: number; cycleDaysTotal: number }>();
 
     for (const item of allAgreementsRaw) {
       const amount = extractAgreementSum(item);
@@ -1051,34 +1049,24 @@ export async function syncKeepInCRMLTV(year?: string): Promise<any> {
         }
       }
 
-      // Аналіз воронки (Sales Cycle & Bottlenecks)
-      const isWon = item.is_won === true || item.status_id === 2 || (item.stage && item.stage.category === 'won');
-      const isLost = item.is_closed === true && !isWon;
-      const isClosed = isWon || isLost || item.closed_at;
-
-      if (isWon && item.created_at) {
-        const endD = item.closed_at ? new Date(item.closed_at) : (item.updated_at ? new Date(item.updated_at) : new Date());
-        const startD = new Date(item.created_at);
-        const days = Math.floor((endD.getTime() - startD.getTime()) / (1000 * 3600 * 24));
-        if (days >= 0) {
-          totalSalesCycleDays += days;
-          wonAgreementsCount++;
-        }
-      } else if (!isClosed) {
-        // Угода відкрита - рахуємо вузькі місця
-        const stageName = item.stage?.title || item.stage?.name || item.stage_id?.toString() || 'Невідомо';
-        const lastUpdated = item.updated_at || item.created_at;
-        if (lastUpdated) {
-          const daysInStage = Math.floor((new Date().getTime() - new Date(lastUpdated).getTime()) / (1000 * 3600 * 24));
-          let bData = bottlenecksMap.get(stageName);
-          if (!bData) {
-            bData = { count: 0, totalDays: 0 };
-            bottlenecksMap.set(stageName, bData);
-          }
-          bData.count++;
-          bData.totalDays += daysInStage;
-        }
+      // Аналіз воронки (Sales Cycle & Bottlenecks) для ВСІХ етапів
+      const stageName = item.stage?.title || item.stage?.name || item.stage_id?.toString() || 'Невідомо';
+      let sData = stageStatsMap.get(stageName);
+      if (!sData) {
+        sData = { count: 0, openDaysTotal: 0, cycleDaysTotal: 0 };
+        stageStatsMap.set(stageName, sData);
       }
+      
+      sData.count++;
+      
+      const lastUpdated = item.closed_at || item.updated_at || item.created_at || new Date().toISOString();
+      const created = item.created_at || lastUpdated;
+      
+      const openDays = Math.floor((new Date().getTime() - new Date(lastUpdated).getTime()) / (1000 * 3600 * 24));
+      const cycleDays = Math.floor((new Date(lastUpdated).getTime() - new Date(created).getTime()) / (1000 * 3600 * 24));
+      
+      sData.openDaysTotal += (openDays > 0 ? openDays : 0);
+      sData.cycleDaysTotal += (cycleDays > 0 ? cycleDays : 0);
     }
 
     const uniqueClientsCount = clientsMap.size;
@@ -1087,20 +1075,19 @@ export async function syncKeepInCRMLTV(year?: string): Promise<any> {
     const allClientsSorted = Array.from(clientsMap.values()).sort((a, b) => b.revenue - a.revenue);
     const topClients = allClientsSorted.slice(0, 5000);
 
-    const avgSalesCycle = wonAgreementsCount > 0 ? Math.round(totalSalesCycleDays / wonAgreementsCount) : 0;
-    const bottlenecks = Array.from(bottlenecksMap.entries()).map(([stage, data]) => ({
+    const stageStats = Array.from(stageStatsMap.entries()).map(([stage, data]) => ({
       stage,
       count: data.count,
-      avgDays: data.count > 0 ? Math.round(data.totalDays / data.count) : 0
-    })).sort((a, b) => b.avgDays - a.avgDays);
+      avgOpenDays: data.count > 0 ? Math.round(data.openDaysTotal / data.count) : 0,
+      avgCycleDays: data.count > 0 ? Math.round(data.cycleDaysTotal / data.count) : 0
+    }));
 
     const snapshot = {
       totalLTVRevenue,
       uniqueClientsCount,
       ltv,
       clients: topClients,
-      avgSalesCycle,
-      bottlenecks,
+      stageStats,
       lastSyncedAt: new Date().toISOString()
     };
 
