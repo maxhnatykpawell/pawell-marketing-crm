@@ -1011,7 +1011,8 @@ export async function syncKeepInCRMLTV(year?: string): Promise<any> {
             name: item.client?.name || item.client?.title || `Клієнт #${clientId}`,
             revenue: 0,
             agreementsCount: 0,
-            tags: []
+            tags: [],
+            purchaseMonths: []
           };
           clientsMap.set(clientId, clientData);
         }
@@ -1023,6 +1024,14 @@ export async function syncKeepInCRMLTV(year?: string): Promise<any> {
         if (dateStr) {
           if (!clientData.lastPurchaseDate || new Date(dateStr) > new Date(clientData.lastPurchaseDate)) {
             clientData.lastPurchaseDate = dateStr;
+          }
+          
+          const d = new Date(dateStr);
+          if (!isNaN(d.getTime())) {
+            const yyyyMm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            if (!clientData.purchaseMonths.includes(yyyyMm)) {
+              clientData.purchaseMonths.push(yyyyMm);
+            }
           }
         }
 

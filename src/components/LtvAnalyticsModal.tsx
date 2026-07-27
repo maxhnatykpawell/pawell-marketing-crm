@@ -8,6 +8,7 @@ interface ClientLTV {
   agreementsCount: number;
   tags: string[];
   lastPurchaseDate?: string;
+  purchaseMonths?: string[];
 }
 
 function getRfmSegment(client: ClientLTV): { label: string; color: string; icon: string } {
@@ -22,6 +23,41 @@ function getRfmSegment(client: ClientLTV): { label: string; color: string; icon:
   if (client.agreementsCount === 1 && daysSince <= 60) return { label: 'Новий', color: 'bg-purple-100 text-purple-800 border-purple-200', icon: '🆕' };
   
   return { label: 'Звичайний', color: 'bg-gray-100 text-gray-700 border-gray-200', icon: '🙂' };
+}
+
+interface CohortData {
+  size: number;
+  retention: Record<number, number>;
+}
+
+function calculateCohorts(clients: ClientLTV[]): Record<string, CohortData> {
+  const cohorts: Record<string, CohortData> = {};
+
+  clients.forEach(c => {
+    if (!c.purchaseMonths || c.purchaseMonths.length === 0) return;
+    
+    const sortedMonths = [...c.purchaseMonths].sort();
+    const firstMonth = sortedMonths[0]; 
+    
+    if (!cohorts[firstMonth]) {
+      cohorts[firstMonth] = { size: 0, retention: {} };
+    }
+    
+    cohorts[firstMonth].size += 1;
+    
+    const [y1, m1] = firstMonth.split('-').map(Number);
+    
+    sortedMonths.forEach(mStr => {
+      const [y2, m2] = mStr.split('-').map(Number);
+      const diffMonths = (y2 - y1) * 12 + (m2 - m1);
+      
+      if (diffMonths >= 0) {
+        cohorts[firstMonth].retention[diffMonths] = (cohorts[firstMonth].retention[diffMonths] || 0) + 1;
+      }
+    });
+  });
+
+  return cohorts;
 }
 
 interface Bottleneck {
@@ -43,7 +79,7 @@ interface LtvAnalyticsModalProps {
 }
 
 export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalProps) {
-  const [activeTab, setActiveTab] = useState<'clients' | 'funnel'>('clients');
+  const [activeTab, setActiveTab] = useState<'clients' | 'funnel' | 'cohorts'>('clients');
   const [segment, setSegment] = useState<string>('all');
   const [rfmSegment, setRfmSegment] = useState<string>('all');
   const [searchTag, setSearchTag] = useState<string>('');
@@ -87,6 +123,11 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
     return result;
   }, [allClients, segment, rfmSegment, searchTag, topN]);
 
+  // Когорти
+  const cohortsData = useMemo(() => calculateCohorts(filteredClients), [filteredClients]);
+  const sortedCohortKeys = Object.keys(cohortsData).sort().reverse(); 
+  const maxMonthOffset = Math.max(0, ...Object.values(cohortsData).flatMap(c => Object.keys(c.retention).map(Number)));
+
   // Перерахунок LTV для поточної вибірки
   const sampleRevenue = filteredClients.reduce((sum, c) => sum + c.revenue, 0);
   const sampleCount = filteredClients.length;
@@ -115,6 +156,12 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
                 className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${activeTab === 'funnel' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 Швидкість Воронки
+              </button>
+              <button 
+                onClick={() => setActiveTab('cohorts')}
+                className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${activeTab === 'cohorts' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Утримання (Когорти)
               </button>
             </div>
           </div>
@@ -376,6 +423,76 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
               )}
             </div>
 
+          </div>
+        )}
+
+        {activeTab === 'cohorts' && (
+          <div className="flex-1 overflow-auto bg-gray-50 p-6 flex flex-col gap-6">
+            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col">
+              <h3 className="text-base font-black text-gray-800 mb-2">Когортний Аналіз (Утримання)</h3>
+              <p className="text-sm text-gray-500 mb-6">Відсоток клієнтів, які повернулися за покупками в наступні місяці (застосовано поточні фільтри).</p>
+
+              {sortedCohortKeys.length === 0 ? (
+                <div className="py-12 text-center text-gray-400 text-sm">Немає даних про дати покупок для розрахунку когорт.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse min-w-[800px]">
+                    <thead>
+                      <tr>
+                        <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200">Когорта</th>
+                        <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200 text-center">Розмір</th>
+                        {Array.from({ length: maxMonthOffset + 1 }).map((_, i) => (
+                          <th key={i} className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200 text-center w-16">M{i}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {sortedCohortKeys.map(cohortMonth => {
+                        const row = cohortsData[cohortMonth];
+                        return (
+                          <tr key={cohortMonth} className="hover:bg-gray-50/50 transition">
+                            <td className="py-3 px-4 text-sm font-bold text-gray-800">{cohortMonth}</td>
+                            <td className="py-3 px-4 text-sm font-bold text-blue-600 text-center">{row.size}</td>
+                            {Array.from({ length: maxMonthOffset + 1 }).map((_, i) => {
+                              const count = row.retention[i] || 0;
+                              const percent = row.size > 0 ? Math.round((count / row.size) * 100) : 0;
+                              
+                              // Колір залежно від відсотка (чим більше тим зеленіше), M0 завжди 100%
+                              let bgClass = 'bg-transparent';
+                              let textClass = 'text-gray-400';
+                              
+                              if (count > 0) {
+                                if (i === 0) {
+                                  bgClass = 'bg-emerald-50';
+                                  textClass = 'text-emerald-700';
+                                } else if (percent >= 50) {
+                                  bgClass = 'bg-emerald-500';
+                                  textClass = 'text-white font-bold';
+                                } else if (percent >= 20) {
+                                  bgClass = 'bg-emerald-300';
+                                  textClass = 'text-emerald-900 font-bold';
+                                } else if (percent >= 1) {
+                                  bgClass = 'bg-emerald-100';
+                                  textClass = 'text-emerald-800';
+                                }
+                              }
+
+                              return (
+                                <td key={i} className="p-1">
+                                  <div className={`w-full h-10 flex items-center justify-center rounded text-xs ${bgClass} ${textClass}`}>
+                                    {count > 0 ? `${percent}%` : '-'}
+                                  </div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
