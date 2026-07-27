@@ -786,11 +786,14 @@ function groupBySource(items: any[], allSourceNames: string[] = []): { source: s
 
 /**
  * Витягнути суму угоди — KeepInCRM може повертати її у різних полях.
- * Порядок пріоритетів: total → amount → price → sum → cost → 0
+ * Порядок пріоритетів: budget → total → total_price → jobs_total → amount → price → sum → cost → 0
  */
 function extractAgreementSum(item: any): number {
   const raw =
+    item?.budget ??
     item?.total ??
+    item?.total_price ??
+    item?.jobs_total ??
     item?.amount ??
     item?.price ??
     item?.sum ??
@@ -889,7 +892,7 @@ async function syncKeepInCRM(targetDate?: string): Promise<void> {
         return typeof v === 'number' || (typeof v === 'string' && v !== '');
       });
       console.log(`🐞 KeepInCRM Agreement[0] fields: ${JSON.stringify(sampleKeys)}`);
-      console.log(`🐞 KeepInCRM Agreement[0] sample: id=${sample.id}, total=${sample.total}, amount=${sample.amount}, price=${sample.price}, sum=${sample.sum}, cost=${sample.cost}`);
+      console.log(`🐞 KeepInCRM Agreement[0] sample: id=${sample.id}, budget=${sample.budget}, total=${sample.total}, total_price=${sample.total_price}, jobs_total=${sample.jobs_total}, amount=${sample.amount}`);
       console.log(`🐞 KeepInCRM Agreement[0] source fields: source=${JSON.stringify(sample.source)}, client.source=${JSON.stringify(sample.client?.source)}`);
     }
     // ─────────────────────────────────────────────────────────────────────────
