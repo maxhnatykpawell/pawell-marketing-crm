@@ -423,3 +423,29 @@ export const getKeepInCRMHistory = async (
   }
   return res.json();
 };
+
+/**
+ * Отримати розрахований LTV за весь час
+ */
+export const getKeepInCRMLTV = async (): Promise<any | null> => {
+  const res = await fetch('/api/keepincrm/ltv', { headers: authHeaders() });
+  if (!res.ok) throw new Error('Failed to load LTV snapshot');
+  return res.json();
+};
+
+/**
+ * Запустити розрахунок LTV вручну (для адмінів)
+ * @param year необов'язковий рік для розрахунку LTV лише за цей рік (напр. '2026')
+ */
+export const triggerKeepInCRMSyncLTV = async (year?: string): Promise<{ success: boolean; snapshot: any }> => {
+  const res = await fetch('/api/keepincrm/sync-ltv', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ year }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to sync LTV');
+  }
+  return res.json();
+};

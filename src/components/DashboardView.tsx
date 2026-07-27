@@ -4,9 +4,9 @@ import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, isToday, 
 import { uk } from 'date-fns/locale';
 import { TrendingUp, TrendingDown, Target, Edit2, Check, Calendar as CalendarIcon, Send, Loader2, RefreshCw, Users, Zap, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { Metric, KeepInCRMHistoryResponse, KeepInCRMSourceStat, KeepInCRMAgreementStat } from '../types';
-import { getKeepInCRMHistory, triggerKeepInCRMSync, triggerKeepInCRMHistorySync, getKeepInCRMSyncStatus } from '../api';
+import { getKeepInCRMHistory, triggerKeepInCRMSync, triggerKeepInCRMHistorySync, getKeepInCRMSyncStatus, getKeepInCRMLTV, triggerKeepInCRMSyncLTV } from '../api';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { DollarSign } from 'lucide-react';
+import { DollarSign, Gem } from 'lucide-react';
 
 export default function DashboardView() {
   const { state, updateMetric, setActiveView, setActiveEventId, currentUser } = useAppContext();
@@ -22,6 +22,11 @@ export default function DashboardView() {
   const [kLoading, setKLoading]   = useState(true);
   const [kSyncing, setKSyncing]   = useState(false);
   const [kError, setKError]       = useState<string | null>(null);
+  
+  // ── LTV State ────────────────────────────────────────────────────────────────
+  const [ltvData, setLtvData]     = useState<any>(null);
+  const [ltvLoading, setLtvLoading] = useState(true);
+  const [ltvSyncing, setLtvSyncing] = useState(false);
 
   // ── History sync progress (polling) ──────────────────────────────────────────
   const [hSyncRunning, setHSyncRunning] = useState(false);
@@ -62,6 +67,18 @@ export default function DashboardView() {
   }, [periodRange]);
 
   useEffect(() => { loadKData(kPeriod); }, [kPeriod, loadKData]);
+
+  const loadLTV = useCallback(async () => {
+    setLtvLoading(true);
+    try {
+      const data = await getKeepInCRMLTV();
+      setLtvData(data);
+    } catch { } finally {
+      setLtvLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadLTV(); }, [loadLTV]);
 
   /** Polling: читає /api/keepincrm/sync-status кожні 1.5с поки синх активний */
   const startPolling = useCallback((currentPeriod: KPeriod) => {
@@ -115,6 +132,28 @@ export default function DashboardView() {
       setKError(e.message || 'Помилка синхронізації');
     } finally {
       setKSyncing(false);
+    }
+  };
+
+  const handleLTVSync = async () => {
+    const userInput = window.prompt(
+      'Введіть рік (наприклад, 2026) для розрахунку LTV за цей рік.\nАбо залиште поле порожнім, щоб завантажити всю історію за всі часи (може зайняти багато часу і перевантажити сервер):',
+      new Date().getFullYear().toString()
+    );
+    
+    // Якщо натиснули "Скасувати"
+    if (userInput === null) return;
+    
+    const year = userInput.trim() || undefined;
+
+    setLtvSyncing(true);
+    try {
+      const res = await triggerKeepInCRMSyncLTV(year);
+      setLtvData(res.snapshot);
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setLtvSyncing(false);
     }
   };
 
@@ -327,6 +366,15 @@ export default function DashboardView() {
                 {hSyncRunning ? `${hSyncDone}/${hSyncTotal} днів...` : 'Синх. історію (30д)'}
               </button>
               <button
+                onClick={handleLTVSync}
+                disabled={ltvSyncing || hSyncRunning}
+                title="Синхронізувати LTV за весь час"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${ltvSyncing ? 'animate-spin' : ''}`} />
+                {ltvSyncing ? 'Рахуємо...' : 'LTV'}
+              </button>
+              <button
                 onClick={handleKSync}
                 disabled={kSyncing || hSyncRunning}
                 title="Синхронізувати зараз"
@@ -386,7 +434,7 @@ export default function DashboardView() {
               <p className="text-xs mt-1">Додайте KEEPINCRM_API_KEY у змінні середовища.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
 
               {/* Leads */}
               <KeepInCRMSourceCard
@@ -428,6 +476,31 @@ export default function DashboardView() {
                 sumChange={kData.comparison?.agreementsSumChange ?? null}
                 countChange={kData.comparison?.agreementsChange ?? null}
               />
+
+              {/* LTV */}
+              <div className="flex flex-col">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">LTV (За весь час)</p>
+                <div className="flex-1 flex flex-col justify-center bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl border border-purple-100 p-5 relative overflow-hidden">
+                  {ltvLoading ? (
+                    <div className="flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-purple-400" /></div>
+                  ) : ltvData ? (
+                    <>
+                      <div className="flex items-center text-purple-600 mb-1">
+                        <Gem className="w-4 h-4 mr-1.5" />
+                        <span className="text-sm font-semibold tracking-wide">Довічна цінність</span>
+                      </div>
+                      <span className="text-3xl font-black text-gray-900 mt-1">{ltvData.ltv?.toLocaleString('uk-UA') ?? 0} ₴</span>
+                      <p className="text-xs text-gray-500 mt-2 font-medium">Клієнтів, що купили: {ltvData.uniqueClientsCount ?? 0}</p>
+                      
+                      <div className="absolute -right-6 -bottom-6 opacity-10">
+                        <Gem className="w-24 h-24 text-purple-600" />
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-sm text-gray-400 text-center">Немає даних</span>
+                  )}
+                </div>
+              </div>
 
               {/* Conversion */}
               <div className="flex flex-col">

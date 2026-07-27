@@ -978,6 +978,58 @@ async function syncKeepInCRM(targetDate?: string): Promise<void> {
   }
 }
 
+export async function syncKeepInCRMLTV(year?: string): Promise<any> {
+  const label = year ? `рік ${year}` : 'всі угоди';
+  console.log(`🔄 Запуск LTV синхронізації з KeepInCRM (${label})...`);
+  try {
+    const params: Record<string, string> = {};
+    if (year && /^\d{4}$/.test(year)) {
+      params['q[created_at_gteq]'] = `${year}-01-01T00:00:00.000+03:00`;
+      params['q[created_at_lteq]'] = `${year}-12-31T23:59:59.999+03:00`;
+    }
+
+    const allAgreementsRaw = await keepinFetchAll('/agreements', params);
+    
+    let totalLTVRevenue = 0;
+    const uniqueClients = new Set<string>();
+
+    for (const item of allAgreementsRaw) {
+      const amount = extractAgreementSum(item);
+      totalLTVRevenue += amount;
+      
+      const clientId = item.client_id || item.client?.id;
+      if (clientId) {
+        uniqueClients.add(String(clientId));
+      }
+    }
+
+    const uniqueClientsCount = uniqueClients.size;
+    const ltv = uniqueClientsCount > 0 ? Math.round(totalLTVRevenue / uniqueClientsCount) : 0;
+
+    const snapshot = {
+      totalLTVRevenue,
+      uniqueClientsCount,
+      ltv,
+      lastSyncedAt: new Date().toISOString()
+    };
+
+    const db = initFirebase();
+    if (db) {
+      await db.collection(CRM_COLLECTION).doc('keepincrm_ltv_snapshot').set(snapshot);
+    } else {
+      const state = await getDb();
+      state.keepincrm_ltv = snapshot;
+      await saveDb(state);
+    }
+
+    console.log(`✅ LTV Синхронізація завершена. LTV: ${ltv}, Унікальних покупців: ${uniqueClientsCount}, Загальний дохід: ${totalLTVRevenue}`);
+    return snapshot;
+  } catch (err: any) {
+    console.error('❌ Помилка LTV синхронізації:', err.message || err);
+    throw err;
+  }
+}
+
 // ── KeepInCRM History Helpers ─────────────────────────────────────────────────
 
 /** Список дат (YYYY-MM-DD) у діапазоні [from, to] включно */
@@ -1081,6 +1133,23 @@ function setupKeepInCRMCron() {
   console.log(`📈 KeepInCRM синхронізація: кожні ${interval} хв. (${cronExpr})`);
 }
 
+let keepinCRMLTVCronTask: any = null;
+
+function setupKeepInCRMLTVCron() {
+  if (keepinCRMLTVCronTask) {
+    keepinCRMLTVCronTask.stop();
+    keepinCRMLTVCronTask = null;
+  }
+  
+  // Запуск раз на добу о 03:00 ночі
+  const cronExpr = '0 3 * * *';
+  keepinCRMLTVCronTask = cron.schedule(cronExpr, async () => {
+    await syncKeepInCRMLTV().catch(() => {});
+  }, { timezone: 'Europe/Kyiv' });
+  
+  console.log(`📈 KeepInCRM LTV синхронізація: щодоби (${cronExpr})`);
+}
+
 // ── KeepInCRM History Sync Lock ───────────────────────────────────────────────
 // Глобальний стан синхронізації — захист від паралельних запусків
 
@@ -1136,7 +1205,9 @@ async function startServer() {
 
   // KeepInCRM: запускаємо cron + першу синхронізацію при старті сервера
   setupKeepInCRMCron();
+  setupKeepInCRMLTVCron();
   syncKeepInCRM().catch(() => { /* помилка записується в снімок */ });
+  syncKeepInCRMLTV().catch(() => {});
 
   // ── Auth Routes ──────────────────────────────────────────────────────────────
 
@@ -1334,6 +1405,33 @@ async function startServer() {
       res.json(state.keepincrm || null);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** GET /api/keepincrm/ltv — повернути останній збережений зріз LTV */
+  app.get('/api/keepincrm/ltv', requireAuth, async (req, res) => {
+    try {
+      const db = initFirebase();
+      if (db) {
+        const snap = await db.collection(CRM_COLLECTION).doc('keepincrm_ltv_snapshot').get();
+        if (snap.exists) return res.json(snap.data());
+        return res.json(null);
+      }
+      const state = await getDb();
+      res.json(state.keepincrm_ltv || null);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** POST /api/keepincrm/sync-ltv — примусова ручна синхронізація LTV */
+  app.post('/api/keepincrm/sync-ltv', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { year } = req.body || {};
+      const snapshot = await syncKeepInCRMLTV(year);
+      res.json({ success: true, snapshot });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
     }
   });
 
