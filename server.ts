@@ -992,41 +992,82 @@ export async function syncKeepInCRMLTV(year?: string): Promise<any> {
     
     let totalLTVRevenue = 0;
     const clientsMap = new Map<string, any>();
+    
+    // Нові змінні для Воронки
+    let totalSalesCycleDays = 0;
+    let wonAgreementsCount = 0;
+    const bottlenecksMap = new Map<string, { count: number; totalDays: number }>();
 
     for (const item of allAgreementsRaw) {
       const amount = extractAgreementSum(item);
       totalLTVRevenue += amount;
       
       const clientId = String(item.client_id || item.client?.id || 'unknown');
-      if (clientId === 'unknown') continue;
-
-      let clientData = clientsMap.get(clientId);
-      if (!clientData) {
-        clientData = {
-          id: clientId,
-          name: item.client?.name || item.client?.title || `Клієнт #${clientId}`,
-          revenue: 0,
-          agreementsCount: 0,
-          tags: []
-        };
-        clientsMap.set(clientId, clientData);
-      }
-      
-      clientData.revenue += amount;
-      clientData.agreementsCount += 1;
-
-      // Extract tags
-      const rawTags: any[] = [];
-      if (Array.isArray(item.tags)) rawTags.push(...item.tags);
-      if (Array.isArray(item.client?.tags)) rawTags.push(...item.client.tags);
-      
-      for (const t of rawTags) {
-        let tName = '';
-        if (typeof t === 'string') tName = t;
-        else if (typeof t === 'object' && t !== null && t.name) tName = t.name;
+      if (clientId !== 'unknown') {
+        let clientData = clientsMap.get(clientId);
+        if (!clientData) {
+          clientData = {
+            id: clientId,
+            name: item.client?.name || item.client?.title || `Клієнт #${clientId}`,
+            revenue: 0,
+            agreementsCount: 0,
+            tags: []
+          };
+          clientsMap.set(clientId, clientData);
+        }
         
-        if (tName && !clientData.tags.includes(tName)) {
-          clientData.tags.push(tName);
+        clientData.revenue += amount;
+        clientData.agreementsCount += 1;
+
+        const dateStr = item.ordered_at_date || item.created_at;
+        if (dateStr) {
+          if (!clientData.lastPurchaseDate || new Date(dateStr) > new Date(clientData.lastPurchaseDate)) {
+            clientData.lastPurchaseDate = dateStr;
+          }
+        }
+
+        // Extract tags
+        const rawTags: any[] = [];
+        if (Array.isArray(item.tags)) rawTags.push(...item.tags);
+        if (Array.isArray(item.client?.tags)) rawTags.push(...item.client.tags);
+        
+        for (const t of rawTags) {
+          let tName = '';
+          if (typeof t === 'string') tName = t;
+          else if (typeof t === 'object' && t !== null && t.name) tName = t.name;
+          
+          if (tName && !clientData.tags.includes(tName)) {
+            clientData.tags.push(tName);
+          }
+        }
+      }
+
+      // Аналіз воронки (Sales Cycle & Bottlenecks)
+      const isWon = item.is_won === true || item.status_id === 2 || (item.stage && item.stage.category === 'won');
+      const isLost = item.is_closed === true && !isWon;
+      const isClosed = isWon || isLost || item.closed_at;
+
+      if (isWon && item.created_at) {
+        const endD = item.closed_at ? new Date(item.closed_at) : (item.updated_at ? new Date(item.updated_at) : new Date());
+        const startD = new Date(item.created_at);
+        const days = Math.floor((endD.getTime() - startD.getTime()) / (1000 * 3600 * 24));
+        if (days >= 0) {
+          totalSalesCycleDays += days;
+          wonAgreementsCount++;
+        }
+      } else if (!isClosed) {
+        // Угода відкрита - рахуємо вузькі місця
+        const stageName = item.stage?.title || item.stage?.name || item.stage_id?.toString() || 'Невідомо';
+        const lastUpdated = item.updated_at || item.created_at;
+        if (lastUpdated) {
+          const daysInStage = Math.floor((new Date().getTime() - new Date(lastUpdated).getTime()) / (1000 * 3600 * 24));
+          let bData = bottlenecksMap.get(stageName);
+          if (!bData) {
+            bData = { count: 0, totalDays: 0 };
+            bottlenecksMap.set(stageName, bData);
+          }
+          bData.count++;
+          bData.totalDays += daysInStage;
         }
       }
     }
@@ -1037,11 +1078,20 @@ export async function syncKeepInCRMLTV(year?: string): Promise<any> {
     const allClientsSorted = Array.from(clientsMap.values()).sort((a, b) => b.revenue - a.revenue);
     const topClients = allClientsSorted.slice(0, 5000);
 
+    const avgSalesCycle = wonAgreementsCount > 0 ? Math.round(totalSalesCycleDays / wonAgreementsCount) : 0;
+    const bottlenecks = Array.from(bottlenecksMap.entries()).map(([stage, data]) => ({
+      stage,
+      count: data.count,
+      avgDays: data.count > 0 ? Math.round(data.totalDays / data.count) : 0
+    })).sort((a, b) => b.avgDays - a.avgDays);
+
     const snapshot = {
       totalLTVRevenue,
       uniqueClientsCount,
       ltv,
       clients: topClients,
+      avgSalesCycle,
+      bottlenecks,
       lastSyncedAt: new Date().toISOString()
     };
 

@@ -7,6 +7,27 @@ interface ClientLTV {
   revenue: number;
   agreementsCount: number;
   tags: string[];
+  lastPurchaseDate?: string;
+}
+
+function getRfmSegment(client: ClientLTV): { label: string; color: string; icon: string } {
+  if (!client.lastPurchaseDate) return { label: 'Звичайний', color: 'bg-gray-100 text-gray-700 border-gray-200', icon: '🙂' };
+  
+  const daysSince = Math.floor((new Date().getTime() - new Date(client.lastPurchaseDate).getTime()) / (1000 * 3600 * 24));
+  
+  if (client.agreementsCount >= 3 && daysSince <= 90) return { label: 'Чемпіон', color: 'bg-amber-100 text-amber-800 border-amber-200', icon: '👑' };
+  if (client.agreementsCount >= 2 && daysSince <= 180) return { label: 'Лояльний', color: 'bg-emerald-100 text-emerald-800 border-emerald-200', icon: '🌟' };
+  if (client.agreementsCount >= 2 && daysSince > 180) return { label: 'Сплячий', color: 'bg-blue-100 text-blue-800 border-blue-200', icon: '💤' };
+  if (client.agreementsCount === 1 && daysSince > 180) return { label: 'Зона ризику', color: 'bg-red-100 text-red-800 border-red-200', icon: '🚨' };
+  if (client.agreementsCount === 1 && daysSince <= 60) return { label: 'Новий', color: 'bg-purple-100 text-purple-800 border-purple-200', icon: '🆕' };
+  
+  return { label: 'Звичайний', color: 'bg-gray-100 text-gray-700 border-gray-200', icon: '🙂' };
+}
+
+interface Bottleneck {
+  stage: string;
+  count: number;
+  avgDays: number;
 }
 
 interface LtvAnalyticsModalProps {
@@ -15,12 +36,16 @@ interface LtvAnalyticsModalProps {
     totalLTVRevenue: number;
     uniqueClientsCount: number;
     ltv: number;
-    clients?: ClientLTV[];
+    clients: ClientLTV[];
+    avgSalesCycle?: number;
+    bottlenecks?: Bottleneck[];
   };
 }
 
 export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalProps) {
+  const [activeTab, setActiveTab] = useState<'clients' | 'funnel'>('clients');
   const [segment, setSegment] = useState<string>('all');
+  const [rfmSegment, setRfmSegment] = useState<string>('all');
   const [searchTag, setSearchTag] = useState<string>('');
   const [topN, setTopN] = useState<number | 'all'>('all');
 
@@ -38,7 +63,12 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
       });
     }
 
-    // 2. Фільтр по будь-якому введеному тегу (наприклад "батареї")
+    // 2. Фільтр по RFM сегменту
+    if (rfmSegment !== 'all') {
+      result = result.filter(c => getRfmSegment(c).label === rfmSegment);
+    }
+
+    // 3. Фільтр по будь-якому введеному тегу (наприклад "батареї")
     if (searchTag.trim() !== '') {
       const q = searchTag.toLowerCase().trim();
       result = result.filter(c => {
@@ -46,16 +76,16 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
       });
     }
 
-    // 3. Сортування за доходом (вже відсортовано з бекенду, але для надійності)
+    // 4. Сортування за доходом (вже відсортовано з бекенду, але для надійності)
     result.sort((a, b) => b.revenue - a.revenue);
 
-    // 4. Фільтр по кількості (Топ N)
+    // 5. Фільтр по кількості (Топ N)
     if (topN !== 'all') {
       result = result.slice(0, topN);
     }
 
     return result;
-  }, [allClients, segment, searchTag, topN]);
+  }, [allClients, segment, rfmSegment, searchTag, topN]);
 
   // Перерахунок LTV для поточної вибірки
   const sampleRevenue = filteredClients.reduce((sum, c) => sum + c.revenue, 0);
@@ -67,26 +97,39 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
         
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/50">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center shadow-sm">
-              <Gem className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-gray-800">Розширена LTV Аналітика</h2>
-              <p className="text-sm text-gray-500">Детальна розбивка та фільтрація по клієнтах</p>
+        <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <h2 className="text-xl font-black text-gray-800 flex items-center gap-2">
+              <Gem className="w-6 h-6 text-purple-600" />
+              Розширена Аналітика
+            </h2>
+            <div className="flex bg-gray-100 rounded-lg p-1">
+              <button 
+                onClick={() => setActiveTab('clients')}
+                className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${activeTab === 'clients' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Клієнти (LTV & RFM)
+              </button>
+              <button 
+                onClick={() => setActiveTab('funnel')}
+                className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${activeTab === 'funnel' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Швидкість Воронки
+              </button>
             </div>
           </div>
           <button 
             onClick={onClose}
-            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition"
+            className="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Toolbar (Filters) */}
-        <div className="flex flex-wrap items-center gap-4 px-6 py-4 border-b border-gray-100 bg-white">
+        {activeTab === 'clients' && (
+          <>
+            {/* Filters */}
+            <div className="flex flex-wrap items-center gap-4 px-6 py-4 border-b border-gray-100 bg-white">
           
           <div className="flex items-center gap-2">
             <Filter className="w-4 h-4 text-gray-400" />
@@ -96,7 +139,7 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
               onChange={e => setSegment(e.target.value)}
               className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-purple-400"
             >
-              <option value="all">Всі сегменти</option>
+              <option value="all">Всі B2B/B2C</option>
               <option value="B2B">Тільки B2B</option>
               <option value="B2C">Тільки B2C</option>
               <option value="B2G">Тільки B2G</option>
@@ -104,6 +147,22 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
           </div>
 
           <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-gray-700 ml-2">RFM:</span>
+            <select 
+              value={rfmSegment} 
+              onChange={e => setRfmSegment(e.target.value)}
+              className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-purple-400"
+            >
+              <option value="all">Всі клієнти</option>
+              <option value="Чемпіон">Чемпіони 👑</option>
+              <option value="Лояльний">Лояльні 🌟</option>
+              <option value="Сплячий">Сплячі 💤</option>
+              <option value="Новий">Нові 🆕</option>
+              <option value="Зона ризику">Зона ризику 🚨</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2 ml-4">
             <Search className="w-4 h-4 text-gray-400" />
             <span className="text-sm font-medium text-gray-700">Пошук по тегу:</span>
             <input 
@@ -177,26 +236,44 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-gray-200">
-                <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Клієнт</th>
+                <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Клієнт / RFM</th>
                 <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">LTV (Сума)</th>
-                <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">К-ть угод</th>
+                <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">К-ть угод / Остання</th>
                 <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Теги</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filteredClients.map((client, index) => (
+              {filteredClients.map((client, index) => {
+                const rfm = getRfmSegment(client);
+                return (
                 <tr key={client.id} className="hover:bg-gray-50/50 transition group">
                   <td className="py-3 px-4">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs font-bold text-gray-400 w-6">{index + 1}.</span>
-                      <span className="text-sm font-semibold text-gray-800">{client.name}</span>
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-bold text-gray-400 w-6">{index + 1}.</span>
+                        <span className="text-sm font-semibold text-gray-800">{client.name}</span>
+                      </div>
+                      <div className="flex ml-9">
+                        <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${rfm.color}`}>
+                          <span>{rfm.icon}</span> {rfm.label}
+                        </span>
+                      </div>
                     </div>
                   </td>
                   <td className="py-3 px-4">
                     <span className="text-sm font-bold text-gray-900">{client.revenue.toLocaleString('uk-UA')} ₴</span>
                   </td>
-                  <td className="py-3 px-4 text-sm text-gray-600">
-                    {client.agreementsCount}
+                  <td className="py-3 px-4">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-sm font-medium text-gray-700">{client.agreementsCount}</span>
+                      {client.lastPurchaseDate ? (
+                        <span className="text-[10px] text-gray-500 font-medium">
+                          {Math.floor((new Date().getTime() - new Date(client.lastPurchaseDate).getTime()) / (1000 * 3600 * 24))} дн. тому
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-gray-400">-</span>
+                      )}
+                    </div>
                   </td>
                   <td className="py-3 px-4">
                     <div className="flex flex-wrap gap-1.5">
@@ -213,7 +290,8 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
                     </div>
                   </td>
                 </tr>
-              ))}
+              );
+            })}
               {filteredClients.length === 0 && (
                 <tr>
                   <td colSpan={4} className="py-12 text-center text-gray-400 text-sm">
@@ -224,6 +302,82 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
             </tbody>
           </table>
         </div>
+        </>
+        )}
+
+        {activeTab === 'funnel' && (
+          <div className="flex-1 overflow-auto bg-gray-50 p-6 flex flex-col gap-6">
+            
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-4">
+                <div className="w-14 h-14 bg-purple-50 rounded-xl flex items-center justify-center">
+                  <Gem className="w-7 h-7 text-purple-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500 font-semibold uppercase tracking-wider mb-1">Середній цикл угоди</p>
+                  <div className="flex items-baseline gap-2">
+                    <p className="text-4xl font-black text-gray-900">{data.avgSalesCycle ?? 0}</p>
+                    <p className="text-sm font-semibold text-gray-400">днів</p>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">від створення до закриття</p>
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-4">
+                <div className="w-14 h-14 bg-orange-50 rounded-xl flex items-center justify-center">
+                  <span className="text-2xl">⏳</span>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500 font-semibold uppercase tracking-wider mb-1">Відкритих угод у воронці</p>
+                  <p className="text-4xl font-black text-gray-900">
+                    {data.bottlenecks?.reduce((sum, b) => sum + b.count, 0) ?? 0}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-1">аналізуються на вузькі місця</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Bottlenecks Chart */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 flex-1 flex flex-col min-h-[400px]">
+              <h3 className="text-base font-black text-gray-800 mb-6 flex items-center gap-2">
+                Вузькі місця (Скільки днів висять поточні відкриті угоди)
+              </h3>
+              
+              {(!data.bottlenecks || data.bottlenecks.length === 0) ? (
+                <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">Немає відкритих угод для аналізу</div>
+              ) : (
+                <div className="flex-1 flex items-end gap-4 overflow-x-auto pb-4 pt-10">
+                  {data.bottlenecks.map((b, i) => {
+                    // Знаходимо максимальне значення для пропорції висоти
+                    const maxDays = Math.max(...data.bottlenecks!.map(x => x.avgDays));
+                    const heightPercent = maxDays > 0 ? (b.avgDays / maxDays) * 100 : 0;
+                    
+                    return (
+                      <div key={i} className="flex flex-col items-center flex-1 min-w-[80px] group relative">
+                        <div className="absolute -top-8 bg-gray-900 text-white text-[10px] font-bold px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition pointer-events-none whitespace-nowrap z-10">
+                          {b.count} угод(и)
+                        </div>
+                        <div className="w-full flex justify-center h-[200px] items-end">
+                          <div 
+                            className="w-12 bg-gradient-to-t from-orange-200 to-orange-400 rounded-t-md transition-all duration-500 hover:from-orange-300 hover:to-orange-500 relative flex justify-center"
+                            style={{ height: `${Math.max(10, heightPercent)}%` }}
+                          >
+                            <span className="absolute -top-6 text-sm font-black text-gray-700">{b.avgDays} д.</span>
+                          </div>
+                        </div>
+                        <div className="mt-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider text-center h-10 overflow-hidden text-ellipsis line-clamp-2 px-1">
+                          {b.stage}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+          </div>
+        )}
 
       </div>
     </div>
