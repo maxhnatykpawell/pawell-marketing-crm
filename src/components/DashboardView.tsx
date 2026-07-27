@@ -751,7 +751,7 @@ function AvgDealCard({ totalSum, totalCount, bySource, sumChange }: AvgDealCardP
               </div>
             </div>
             <div className="mt-2">
-              {avg > 0 ? (
+              {totalCount > 0 ? (
                 <>
                   <span className="text-2xl font-black text-rose-700 leading-none">
                     {avg.toLocaleString('uk-UA')}

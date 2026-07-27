@@ -787,6 +787,7 @@ function groupBySource(items: any[], allSourceNames: string[] = []): { source: s
 /**
  * Витягнути суму угоди — KeepInCRM може повертати її у різних полях.
  * Порядок пріоритетів: budget → total → total_price → jobs_total → amount → price → sum → cost → 0
+ * Якщо нічого не знайдено, пробуємо просумувати вкладений масив `jobs` (товари/послуги).
  */
 function extractAgreementSum(item: any): number {
   const raw =
@@ -799,7 +800,16 @@ function extractAgreementSum(item: any): number {
     item?.sum ??
     item?.cost ??
     null;
-  const num = Number(raw);
+    
+  let num = Number(raw);
+  
+  if ((isNaN(num) || num === 0) && Array.isArray(item?.jobs)) {
+    num = item.jobs.reduce((acc: number, job: any) => {
+      const jobPrice = Number(job?.total ?? job?.price ?? job?.amount ?? job?.sum ?? 0);
+      return acc + (isNaN(jobPrice) ? 0 : jobPrice);
+    }, 0);
+  }
+
   return isNaN(num) ? 0 : num;
 }
 
@@ -1011,7 +1021,7 @@ function aggregateEntries(entries: any[]) {
     totalClients,
     totalAgreements,
     totalAgreementsSum,
-    avgConversionRate: convDays > 0 ? Math.round((convSum / convDays) * 10) / 10 : 0,
+    avgConversionRate: totalLeads > 0 ? Math.round((totalClients / totalLeads) * 1000) / 10 : 0,
     leadsBySource: toArr(sourceLeads),
     clientsBySource: toArr(sourceClients),
     agreementsBySource: aggArr,
