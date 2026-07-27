@@ -3,8 +3,8 @@ import { useAppContext } from '../App';
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, isToday, subDays, startOfMonth } from 'date-fns';
 import { uk } from 'date-fns/locale';
 import { TrendingUp, TrendingDown, Target, Edit2, Check, Calendar as CalendarIcon, Send, Loader2, RefreshCw, Users, Zap, AlertCircle } from 'lucide-react';
-import { Metric, KeepInCRMHistoryResponse, KeepInCRMSourceStat } from '../types';
-import { getKeepInCRMHistory, triggerKeepInCRMSync, triggerKeepInCRMHistorySync } from '../api';
+import { Metric, KeepInCRMHistoryResponse, KeepInCRMSourceStat, KeepInCRMAgreementStat } from '../types';
+import { getKeepInCRMHistory, triggerKeepInCRMSync, triggerKeepInCRMHistorySync, getKeepInCRMSyncStatus } from '../api';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { DollarSign } from 'lucide-react';
 
@@ -21,8 +21,16 @@ export default function DashboardView() {
   const [kData, setKData]         = useState<KeepInCRMHistoryResponse | null>(null);
   const [kLoading, setKLoading]   = useState(true);
   const [kSyncing, setKSyncing]   = useState(false);
-  const [kHistorySyncing, setKHistorySyncing] = useState(false);
   const [kError, setKError]       = useState<string | null>(null);
+
+  // ── History sync progress (polling) ──────────────────────────────────────────
+  const [hSyncRunning, setHSyncRunning] = useState(false);
+  const [hSyncDone, setHSyncDone]       = useState(0);
+  const [hSyncTotal, setHSyncTotal]     = useState(0);
+  const [hSyncPct, setHSyncPct]         = useState(0);
+  const [hSyncDate, setHSyncDate]       = useState('');
+  const [hSyncError, setHSyncError]     = useState<string | null>(null);
+  const pollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
 
   /** YYYY-MM-DD для поточного дня */
   const todayStr = format(new Date(), 'yyyy-MM-dd');
@@ -55,6 +63,46 @@ export default function DashboardView() {
 
   useEffect(() => { loadKData(kPeriod); }, [kPeriod, loadKData]);
 
+  /** Polling: читає /api/keepincrm/sync-status кожні 1.5с поки синх активний */
+  const startPolling = useCallback((currentPeriod: KPeriod) => {
+    if (pollRef.current) return;
+    pollRef.current = setInterval(async () => {
+      try {
+        const st = await getKeepInCRMSyncStatus();
+        setHSyncDone(st.done);
+        setHSyncTotal(st.total);
+        setHSyncPct(st.pct);
+        setHSyncDate(st.currentDate);
+        setHSyncRunning(st.running);
+        if (st.error) setHSyncError(st.error);
+        if (!st.running) {
+          clearInterval(pollRef.current!);
+          pollRef.current = null;
+          if (!st.error) await loadKData(currentPeriod);
+        }
+      } catch { /* ігноруємо помилки polling */ }
+    }, 1500);
+  }, [loadKData]);
+
+  // При монтуванні — перевіряємо чи синх вже йде (перезавантаження сторінки під час синху)
+  useEffect(() => {
+    (async () => {
+      try {
+        const st = await getKeepInCRMSyncStatus();
+        if (st.running) {
+          setHSyncRunning(true);
+          setHSyncDone(st.done);
+          setHSyncTotal(st.total);
+          setHSyncPct(st.pct);
+          setHSyncDate(st.currentDate);
+          startPolling(kPeriod);
+        }
+      } catch { /* ігноруємо */ }
+    })();
+    return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleKPeriod = (p: KPeriod) => { setKPeriod(p); };
 
   const handleKSync = async () => {
@@ -71,18 +119,28 @@ export default function DashboardView() {
   };
 
   const handleKHistorySync = async () => {
-    if (!window.confirm('Це завантажить історію за останні 30 днів (по одному дню). Це може зайняти хвилину. Продовжити?')) return;
-    setKHistorySyncing(true);
-    setKError(null);
+    if (hSyncRunning) return;
+    if (!window.confirm('Це завантажить історію за останні 30 днів. Процес іде у фоні, ви можете продовжувати роботу. Продовжити?')) return;
+    setHSyncError(null);
+    setHSyncDone(0);
+    setHSyncPct(0);
     try {
-      await triggerKeepInCRMHistorySync(30);
-      await loadKData(kPeriod);
+      const result = await triggerKeepInCRMHistorySync(30);
+      if (result.success) {
+        // Запущено у фоні — стартуємо polling
+        setHSyncRunning(true);
+        setHSyncTotal(30);
+        startPolling(kPeriod);
+      } else {
+        // 409: вже виконується — підключаємось до прогресу
+        setHSyncRunning(true);
+        startPolling(kPeriod);
+      }
     } catch (e: any) {
-      setKError(e.message || 'Помилка синхронізації історії');
-    } finally {
-      setKHistorySyncing(false);
+      setHSyncError(e.message || 'Помилка запуску синхронізації');
     }
   };
+
 
   const today = new Date();
   const weekStart = startOfWeek(today, { weekStartsOn: 1 });
@@ -261,28 +319,57 @@ export default function DashboardView() {
             <div className="flex gap-2">
               <button
                 onClick={handleKHistorySync}
-                disabled={kHistorySyncing || kSyncing}
-                title="Синхронізувати історію (30 днів)"
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-orange-600 bg-orange-50 hover:bg-orange-100 rounded-lg transition disabled:opacity-50"
+                disabled={hSyncRunning || kSyncing}
+                title={hSyncRunning ? `Синхронізація виконується (${hSyncDone}/${hSyncTotal} днів)` : 'Синхронізувати історію (30 днів)'}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-orange-600 bg-orange-50 hover:bg-orange-100 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${kHistorySyncing ? 'animate-spin' : ''}`} />
-                {kHistorySyncing ? 'Синх...' : 'Синх. історію (30д)'}
+                <RefreshCw className={`w-3.5 h-3.5 ${hSyncRunning ? 'animate-spin' : ''}`} />
+                {hSyncRunning ? `${hSyncDone}/${hSyncTotal} днів...` : 'Синх. історію (30д)'}
               </button>
               <button
                 onClick={handleKSync}
-                disabled={kSyncing || kHistorySyncing}
+                disabled={kSyncing || hSyncRunning}
                 title="Синхронізувати зараз"
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-violet-600 bg-violet-50 hover:bg-violet-100 rounded-lg transition disabled:opacity-50"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-violet-600 bg-violet-50 hover:bg-violet-100 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${kSyncing ? 'animate-spin' : ''}`} />
-                {kSyncing ? 'Синх...' : 'Оновити'}
+                {kSyncing ? 'Онов...' : 'Оновити'}
               </button>
             </div>
           )}
         </div>
 
+        {/* History sync progress bar */}
+        {hSyncRunning && (
+          <div className="px-6 pb-3 pt-2 border-b border-gray-100 bg-orange-50/50">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs text-orange-700 font-medium flex items-center gap-1.5">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Синхронізація: {hSyncDone} з {hSyncTotal} днів
+                {hSyncDate && <span className="text-orange-400 font-normal">· {hSyncDate}</span>}
+              </span>
+              <span className="text-xs font-bold text-orange-600">{hSyncPct}%</span>
+            </div>
+            <div className="w-full bg-orange-100 rounded-full h-1.5">
+              <div
+                className="bg-gradient-to-r from-orange-400 to-amber-500 h-1.5 rounded-full transition-all duration-500"
+                style={{ width: `${Math.max(2, hSyncPct)}%` }}
+              />
+            </div>
+          </div>
+        )}
+        {hSyncError && !hSyncRunning && (
+          <div className="px-6 pb-3 pt-2">
+            <div className="flex items-center gap-2 text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">
+              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+              Помилка синхронізації: {hSyncError}
+            </div>
+          </div>
+        )}
+
         {/* Content */}
         <div className="p-6">
+
           {kLoading ? (
             <div className="flex items-center justify-center py-8 text-gray-400">
               <Loader2 className="w-5 h-5 animate-spin mr-2" />
@@ -325,11 +412,12 @@ export default function DashboardView() {
               <KeepInCRMSourceCard
                 title="Угоди за період"
                 total={kData.aggregated.totalAgreements || 0}
-                stats={(kData.aggregated.agreementsBySource || []).map(s => ({ source: s.source, count: s.count }))}
+                stats={kData.aggregated.agreementsBySource || []}
                 color="yellow"
                 icon={<DollarSign className="w-4 h-4" />}
                 change={kData.comparison?.agreementsChange ?? null}
                 subTotal={kData.aggregated.totalAgreementsSum ? `${kData.aggregated.totalAgreementsSum.toLocaleString('uk-UA')} ₴` : undefined}
+                showSum
               />
 
               {/* Conversion */}
@@ -611,14 +699,15 @@ export default function DashboardView() {
 interface SourceCardProps {
   title: string;
   total: number;
-  stats: KeepInCRMSourceStat[];
+  stats: (KeepInCRMSourceStat | KeepInCRMAgreementStat)[];
   color: 'blue' | 'green' | 'yellow';
   icon: React.ReactNode;
   change?: number | null;  // % зміна відносно попереднього періоду
   subTotal?: string;       // додатковий текст під тоталом (напр. сума в грн)
+  showSum?: boolean;       // показати суму по кожному джерелу (для угод)
 }
 
-function KeepInCRMSourceCard({ title, total, stats, color, icon, change, subTotal }: SourceCardProps) {
+function KeepInCRMSourceCard({ title, total, stats, color, icon, change, subTotal, showSum }: SourceCardProps) {
   const colors = {
     blue: {
       bg: 'from-blue-50 to-sky-50',
@@ -695,22 +784,33 @@ function KeepInCRMSourceCard({ title, total, stats, color, icon, change, subTota
           <p className="text-xs text-gray-400 italic">Дані відсутні</p>
         ) : (
           <div className="space-y-2.5">
-            {stats.map(s => (
-              <div key={s.source}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[11px] text-gray-600 font-medium truncate max-w-[120px]" title={s.source}>
-                    {s.source}
-                  </span>
-                  <span className={`text-[11px] font-bold ${colors.label}`}>{s.count}</span>
+            {stats.map(s => {
+              const agr = s as KeepInCRMAgreementStat;
+              const hasSum = showSum && typeof agr.totalSum === 'number' && agr.totalSum > 0;
+              return (
+                <div key={s.source}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[11px] text-gray-600 font-medium truncate max-w-[120px]" title={s.source}>
+                      {s.source}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {hasSum && (
+                        <span className="text-[10px] text-gray-400 font-medium">
+                          {agr.totalSum.toLocaleString('uk-UA')} ₴
+                        </span>
+                      )}
+                      <span className={`text-[11px] font-bold ${colors.label}`}>{s.count}</span>
+                    </div>
+                  </div>
+                  <div className="flex-1 ml-2 bg-gray-100 rounded-full h-1.5 mt-1">
+                  <div 
+                    className={`h-1.5 rounded-full ${colors.bar}`}
+                    style={{ width: `${Math.max(5, (s.count / maxCount) * 100)}%` }}
+                  />
                 </div>
-                <div className="flex-1 ml-2 bg-gray-100 rounded-full h-1.5 mt-1">
-                <div 
-                  className={`h-1.5 rounded-full ${colors.bar}`}
-                  style={{ width: `${Math.max(5, (s.count / maxCount) * 100)}%` }}
-                />
               </div>
-            </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

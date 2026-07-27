@@ -367,16 +367,37 @@ export const triggerKeepInCRMSync = async (): Promise<{ success: boolean; snapsh
 /**
  * Примусово завантажити історію з KeepInCRM за останні N днів (тільки для адмінів).
  */
-export const triggerKeepInCRMHistorySync = async (days: number = 30): Promise<{ success: boolean; message: string }> => {
+export const triggerKeepInCRMHistorySync = async (days: number = 30): Promise<{ success: boolean; message: string; days?: number }> => {
   const res = await fetch('/api/keepincrm/sync-history', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ days }),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to sync KeepInCRM history');
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 409) {
+    // Синхронізація вже виконується — не викидаємо помилку, повертаємо інфо з попередженням
+    return { success: false, message: data.message || 'Синхронізація вже виконується' };
   }
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to sync KeepInCRM history');
+  }
+  return data;
+};
+
+/** Прочитати поточний стан фонової синхронізації (для polling прогресу). */
+export const getKeepInCRMSyncStatus = async (): Promise<{
+  running: boolean;
+  type: 'history' | 'snapshot' | null;
+  total: number;
+  done: number;
+  pct: number;
+  currentDate: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+}> => {
+  const res = await fetch('/api/keepincrm/sync-status', { headers: authHeaders() });
+  if (!res.ok) throw new Error('Failed to get sync status');
   return res.json();
 };
 

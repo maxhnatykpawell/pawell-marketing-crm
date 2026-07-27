@@ -784,6 +784,37 @@ function groupBySource(items: any[], allSourceNames: string[] = []): { source: s
     .sort((a, b) => b.count - a.count); // спадання за кількістю
 }
 
+/**
+ * Витягнути суму угоди — KeepInCRM може повертати її у різних полях.
+ * Порядок пріоритетів: total → amount → price → sum → cost → 0
+ */
+function extractAgreementSum(item: any): number {
+  const raw =
+    item?.total ??
+    item?.amount ??
+    item?.price ??
+    item?.sum ??
+    item?.cost ??
+    null;
+  const num = Number(raw);
+  return isNaN(num) ? 0 : num;
+}
+
+/**
+ * Витягнути джерело для угоди.
+ * В угодах KeepInCRM джерело може бути вкладено через client.source або напряму.
+ */
+function extractAgreementSource(item: any): string {
+  return (
+    item?.source?.name ||
+    item?.client?.source?.name ||
+    item?.channel?.name ||
+    item?.referer ||
+    item?.utm_source ||
+    'Не вказано'
+  );
+}
+
 function groupAgreementsBySource(agreements: any[], allSourceNames: string[] = []): { source: string; count: number; totalSum: number }[] {
   const map: Record<string, { count: number; sum: number }> = {};
   
@@ -792,12 +823,12 @@ function groupAgreementsBySource(agreements: any[], allSourceNames: string[] = [
   }
 
   for (const item of agreements) {
-    const src = extractSource(item);
+    const src = extractAgreementSource(item);
     if (map[src] === undefined) {
       map[src] = { count: 0, sum: 0 };
     }
     map[src].count += 1;
-    map[src].sum += (Number(item.total) || 0);
+    map[src].sum += extractAgreementSum(item);
   }
   
   return Object.entries(map)
@@ -848,6 +879,21 @@ async function syncKeepInCRM(targetDate?: string): Promise<void> {
       'q[created_at_lteq]': `${today}T23:59:59.999+03:00`
     });
 
+    // ── Діагностика угод ──────────────────────────────────────────────────────
+    console.log(`🐞 KeepInCRM Agreements Debug: знайдено ${allAgreementsRaw.length} угод за ${today}`);
+    if (allAgreementsRaw.length > 0) {
+      const sample = allAgreementsRaw[0];
+      // Показуємо всі числові/рядкові поля першої угоди для діагностики
+      const sampleKeys = Object.keys(sample).filter(k => {
+        const v = sample[k];
+        return typeof v === 'number' || (typeof v === 'string' && v !== '');
+      });
+      console.log(`🐞 KeepInCRM Agreement[0] fields: ${JSON.stringify(sampleKeys)}`);
+      console.log(`🐞 KeepInCRM Agreement[0] sample: id=${sample.id}, total=${sample.total}, amount=${sample.amount}, price=${sample.price}, sum=${sample.sum}, cost=${sample.cost}`);
+      console.log(`🐞 KeepInCRM Agreement[0] source fields: source=${JSON.stringify(sample.source)}, client.source=${JSON.stringify(sample.client?.source)}`);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     const leadsToday = groupBySource(leadsRaw, allSourceNames);
     const clientsToday = groupBySource(clientsRaw, allSourceNames);
     const agreementsToday = groupAgreementsBySource(allAgreementsRaw, allSourceNames);
@@ -860,7 +906,8 @@ async function syncKeepInCRM(targetDate?: string): Promise<void> {
         : 0;
         
     const totalAgreementsToday = allAgreementsRaw.length;
-    const totalAgreementsSumToday = allAgreementsRaw.reduce((sum, a) => sum + (Number(a.total) || 0), 0);
+    const totalAgreementsSumToday = allAgreementsRaw.reduce((sum, a) => sum + extractAgreementSum(a), 0);
+    console.log(`🐞 KeepInCRM Agreements: totalSum=${totalAgreementsSumToday}, agreementsToday=${JSON.stringify(agreementsToday)}`);
 
     const snapshot = {
       date: today,
@@ -1008,6 +1055,39 @@ function setupKeepInCRMCron() {
   }, { timezone: 'Europe/Kyiv' });
 
   console.log(`📈 KeepInCRM синхронізація: кожні ${interval} хв. (${cronExpr})`);
+}
+
+// ── KeepInCRM History Sync Lock ───────────────────────────────────────────────
+// Глобальний стан синхронізації — захист від паралельних запусків
+
+interface SyncState {
+  running: boolean;
+  type: 'history' | 'snapshot' | null; // що саме синхронізується
+  total: number;          // скільки днів загалом (для history)
+  done: number;           // скільки вже оброблено
+  currentDate: string;    // яка дата зараз обробляється
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+}
+
+const syncState: SyncState = {
+  running: false,
+  type: null,
+  total: 0,
+  done: 0,
+  currentDate: '',
+  startedAt: null,
+  finishedAt: null,
+  error: null,
+};
+
+/** Скинути стан після завершення (успішного чи ні) */
+function resetSyncState(error?: string) {
+  syncState.running = false;
+  syncState.finishedAt = new Date().toISOString();
+  syncState.error = error || null;
+  syncState.currentDate = '';
 }
 
 // ── Main Server ───────────────────────────────────────────────────────────────
@@ -1305,11 +1385,45 @@ async function startServer() {
     }
   });
 
+  /**
+   * GET /api/keepincrm/sync-status
+   * Повертає поточний стан синхронізації (для polling з UI).
+   */
+  app.get('/api/keepincrm/sync-status', requireAuth, async (_req, res) => {
+    res.json({
+      running:     syncState.running,
+      type:        syncState.type,
+      total:       syncState.total,
+      done:        syncState.done,
+      currentDate: syncState.currentDate,
+      startedAt:   syncState.startedAt,
+      finishedAt:  syncState.finishedAt,
+      error:       syncState.error,
+      pct: syncState.total > 0 ? Math.round((syncState.done / syncState.total) * 100) : 0,
+    });
+  });
+
   /** POST /api/keepincrm/sync-history — синхронізувати останні N днів */
   app.post('/api/keepincrm/sync-history', requireAuth, requireAdmin, async (req, res) => {
+    // ── Захист від паралельних запусків ──────────────────────────────────────
+    if (syncState.running) {
+      return res.status(409).json({
+        success: false,
+        error: 'sync_already_running',
+        message: `Синхронізація вже виконується (${syncState.done}/${syncState.total} днів). Зачекайте завершення.`,
+        state: {
+          done: syncState.done,
+          total: syncState.total,
+          currentDate: syncState.currentDate,
+          pct: syncState.total > 0 ? Math.round((syncState.done / syncState.total) * 100) : 0,
+        },
+      });
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     try {
       const days = Number(req.body.days) || 30;
-      
+
       const toDate = new Date(todayKyiv() + 'T00:00:00Z');
       const datesToSync: string[] = [];
       for (let i = 0; i < days; i++) {
@@ -1317,15 +1431,44 @@ async function startServer() {
         d.setUTCDate(d.getUTCDate() - i);
         datesToSync.push(d.toISOString().slice(0, 10));
       }
+      datesToSync.reverse(); // від старішого до новішого
 
-      // Sync sequentially to avoid API rate limits
-      for (const d of datesToSync.reverse()) {
-        await syncKeepInCRM(d);
-      }
+      // ── Встановити lock і повернути відповідь одразу ─────────────────────
+      syncState.running    = true;
+      syncState.type       = 'history';
+      syncState.total      = datesToSync.length;
+      syncState.done       = 0;
+      syncState.currentDate = '';
+      syncState.startedAt  = new Date().toISOString();
+      syncState.finishedAt = null;
+      syncState.error      = null;
 
-      res.json({ success: true, message: `Синхронізовано ${days} днів` });
+      // Відповідаємо клієнту одразу — синх іде у фоні
+      res.json({ success: true, message: `Синхронізація ${days} днів запущена у фоні`, days });
+
+      // ── Асинхронна синхронізація (не блокує HTTP-відповідь) ──────────────
+      (async () => {
+        try {
+          for (const d of datesToSync) {
+            syncState.currentDate = d;
+            await syncKeepInCRM(d);
+            syncState.done++;
+          }
+          resetSyncState();
+          console.log(`✅ KeepInCRM history sync завершено: ${days} днів`);
+        } catch (err: any) {
+          resetSyncState(err.message || String(err));
+          console.error('❌ KeepInCRM history sync помилка:', err.message || err);
+        }
+      })();
+      // ─────────────────────────────────────────────────────────────────────
+
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      resetSyncState(e.message || String(e));
+      // Якщо помилка сталася до res.json — відповідаємо з помилкою
+      if (!res.headersSent) {
+        res.status(500).json({ success: false, error: e.message });
+      }
     }
   });
 
