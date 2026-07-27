@@ -801,11 +801,22 @@ function extractAgreementSum(item: any): number {
     item?.cost ??
     null;
     
-  let num = Number(raw);
+  let num = 0;
+  if (typeof raw === 'string') {
+    num = Number(raw.replace(',', '.'));
+  } else if (typeof raw === 'number') {
+    num = raw;
+  }
   
   if ((isNaN(num) || num === 0) && Array.isArray(item?.jobs)) {
     num = item.jobs.reduce((acc: number, job: any) => {
-      const jobPrice = Number(job?.total ?? job?.price ?? job?.amount ?? job?.sum ?? 0);
+      const rawJobPrice = job?.total ?? job?.price ?? job?.amount ?? job?.sum ?? 0;
+      let jobPrice = 0;
+      if (typeof rawJobPrice === 'string') {
+        jobPrice = Number(rawJobPrice.replace(',', '.'));
+      } else if (typeof rawJobPrice === 'number') {
+        jobPrice = rawJobPrice;
+      }
       return acc + (isNaN(jobPrice) ? 0 : jobPrice);
     }, 0);
   }
