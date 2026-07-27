@@ -6,7 +6,8 @@ import { TrendingUp, TrendingDown, Target, Edit2, Check, Calendar as CalendarIco
 import { Metric, KeepInCRMHistoryResponse, KeepInCRMSourceStat, KeepInCRMAgreementStat } from '../types';
 import { getKeepInCRMHistory, triggerKeepInCRMSync, triggerKeepInCRMHistorySync, getKeepInCRMSyncStatus, getKeepInCRMLTV, triggerKeepInCRMSyncLTV } from '../api';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { DollarSign, Gem } from 'lucide-react';
+import { DollarSign, Gem, ExternalLink } from 'lucide-react';
+import LtvAnalyticsModal from './LtvAnalyticsModal';
 
 export default function DashboardView() {
   const { state, updateMetric, setActiveView, setActiveEventId, currentUser } = useAppContext();
@@ -27,6 +28,7 @@ export default function DashboardView() {
   const [ltvData, setLtvData]     = useState<any>(null);
   const [ltvLoading, setLtvLoading] = useState(true);
   const [ltvSyncing, setLtvSyncing] = useState(false);
+  const [isLtvModalOpen, setIsLtvModalOpen] = useState(false);
 
   // ── History sync progress (polling) ──────────────────────────────────────────
   const [hSyncRunning, setHSyncRunning] = useState(false);
@@ -480,24 +482,31 @@ export default function DashboardView() {
               {/* LTV */}
               <div className="flex flex-col">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">LTV (За весь час)</p>
-                <div className="flex-1 flex flex-col justify-center bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl border border-purple-100 p-5 relative overflow-hidden">
+                <div 
+                  onClick={() => ltvData && setIsLtvModalOpen(true)}
+                  className={`flex-1 flex flex-col justify-center bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl border border-purple-100 p-5 relative overflow-hidden transition-all ${ltvData ? 'cursor-pointer hover:shadow-md hover:border-purple-300 group' : ''}`}
+                  title={ltvData ? 'Натисніть для детальної аналітики' : ''}
+                >
                   {ltvLoading ? (
                     <div className="flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-purple-400" /></div>
                   ) : ltvData ? (
                     <>
-                      <div className="flex items-center text-purple-600 mb-1">
-                        <Gem className="w-4 h-4 mr-1.5" />
-                        <span className="text-sm font-semibold tracking-wide">Довічна цінність</span>
+                      <div className="flex items-center justify-between text-purple-600 mb-1 relative z-10">
+                        <div className="flex items-center">
+                          <Gem className="w-4 h-4 mr-1.5" />
+                          <span className="text-sm font-semibold tracking-wide">Довічна цінність</span>
+                        </div>
+                        <ExternalLink className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
                       </div>
-                      <span className="text-3xl font-black text-gray-900 mt-1">{ltvData.ltv?.toLocaleString('uk-UA') ?? 0} ₴</span>
-                      <p className="text-xs text-gray-500 mt-2 font-medium">Клієнтів, що купили: {ltvData.uniqueClientsCount ?? 0}</p>
+                      <span className="text-3xl font-black text-gray-900 mt-1 relative z-10">{ltvData.ltv?.toLocaleString('uk-UA') ?? 0} ₴</span>
+                      <p className="text-xs text-gray-500 mt-2 font-medium relative z-10">Клієнтів, що купили: {ltvData.uniqueClientsCount ?? 0}</p>
                       
-                      <div className="absolute -right-6 -bottom-6 opacity-10">
+                      <div className="absolute -right-6 -bottom-6 opacity-10 group-hover:scale-110 transition-transform duration-300">
                         <Gem className="w-24 h-24 text-purple-600" />
                       </div>
                     </>
                   ) : (
-                    <span className="text-sm text-gray-400 text-center">Немає даних</span>
+                    <span className="text-sm text-gray-400 text-center relative z-10">Немає даних</span>
                   )}
                 </div>
               </div>
@@ -785,6 +794,13 @@ export default function DashboardView() {
         </div>
       </div>
       
+      {/* LTV Analytics Modal */}
+      {isLtvModalOpen && ltvData && (
+        <LtvAnalyticsModal 
+          data={ltvData} 
+          onClose={() => setIsLtvModalOpen(false)} 
+        />
+      )}
     </div>
   );
 }

@@ -991,25 +991,57 @@ export async function syncKeepInCRMLTV(year?: string): Promise<any> {
     const allAgreementsRaw = await keepinFetchAll('/agreements', params);
     
     let totalLTVRevenue = 0;
-    const uniqueClients = new Set<string>();
+    const clientsMap = new Map<string, any>();
 
     for (const item of allAgreementsRaw) {
       const amount = extractAgreementSum(item);
       totalLTVRevenue += amount;
       
-      const clientId = item.client_id || item.client?.id;
-      if (clientId) {
-        uniqueClients.add(String(clientId));
+      const clientId = String(item.client_id || item.client?.id || 'unknown');
+      if (clientId === 'unknown') continue;
+
+      let clientData = clientsMap.get(clientId);
+      if (!clientData) {
+        clientData = {
+          id: clientId,
+          name: item.client?.name || item.client?.title || `Клієнт #${clientId}`,
+          revenue: 0,
+          agreementsCount: 0,
+          tags: []
+        };
+        clientsMap.set(clientId, clientData);
+      }
+      
+      clientData.revenue += amount;
+      clientData.agreementsCount += 1;
+
+      // Extract tags
+      const rawTags: any[] = [];
+      if (Array.isArray(item.tags)) rawTags.push(...item.tags);
+      if (Array.isArray(item.client?.tags)) rawTags.push(...item.client.tags);
+      
+      for (const t of rawTags) {
+        let tName = '';
+        if (typeof t === 'string') tName = t;
+        else if (typeof t === 'object' && t !== null && t.name) tName = t.name;
+        
+        if (tName && !clientData.tags.includes(tName)) {
+          clientData.tags.push(tName);
+        }
       }
     }
 
-    const uniqueClientsCount = uniqueClients.size;
+    const uniqueClientsCount = clientsMap.size;
     const ltv = uniqueClientsCount > 0 ? Math.round(totalLTVRevenue / uniqueClientsCount) : 0;
+    
+    const allClientsSorted = Array.from(clientsMap.values()).sort((a, b) => b.revenue - a.revenue);
+    const topClients = allClientsSorted.slice(0, 5000);
 
     const snapshot = {
       totalLTVRevenue,
       uniqueClientsCount,
       ltv,
+      clients: topClients,
       lastSyncedAt: new Date().toISOString()
     };
 

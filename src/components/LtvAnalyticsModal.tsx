@@ -1,0 +1,231 @@
+import React, { useState, useMemo } from 'react';
+import { X, Search, Filter, Users, DollarSign, Gem, Tag } from 'lucide-react';
+
+interface ClientLTV {
+  id: string;
+  name: string;
+  revenue: number;
+  agreementsCount: number;
+  tags: string[];
+}
+
+interface LtvAnalyticsModalProps {
+  onClose: () => void;
+  data: {
+    totalLTVRevenue: number;
+    uniqueClientsCount: number;
+    ltv: number;
+    clients?: ClientLTV[];
+  };
+}
+
+export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalProps) {
+  const [segment, setSegment] = useState<string>('all');
+  const [searchTag, setSearchTag] = useState<string>('');
+  const [topN, setTopN] = useState<number | 'all'>('all');
+
+  const allClients = data.clients || [];
+
+  // Фільтрація клієнтів
+  const filteredClients = useMemo(() => {
+    let result = [...allClients];
+
+    // 1. Фільтр по сегменту (B2B, B2C, B2G)
+    if (segment !== 'all') {
+      result = result.filter(c => {
+        const clientTags = c.tags.map(t => t.toLowerCase());
+        return clientTags.includes(segment.toLowerCase());
+      });
+    }
+
+    // 2. Фільтр по будь-якому введеному тегу (наприклад "батареї")
+    if (searchTag.trim() !== '') {
+      const q = searchTag.toLowerCase().trim();
+      result = result.filter(c => {
+        return c.tags.some(t => t.toLowerCase().includes(q));
+      });
+    }
+
+    // 3. Сортування за доходом (вже відсортовано з бекенду, але для надійності)
+    result.sort((a, b) => b.revenue - a.revenue);
+
+    // 4. Фільтр по кількості (Топ N)
+    if (topN !== 'all') {
+      result = result.slice(0, topN);
+    }
+
+    return result;
+  }, [allClients, segment, searchTag, topN]);
+
+  // Перерахунок LTV для поточної вибірки
+  const sampleRevenue = filteredClients.reduce((sum, c) => sum + c.revenue, 0);
+  const sampleCount = filteredClients.length;
+  const sampleLtv = sampleCount > 0 ? Math.round(sampleRevenue / sampleCount) : 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+        
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/50">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center shadow-sm">
+              <Gem className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-gray-800">Розширена LTV Аналітика</h2>
+              <p className="text-sm text-gray-500">Детальна розбивка та фільтрація по клієнтах</p>
+            </div>
+          </div>
+          <button 
+            onClick={onClose}
+            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Toolbar (Filters) */}
+        <div className="flex flex-wrap items-center gap-4 px-6 py-4 border-b border-gray-100 bg-white">
+          
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-gray-400" />
+            <span className="text-sm font-medium text-gray-700">Сегмент:</span>
+            <select 
+              value={segment} 
+              onChange={e => setSegment(e.target.value)}
+              className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-purple-400"
+            >
+              <option value="all">Всі сегменти</option>
+              <option value="B2B">Тільки B2B</option>
+              <option value="B2C">Тільки B2C</option>
+              <option value="B2G">Тільки B2G</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Search className="w-4 h-4 text-gray-400" />
+            <span className="text-sm font-medium text-gray-700">Пошук по тегу:</span>
+            <input 
+              type="text" 
+              placeholder="Напр. 'батареї', 'ремонт'..."
+              value={searchTag}
+              onChange={e => setSearchTag(e.target.value)}
+              className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-purple-400 w-48"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Users className="w-4 h-4 text-gray-400" />
+            <span className="text-sm font-medium text-gray-700">Розмір бази:</span>
+            <select 
+              value={topN === 'all' ? 'all' : topN.toString()} 
+              onChange={e => setTopN(e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
+              className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-purple-400"
+            >
+              <option value="all">Всі клієнти</option>
+              <option value="50">Топ-50</option>
+              <option value="100">Топ-100</option>
+              <option value="500">Топ-500</option>
+              <option value="1000">Топ-1000</option>
+            </select>
+          </div>
+
+          {allClients.length === 0 && (
+            <div className="text-sm text-orange-500 font-medium ml-auto">
+              Увага: Масив клієнтів пустий. Можливо, синхронізація ще не збирала ці дані. Оновіть LTV.
+            </div>
+          )}
+
+        </div>
+
+        {/* Dynamic Metrics Row */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-6 bg-gray-50/50 flex-shrink-0">
+          <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between">
+            <div>
+              <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">Середній чек (LTV)</p>
+              <p className="text-3xl font-black text-purple-600">{sampleLtv.toLocaleString('uk-UA')} ₴</p>
+            </div>
+            <div className="w-12 h-12 bg-purple-50 rounded-full flex items-center justify-center">
+              <Gem className="w-6 h-6 text-purple-500" />
+            </div>
+          </div>
+          
+          <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between">
+            <div>
+              <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">Загальний дохід групи</p>
+              <p className="text-3xl font-black text-emerald-600">{sampleRevenue.toLocaleString('uk-UA')} ₴</p>
+            </div>
+            <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center">
+              <DollarSign className="w-6 h-6 text-emerald-500" />
+            </div>
+          </div>
+
+          <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between">
+            <div>
+              <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">Клієнтів у вибірці</p>
+              <p className="text-3xl font-black text-blue-600">{sampleCount.toLocaleString('uk-UA')}</p>
+            </div>
+            <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center">
+              <Users className="w-6 h-6 text-blue-500" />
+            </div>
+          </div>
+        </div>
+
+        {/* Table */}
+        <div className="flex-1 overflow-auto bg-white p-6 pt-0">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-gray-200">
+                <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Клієнт</th>
+                <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">LTV (Сума)</th>
+                <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">К-ть угод</th>
+                <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Теги</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filteredClients.map((client, index) => (
+                <tr key={client.id} className="hover:bg-gray-50/50 transition group">
+                  <td className="py-3 px-4">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-bold text-gray-400 w-6">{index + 1}.</span>
+                      <span className="text-sm font-semibold text-gray-800">{client.name}</span>
+                    </div>
+                  </td>
+                  <td className="py-3 px-4">
+                    <span className="text-sm font-bold text-gray-900">{client.revenue.toLocaleString('uk-UA')} ₴</span>
+                  </td>
+                  <td className="py-3 px-4 text-sm text-gray-600">
+                    {client.agreementsCount}
+                  </td>
+                  <td className="py-3 px-4">
+                    <div className="flex flex-wrap gap-1.5">
+                      {client.tags && client.tags.length > 0 ? (
+                        client.tags.map(t => (
+                          <span key={t} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-gray-100 text-gray-600 border border-gray-200 whitespace-nowrap">
+                            <Tag className="w-2.5 h-2.5" />
+                            {t}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-xs text-gray-400">-</span>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {filteredClients.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="py-12 text-center text-gray-400 text-sm">
+                    За вашими фільтрами не знайдено жодного клієнта
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+  );
+}
