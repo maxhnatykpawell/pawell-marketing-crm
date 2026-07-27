@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAppContext } from '../App';
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, isToday, subDays, startOfMonth } from 'date-fns';
 import { uk } from 'date-fns/locale';
-import { TrendingUp, TrendingDown, Target, Edit2, Check, Calendar as CalendarIcon, Send, Loader2, RefreshCw, Users, Zap, AlertCircle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Target, Edit2, Check, Calendar as CalendarIcon, Send, Loader2, RefreshCw, Users, Zap, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { Metric, KeepInCRMHistoryResponse, KeepInCRMSourceStat, KeepInCRMAgreementStat } from '../types';
 import { getKeepInCRMHistory, triggerKeepInCRMSync, triggerKeepInCRMHistorySync, getKeepInCRMSyncStatus } from '../api';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -386,7 +386,7 @@ export default function DashboardView() {
               <p className="text-xs mt-1">Додайте KEEPINCRM_API_KEY у змінні середовища.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
 
               {/* Leads */}
               <KeepInCRMSourceCard
@@ -418,6 +418,15 @@ export default function DashboardView() {
                 change={kData.comparison?.agreementsChange ?? null}
                 subTotal={kData.aggregated.totalAgreementsSum ? `${kData.aggregated.totalAgreementsSum.toLocaleString('uk-UA')} ₴` : undefined}
                 showSum
+              />
+
+              {/* Avg Deal Value */}
+              <AvgDealCard
+                totalSum={kData.aggregated.totalAgreementsSum ?? 0}
+                totalCount={kData.aggregated.totalAgreements ?? 0}
+                bySource={kData.aggregated.agreementsBySource ?? []}
+                sumChange={kData.comparison?.agreementsSumChange ?? null}
+                countChange={kData.comparison?.agreementsChange ?? null}
               />
 
               {/* Conversion */}
@@ -707,6 +716,98 @@ export default function DashboardView() {
   );
 }
 
+// ── Avg Deal Value Card ───────────────────────────────────────────────────────
+
+interface AvgDealCardProps {
+  totalSum: number;
+  totalCount: number;
+  bySource: { source: string; count: number; totalSum: number }[];
+  sumChange: number | null;
+  countChange: number | null;
+}
+
+function AvgDealCard({ totalSum, totalCount, bySource, sumChange }: AvgDealCardProps) {
+  const avg = totalCount > 0 ? Math.round(totalSum / totalCount) : 0;
+
+  // Avg check по кожному джерелу, відсортований спаданням
+  const sourceAvgs = bySource
+    .filter(s => s.count > 0)
+    .map(s => ({ source: s.source, avg: Math.round(s.totalSum / s.count), count: s.count }))
+    .sort((a, b) => b.avg - a.avg);
+
+  const maxAvg = sourceAvgs.length > 0 ? sourceAvgs[0].avg : 1;
+
+  return (
+    <div className="flex flex-col">
+      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Середній чек</p>
+      <div className="flex-1 bg-gradient-to-br from-rose-50 to-pink-50 rounded-xl border border-rose-100 p-4">
+
+        {/* Main value */}
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-7 h-7 rounded-lg bg-rose-100 text-rose-600 flex items-center justify-center flex-shrink-0">
+                <TrendingUp className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="mt-2">
+              {avg > 0 ? (
+                <>
+                  <span className="text-2xl font-black text-rose-700 leading-none">
+                    {avg.toLocaleString('uk-UA')}
+                  </span>
+                  <span className="text-xs font-bold text-rose-400 ml-1">₴</span>
+                </>
+              ) : (
+                <span className="text-sm text-gray-400 italic">Немає угод</span>
+              )}
+              <p className="text-[10px] text-rose-400 font-medium mt-0.5">
+                {totalCount > 0 ? `з ${totalCount} угод` : ''}
+              </p>
+            </div>
+          </div>
+
+          {/* Change badge */}
+          {sumChange !== null && (
+            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full flex items-center gap-0.5 ${
+              sumChange >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+            }`}>
+              {sumChange >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+              {sumChange >= 0 ? '+' : ''}{sumChange}%
+            </span>
+          )}
+        </div>
+
+        {/* Per-source avg check */}
+        {sourceAvgs.length === 0 ? (
+          <p className="text-xs text-gray-400 italic">Дані відсутні</p>
+        ) : (
+          <div className="space-y-2">
+            {sourceAvgs.slice(0, 4).map(s => (
+              <div key={s.source}>
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="text-[10px] text-gray-500 font-medium truncate max-w-[90px]" title={s.source}>
+                    {s.source}
+                  </span>
+                  <span className="text-[10px] font-bold text-rose-600 whitespace-nowrap">
+                    {s.avg.toLocaleString('uk-UA')} ₴
+                  </span>
+                </div>
+                <div className="w-full bg-rose-100 rounded-full h-1">
+                  <div
+                    className="h-1 rounded-full bg-gradient-to-r from-rose-400 to-pink-500 transition-all duration-500"
+                    style={{ width: `${Math.max(4, (s.avg / maxAvg) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Sales Funnel ─────────────────────────────────────────────────────────────
 
 interface SalesFunnelProps {
@@ -919,6 +1020,8 @@ interface SourceCardProps {
 }
 
 function KeepInCRMSourceCard({ title, total, stats, color, icon, change, subTotal, showSum }: SourceCardProps) {
+  const [isExpanded, setIsExpanded] = React.useState(false);
+
   const colors = {
     blue: {
       bg: 'from-blue-50 to-sky-50',
@@ -958,6 +1061,11 @@ function KeepInCRMSourceCard({ title, total, stats, color, icon, change, subTota
   };
 
   const maxCount = stats.length > 0 ? Math.max(...stats.map(s => s.count)) : 1;
+  const activeStats = stats.filter(s => s.count > 0);
+  const hiddenCount = stats.length - activeStats.length;
+  
+  // Якщо немає активних, але є приховані — показуємо приховані, інакше показуємо те що є
+  const displayedStats = isExpanded ? stats : activeStats;
 
   return (
     <div className="flex flex-col">
@@ -995,33 +1103,51 @@ function KeepInCRMSourceCard({ title, total, stats, color, icon, change, subTota
           <p className="text-xs text-gray-400 italic">Дані відсутні</p>
         ) : (
           <div className="space-y-2.5">
-            {stats.map(s => {
-              const agr = s as KeepInCRMAgreementStat;
-              const hasSum = showSum && typeof agr.totalSum === 'number' && agr.totalSum > 0;
-              return (
-                <div key={s.source}>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[11px] text-gray-600 font-medium truncate max-w-[120px]" title={s.source}>
-                      {s.source}
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      {hasSum && (
-                        <span className="text-[10px] text-gray-400 font-medium">
-                          {agr.totalSum.toLocaleString('uk-UA')} ₴
-                        </span>
-                      )}
-                      <span className={`text-[11px] font-bold ${colors.label}`}>{s.count}</span>
+            {displayedStats.length === 0 && !isExpanded ? (
+               <p className="text-[11px] text-gray-400 italic">Немає джерел з даними &gt; 0</p>
+            ) : (
+              displayedStats.map(s => {
+                const agr = s as KeepInCRMAgreementStat;
+                const hasSum = showSum && typeof agr.totalSum === 'number' && agr.totalSum > 0;
+                return (
+                  <div key={s.source}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] text-gray-600 font-medium truncate max-w-[120px]" title={s.source}>
+                        {s.source}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {hasSum && (
+                          <span className="text-[10px] text-gray-400 font-medium">
+                            {agr.totalSum.toLocaleString('uk-UA')} ₴
+                          </span>
+                        )}
+                        <span className={`text-[11px] font-bold ${colors.label}`}>{s.count}</span>
+                      </div>
                     </div>
+                    <div className="flex-1 ml-2 bg-gray-100 rounded-full h-1.5 mt-1">
+                    <div 
+                      className={`h-1.5 rounded-full ${colors.bar}`}
+                      style={{ width: `${Math.max(5, (s.count / maxCount) * 100)}%` }}
+                    />
                   </div>
-                  <div className="flex-1 ml-2 bg-gray-100 rounded-full h-1.5 mt-1">
-                  <div 
-                    className={`h-1.5 rounded-full ${colors.bar}`}
-                    style={{ width: `${Math.max(5, (s.count / maxCount) * 100)}%` }}
-                  />
                 </div>
-              </div>
-              );
-            })}
+                );
+              })
+            )}
+
+            {/* Toggle button */}
+            {hiddenCount > 0 && (
+              <button
+                onClick={() => setIsExpanded(!isExpanded)}
+                className={`mt-2 flex items-center justify-center w-full gap-1 text-[10px] font-bold uppercase tracking-wider py-1.5 rounded-md transition ${colors.label} hover:bg-white/50`}
+              >
+                {isExpanded ? (
+                  <>Приховати джерела (0) <ChevronUp className="w-3 h-3" /></>
+                ) : (
+                  <>Показати ще {hiddenCount} джерел (0) <ChevronDown className="w-3 h-3" /></>
+                )}
+              </button>
+            )}
           </div>
         )}
       </div>
