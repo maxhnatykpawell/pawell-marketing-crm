@@ -48,7 +48,12 @@ export default function ContentPlanView() {
   const [filterChannel, setFilterChannel] = useState<string>('all');
   const [filterAssignee, setFilterAssignee] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [activeMonthTab, setActiveMonthTab] = useState<string | null>(null);
+  const nowForTab = new Date();
+  const currentMonthLabel = (() => {
+    const label = nowForTab.toLocaleDateString('uk-UA', { month: 'long', year: 'numeric' });
+    return label.charAt(0).toUpperCase() + label.slice(1);
+  })();
+  const [activeMonthTab, setActiveMonthTab] = useState<string | null>(currentMonthLabel);
   
   const rawChannels = state.contentPlanChannels || DEFAULT_CHANNELS;
   const channels = rawChannels.map(ch => typeof ch === 'string' ? { name: ch, color: DEFAULT_CHANNEL_COLORS[ch] || '#f3f4f6' } : ch);
@@ -108,6 +113,9 @@ export default function ContentPlanView() {
   const activeGroup = groupedPlans.find(g => g.month === currentMonth);
 
   const handleAddRow = () => {
+    const now = new Date();
+    const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const publishDate = firstOfMonth.toISOString();
     addContentPlan({
       focus: '',
       channel: channels[0]?.name || '',
@@ -116,9 +124,10 @@ export default function ContentPlanView() {
       assigneeId: null,
       status: statuses[0] || '',
       tagIds: [],
-      publishDate: null,
+      publishDate,
       engagement: ''
     });
+    setActiveMonthTab(currentMonthLabel);
   };
 
   return (
