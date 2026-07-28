@@ -113,9 +113,29 @@ export default function ContentPlanView() {
   const activeGroup = groupedPlans.find(g => g.month === currentMonth);
 
   const handleAddRow = () => {
-    const now = new Date();
-    const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const publishDate = firstOfMonth.toISOString();
+    // Use the active tab's month, or fall back to today if no tab is selected
+    let publishDate: string;
+    if (currentMonth && currentMonth !== 'Без дати') {
+      // Parse the active tab label back to a date (e.g. "Серпень 2026")
+      const parsed = new Date(`1 ${currentMonth}`);
+      if (!isNaN(parsed.getTime())) {
+        publishDate = new Date(parsed.getFullYear(), parsed.getMonth(), 1).toISOString();
+      } else {
+        // Fallback: iterate groupedPlans to find the real date
+        const group = groupedPlans.find(g => g.month === currentMonth);
+        const sampleDate = group?.plans.find(p => p.publishDate)?.publishDate;
+        if (sampleDate) {
+          const d = new Date(sampleDate);
+          publishDate = new Date(d.getFullYear(), d.getMonth(), 1).toISOString();
+        } else {
+          const now = new Date();
+          publishDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+        }
+      }
+    } else {
+      const now = new Date();
+      publishDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    }
     addContentPlan({
       focus: '',
       channel: channels[0]?.name || '',
@@ -127,7 +147,6 @@ export default function ContentPlanView() {
       publishDate,
       engagement: ''
     });
-    setActiveMonthTab(currentMonthLabel);
   };
 
   return (
