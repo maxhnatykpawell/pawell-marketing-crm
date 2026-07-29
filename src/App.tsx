@@ -177,7 +177,11 @@ export default function App() {
       ? defaultRights 
       : (userRecord?.customRights || userGroup?.rights || defaultRights);
 
-    const isAllowed = currentRights.allowedViews.includes(activeView) || activeView === 'profile' || (activeView === 'event-details' && currentRights.allowedViews.includes('events'));
+    const adminOnlyViews = ['expenses'];
+    const isAdminOnly = adminOnlyViews.includes(activeView);
+    const isAllowed = isAdminOnly
+      ? currentUser.role === 'admin'
+      : currentRights.allowedViews.includes(activeView) || activeView === 'profile' || (activeView === 'event-details' && currentRights.allowedViews.includes('events'));
 
     if (!isAllowed) {
       if (currentRights.allowedViews.length > 0) {
