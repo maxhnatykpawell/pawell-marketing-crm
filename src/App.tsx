@@ -48,7 +48,7 @@ interface AppContextType {
   addUserGroup: (group: Omit<UserGroup, 'id'>) => void;
   updateUserGroup: (id: string, updates: Partial<UserGroup>) => void;
   deleteUserGroup: (id: string) => void;
-  updateSettings: (updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule'>>) => void;
+  updateSettings: (updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule' | 'expenseCategories' | 'expenseSources'>>) => void;
   addEvent: (item: Omit<EventItem, 'id'>) => void;
   updateEvent: (id: string, updates: Partial<EventItem>) => void;
   deleteEvent: (id: string) => void;

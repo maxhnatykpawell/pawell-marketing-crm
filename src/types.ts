@@ -233,6 +233,7 @@ export interface Expense {
   amount: number;
   currency: 'UAH' | 'USD' | 'EUR';
   category: string;
+  source?: string;     // джерело витрати (Meta Ads, Google Ads тощо)
   date: string;        // YYYY-MM-DD
   createdBy: string;   // userId
   note?: string;
@@ -260,6 +261,7 @@ export interface AppState {
   notifications?: NotificationItem[];
   expenses?: Expense[];
   expenseCategories?: string[];
+  expenseSources?: string[];
   lastModified?: string;
   keepincrm?: KeepInCRMSnapshot;
 }
