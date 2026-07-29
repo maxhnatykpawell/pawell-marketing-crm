@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Metric, Project, Process, UserGroup, AccessRights, NotificationItem } from './types';
+import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Metric, Project, Process, UserGroup, AccessRights, NotificationItem, Expense } from './types';
 import { fetchState, syncState, getMe, estimateTaskTime, createEntity, updateEntity, deleteEntity, processOfflineQueue, sendCardAssignedNotification } from './api';
 import { v4 as uuidv4 } from 'uuid';
 import Board from './components/Board';
@@ -15,9 +15,11 @@ import LoginPage from './components/LoginPage';
 import InvitePage from './components/InvitePage';
 import ProjectsView from './components/ProjectsView';
 import ProcessTreeView from './components/ProcessTreeView';
-import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check } from 'lucide-react';
+import ExpensesView from './components/ExpensesView';
+import ExpenseModal from './components/ExpenseModal';
+import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt } from 'lucide-react';
 
-type ActiveView = 'dashboard' | 'projects' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile';
+type ActiveView = 'dashboard' | 'projects' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile' | 'expenses';
 
 interface AppContextType {
   state: AppState;
@@ -73,6 +75,9 @@ interface AppContextType {
   markNotificationAsRead: (id: string) => void;
   openCardId: string | null;
   setOpenCardId: (id: string | null) => void;
+  addExpense: (expense: Omit<Expense, 'id'>) => void;
+  updateExpense: (id: string, updates: Partial<Expense>) => void;
+  deleteExpense: (id: string) => void;
 }
 
 export const AppContext = createContext<AppContextType | null>(null);
@@ -113,6 +118,7 @@ export default function App() {
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [openCardId, setOpenCardId] = useState<string | null>(null);
+  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
 
   // Use a ref so callbacks always have the latest currentUser without re-creating on every render
   const currentUserRef = React.useRef<AuthUser | null>(null);
@@ -698,6 +704,22 @@ export default function App() {
     updateEntity('metrics', id, updates).catch(console.error);
   }, [state]);
 
+  const addExpense = useCallback((expense: Omit<Expense, 'id'>) => {
+    const newExpense: Expense = { ...expense, id: uuidv4() };
+    setState(prev => prev ? { ...prev, expenses: [...(prev.expenses || []), newExpense] } : prev);
+    createEntity('expenses', newExpense).catch(console.error);
+  }, []);
+
+  const updateExpense = useCallback((id: string, updates: Partial<Expense>) => {
+    setState(prev => prev ? { ...prev, expenses: (prev.expenses || []).map(e => e.id === id ? { ...e, ...updates } : e) } : prev);
+    updateEntity('expenses', id, updates).catch(console.error);
+  }, []);
+
+  const deleteExpense = useCallback((id: string) => {
+    setState(prev => prev ? { ...prev, expenses: (prev.expenses || []).filter(e => e.id !== id) } : prev);
+    deleteEntity('expenses', id).catch(console.error);
+  }, []);
+
   const importTrelloBoard = useCallback((trelloJson: string) => {
     if (!state) return;
     try {
@@ -786,7 +808,7 @@ export default function App() {
 
   const hasEditRights = currentRights.canEdit;
 
-  let allNavItems: { view: ActiveView; label: string; Icon: any }[] = [
+  let allNavItems: { view: ActiveView; label: string; Icon: any; adminOnly?: boolean }[] = [
     { view: 'dashboard', label: 'Головна', Icon: BarChart },
     { view: 'projects', label: 'Проєкти', Icon: FolderKanban },
     { view: 'processes', label: 'Процеси', Icon: GitMerge },
@@ -795,9 +817,13 @@ export default function App() {
     { view: 'events', label: 'Події', Icon: CalendarDays },
     { view: 'calendar', label: 'Календар', Icon: LayoutGrid },
     { view: 'regulations', label: 'Регламенти', Icon: BookOpen },
+    { view: 'expenses', label: 'Витрати', Icon: Receipt, adminOnly: true },
   ];
 
-  const navItems = allNavItems.filter(item => currentRights.allowedViews.includes(item.view));
+  const navItems = allNavItems.filter(item => {
+    if (item.adminOnly) return currentUser.role === 'admin';
+    return currentRights.allowedViews.includes(item.view);
+  });
 
   const myNotifications = (state.notifications || []).filter(n => n.userId === currentUser.userId).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const unreadCount = myNotifications.filter(n => !n.read).length;
@@ -813,7 +839,8 @@ export default function App() {
       activeBoardId, setActiveBoardId, activeEventId, setActiveEventId, activeProjectId, setActiveProjectId,
       activeView, setActiveView, updateMetric, importTrelloBoard, confirmAction,
       createNotification, markNotificationAsRead,
-      openCardId, setOpenCardId
+      openCardId, setOpenCardId,
+      addExpense, updateExpense, deleteExpense
     }}>
       <div className="min-h-screen bg-blue-50/50 flex flex-col font-sans text-gray-900">
         {/* Header */}
@@ -918,6 +945,16 @@ export default function App() {
               )}
             </div>
 
+            {/* Add Expense button — visible to all */}
+            <button
+              onClick={() => setIsExpenseModalOpen(true)}
+              className="flex items-center px-3 py-1.5 text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition border border-emerald-200"
+              title="Внести витрату"
+            >
+              <Receipt className="w-4 h-4 mr-1.5" />
+              + Витрата
+            </button>
+
             <button
               onClick={() => setIsTeamManagerOpen(true)}
               className="flex items-center px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition"
@@ -959,10 +996,14 @@ export default function App() {
           {activeView === 'event-details' && <EventPageView />}
           {activeView === 'regulations' && <TeamRegulationsView />}
           {activeView === 'profile' && <MyProfileView />}
+          {activeView === 'expenses' && currentUser.role === 'admin' && <ExpensesView />}
         </main>
 
         {/* Modals */}
         {isTeamManagerOpen && <TeamManager onClose={() => setIsTeamManagerOpen(false)} />}
+        {isExpenseModalOpen && (
+          <ExpenseModal onClose={() => setIsExpenseModalOpen(false)} />
+        )}
 
         {confirmDialog && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">

@@ -227,6 +227,18 @@ export interface Process {
   createdAt: string;
 }
 
+export interface Expense {
+  id: string;
+  title: string;
+  amount: number;
+  currency: 'UAH' | 'USD' | 'EUR';
+  category: string;
+  date: string;        // YYYY-MM-DD
+  createdBy: string;   // userId
+  note?: string;
+  createdAt: string;
+}
+
 export interface AppState {
   users: User[];
   userGroups?: UserGroup[];
@@ -246,6 +258,8 @@ export interface AppState {
   announcements?: ScheduledAnnouncement[];
   personalNotifications?: PersonalNotificationSettings;
   notifications?: NotificationItem[];
+  expenses?: Expense[];
+  expenseCategories?: string[];
   lastModified?: string;
   keepincrm?: KeepInCRMSnapshot;
 }
