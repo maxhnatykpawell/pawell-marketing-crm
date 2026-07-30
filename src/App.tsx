@@ -848,141 +848,152 @@ export default function App() {
     }}>
       <div className="min-h-screen bg-blue-50/50 flex flex-col font-sans text-gray-900">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-10 w-full print:hidden">
-          <div className="flex items-center space-x-6">
-            <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 rounded bg-blue-600 text-white flex items-center justify-center font-bold text-lg">P</div>
-              <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                PAWELL - Marketing Workspace
-              </h1>
+        <header className="bg-white border-b border-gray-200 px-4 py-2.5 flex items-center justify-between sticky top-0 z-10 w-full print:hidden">
+          {/* Left: logo + nav */}
+          <div className="flex items-center gap-4">
+            {/* Logo */}
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-base leading-none">P</div>
+              <span className="text-sm font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent hidden md:block">PAWELL</span>
             </div>
 
-            <div className="flex space-x-1 pl-4 border-l border-gray-200">
-              {navItems.map(({ view, label, Icon }) => (
-                <button
-                  key={view}
-                  onClick={() => setActiveView(view)}
-                  className={`flex items-center px-3 py-1.5 text-sm font-medium rounded-lg transition ${activeView === view ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}
-                >
-                  <Icon className="w-4 h-4 mr-2" />
-                  {label}
-                </button>
-              ))}
-            </div>
+            {/* Nav */}
+            <nav className="flex items-center gap-0.5 pl-3 border-l border-gray-200">
+              {navItems.map(({ view, label, Icon }) => {
+                const isActive = activeView === view;
+                return (
+                  <button
+                    key={view}
+                    onClick={() => setActiveView(view)}
+                    title={label}
+                    className={`relative group flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                      isActive
+                        ? 'bg-blue-50 text-blue-700'
+                        : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    {/* Label: always visible on active; revealed on hover for others */}
+                    <span className={`text-xs whitespace-nowrap transition-all duration-150 overflow-hidden ${
+                      isActive ? 'max-w-[80px] opacity-100' : 'max-w-0 opacity-0 group-hover:max-w-[80px] group-hover:opacity-100'
+                    }`}>
+                      {label}
+                    </span>
+                    {/* Active underline dot */}
+                    {isActive && <span className="absolute -bottom-[9px] left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-blue-600" />}
+                  </button>
+                );
+              })}
+            </nav>
           </div>
 
           {/* Right side */}
-            <div className="flex items-center space-x-3 relative">
-              {/* Notifications */}
-              <div className="relative">
-                <button
-                  onClick={() => setNotificationsOpen(!notificationsOpen)}
-                  className="relative p-2 text-gray-500 hover:bg-gray-100 rounded-full transition"
-                >
-                  <Bell className="w-5 h-5" />
-                  {unreadCount > 0 && (
-                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white"></span>
-                  )}
-                </button>
-                {notificationsOpen && (
-                  <div className="absolute right-0 mt-2 w-80 bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
-                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
-                      <h3 className="font-semibold text-gray-800">Сповіщення</h3>
-                      {unreadCount > 0 && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{unreadCount} нових</span>}
-                    </div>
-                    <div className="max-h-96 overflow-y-auto">
-                      {myNotifications.length === 0 ? (
-                        <div className="p-6 text-center text-sm text-gray-500">Немає сповіщень</div>
-                      ) : (
-                        myNotifications.map(notif => (
-                          <div
-                            key={notif.id}
-                            className={`p-4 border-b border-gray-50 transition flex gap-3 ${notif.read ? 'opacity-60' : 'bg-blue-50/30'} ${notif.cardId ? 'cursor-pointer hover:bg-blue-50' : 'hover:bg-gray-50'}`}
-                            onClick={() => {
-                              if (notif.cardId) {
-                                markNotificationAsRead(notif.id);
-                                setNotificationsOpen(false);
-                                setActiveView('board');
-                                setOpenCardId(notif.cardId);
-                              }
-                            }}
-                          >
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5 mb-0.5">
-                                <p className="text-sm font-semibold text-gray-900">{notif.title}</p>
-                                {notif.cardId && <span className="text-xs text-blue-500 font-medium">→ відкрити</span>}
-                              </div>
-                              <p className="text-sm text-gray-600 mt-0.5 break-words">{notif.message}</p>
-                              <span className="text-xs text-gray-400 mt-2 block">{new Date(notif.createdAt).toLocaleString('uk-UA')}</span>
-                            </div>
-                            {!notif.read && (
-                              <button
-                                onClick={e => { e.stopPropagation(); markNotificationAsRead(notif.id); }}
-                                className="shrink-0 p-1.5 h-fit text-blue-600 hover:bg-blue-100 rounded-lg transition"
-                                title="Позначити прочитаним"
-                              >
-                                <Check className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                )}
+          <div className="flex items-center gap-1.5">
+            {/* Offline */}
+            {isOffline && (
+              <div className="flex items-center px-2 py-1 bg-yellow-100 text-yellow-800 rounded-lg text-xs font-medium border border-yellow-200 animate-pulse">
+                <span className="w-1.5 h-1.5 rounded-full bg-yellow-500 mr-1.5" />
+                Офлайн
               </div>
+            )}
 
-              {isOffline && (
-                <div className="hidden md:flex items-center px-3 py-1.5 bg-yellow-100 text-yellow-800 rounded-lg text-xs font-medium border border-yellow-200 shadow-sm animate-pulse">
-                  <span className="w-2 h-2 rounded-full bg-yellow-500 mr-2"></span>
-                  Офлайн. Зміни зберігаються локально
-                </div>
-              )}
-              <div className="flex -space-x-2">
-                {state.users.slice(0, 5).map(u => (
-                  <img key={u.id} src={u.avatar} alt={u.name} title={u.name} className="w-8 h-8 rounded-full border-2 border-white" />
-                ))}
-                {state.users.length > 5 && (
-                  <div className="w-8 h-8 rounded-full border-2 border-white bg-gray-100 flex items-center justify-center text-xs font-medium text-gray-600 z-10">
-                    +{state.users.length - 5}
+            {/* Add Expense — icon only */}
+            <button
+              onClick={() => setIsExpenseModalOpen(true)}
+              className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition border border-transparent hover:border-emerald-200"
+              title="Внести витрату"
+            >
+              <Receipt className="w-4 h-4" />
+            </button>
+
+            {/* Notifications */}
+            <div className="relative">
+              <button
+                onClick={() => setNotificationsOpen(!notificationsOpen)}
+                className="relative p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition"
+                title="Сповіщення"
+              >
+                <Bell className="w-4 h-4" />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white" />
+                )}
+              </button>
+              {notificationsOpen && (
+                <div className="absolute right-0 mt-2 w-80 bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                    <h3 className="font-semibold text-gray-800 text-sm">Сповіщення</h3>
+                    {unreadCount > 0 && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{unreadCount} нових</span>}
                   </div>
+                  <div className="max-h-96 overflow-y-auto">
+                    {myNotifications.length === 0 ? (
+                      <div className="p-6 text-center text-sm text-gray-500">Немає сповіщень</div>
+                    ) : (
+                      myNotifications.map(notif => (
+                        <div
+                          key={notif.id}
+                          className={`p-4 border-b border-gray-50 transition flex gap-3 ${notif.read ? 'opacity-60' : 'bg-blue-50/30'} ${notif.cardId ? 'cursor-pointer hover:bg-blue-50' : 'hover:bg-gray-50'}`}
+                          onClick={() => {
+                            if (notif.cardId) {
+                              markNotificationAsRead(notif.id);
+                              setNotificationsOpen(false);
+                              setActiveView('board');
+                              setOpenCardId(notif.cardId);
+                            }
+                          }}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                              <p className="text-sm font-semibold text-gray-900">{notif.title}</p>
+                              {notif.cardId && <span className="text-xs text-blue-500 font-medium">→ відкрити</span>}
+                            </div>
+                            <p className="text-sm text-gray-600 mt-0.5 break-words">{notif.message}</p>
+                            <span className="text-xs text-gray-400 mt-2 block">{new Date(notif.createdAt).toLocaleString('uk-UA')}</span>
+                          </div>
+                          {!notif.read && (
+                            <button
+                              onClick={e => { e.stopPropagation(); markNotificationAsRead(notif.id); }}
+                              className="shrink-0 p-1.5 h-fit text-blue-600 hover:bg-blue-100 rounded-lg transition"
+                              title="Позначити прочитаним"
+                            >
+                              <Check className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
               )}
             </div>
 
-            {/* Add Expense button — visible to all */}
-            <button
-              onClick={() => setIsExpenseModalOpen(true)}
-              className="flex items-center px-3 py-1.5 text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition border border-emerald-200"
-              title="Внести витрату"
-            >
-              <Receipt className="w-4 h-4 mr-1.5" />
-              + Витрата
-            </button>
-
+            {/* Team — icon only */}
             <button
               onClick={() => setIsTeamManagerOpen(true)}
-              className="flex items-center px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition"
+              className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition"
+              title="Управління командою"
             >
-              <Users className="w-4 h-4 mr-2" />
-              Team
+              <Users className="w-4 h-4" />
             </button>
 
-            {/* My profile button */}
+            {/* Divider */}
+            <div className="w-px h-6 bg-gray-200 mx-1" />
+
+            {/* Profile */}
             <button
               onClick={() => setActiveView('profile')}
-              className={`flex items-center gap-2 px-2 py-1.5 rounded-lg transition border ${activeView === 'profile' ? 'border-blue-200 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}
+              className={`flex items-center gap-2 pl-1 pr-2.5 py-1 rounded-lg transition ${activeView === 'profile' ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-gray-100'}`}
               title={currentUser.name}
             >
               <img
                 src={state.users.find(u => u.id === currentUser.userId)?.avatar || ''}
                 alt={currentUser.name}
-                className="w-7 h-7 rounded-full border border-gray-200 object-cover"
+                className="w-6 h-6 rounded-full border border-gray-200 object-cover"
               />
-              <span className={`text-sm font-medium hidden lg:block ${activeView === 'profile' ? 'text-blue-700' : 'text-gray-700'}`}>
+              <span className={`text-xs font-semibold hidden sm:block ${activeView === 'profile' ? 'text-blue-700' : 'text-gray-700'}`}>
                 {currentUser.name.split(' ')[0]}
               </span>
               {currentUser.role === 'admin' && (
-                <span className="hidden lg:block text-[10px] font-bold px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded-full">Admin</span>
+                <span className="hidden sm:block text-[9px] font-bold px-1 py-0.5 bg-purple-100 text-purple-700 rounded-full leading-none">ADM</span>
               )}
             </button>
           </div>
