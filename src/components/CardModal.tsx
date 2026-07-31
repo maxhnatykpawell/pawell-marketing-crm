@@ -57,27 +57,34 @@ export default function CardModal({ card, onClose }: Props) {
     if (!card.title) return;
     setIsReviewing(true);
     try {
-      const { explanation, newSubtasks, storyPoints } = await reviewPlanWithAI(card.title, card.description || '', card.subtasks || []);
+      const { description: aiDescription, explanation, newSubtasks, storyPoints } = await reviewPlanWithAI(card.title, card.description || '', card.subtasks || []);
       const newSubtaskObjects: Subtask[] = newSubtasks.map((st: string) => ({
         id: uuidv4(), title: st, completed: false
       }));
       const newComment: Comment = {
         id: uuidv4(),
         authorId: currentUserRecord?.id || '',
-        text: `🤖 **Мудрий Менеджер (AI):**\n\nОцінка задачі: **${storyPoints} SP**\n\n${explanation}`,
+        text: `🤖 **${storyPoints} SP** — ${explanation}`,
         createdAt: new Date().toISOString()
       };
-      updateCard(card.id, {
+      const updates: Partial<import('../types').Card> = {
         subtasks: [...(card.subtasks || []), ...newSubtaskObjects],
         comments: [...(card.comments || []), newComment],
-        storyPoints
-      });
+        storyPoints,
+      };
+      // Записати опис якщо картка не має його, або AI повернув покращений
+      if (aiDescription && (!card.description || card.description.trim() === '')) {
+        updates.description = aiDescription;
+        setDescription(aiDescription);
+      }
+      updateCard(card.id, updates);
     } catch {
       alert('Помилка при зверненні до ШІ. Перевірте API ключ.');
     } finally {
       setIsReviewing(false);
     }
   };
+
 
   const handleUpdate = (updates: Partial<Card>) => updateCard(card.id, updates);
 

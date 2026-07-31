@@ -226,7 +226,7 @@ export const estimateTaskTime = async (title: string, description: string): Prom
   return data.estimatedMinutes || 60;
 };
 
-export const reviewPlanWithAI = async (title: string, description: string, subtasks: any[]): Promise<{ explanation: string, newSubtasks: string[], storyPoints: number }> => {
+export const reviewPlanWithAI = async (title: string, description: string, subtasks: any[]): Promise<{ description: string, explanation: string, newSubtasks: string[], storyPoints: number }> => {
   const res = await fetch('/api/review-plan', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -235,6 +235,7 @@ export const reviewPlanWithAI = async (title: string, description: string, subta
   if (!res.ok) throw new Error('Failed to review plan');
   return res.json();
 };
+
 
 export const createEntity = async (type: string, data: any): Promise<void> => {
   const res = await fetchWithOfflineQueue(`/api/entity/${type}`, {
