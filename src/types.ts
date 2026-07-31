@@ -264,7 +264,61 @@ export interface AppState {
   expenseSources?: string[];
   lastModified?: string;
   keepincrm?: KeepInCRMSnapshot;
+  payrolls?: PayrollDocument[];
+  payrollSettings?: PayrollSettings;
 }
+
+// ── Payroll Integration Types ───────────────────────────────────────────────
+
+export interface PayrollSettings {
+  labels: {
+    baseSalary: string;
+    workingDaysInMonth: string;
+    salaryPerDay: string;
+    salaryPerHour: string;
+    workedDays: string;
+    paidVacationDays: string;
+    overtimeHours: string;
+    businessTripDays: string;
+    teamBonus: string;
+    additionalActivity: string;
+    sum: string;
+    tax: string;
+    amountReceived: string;
+    companyDebts: string;
+    balance: string;
+  };
+  customBonuses: { id: string; label: string }[];
+  customDeductions: { id: string; label: string }[];
+}
+
+export interface PayrollDocument {
+  id: string;
+  userId: string;
+  period: string; // YYYY-MM
+
+  // Базові
+  baseSalary: number;
+  workingDaysInMonth: number;
+
+  // Доходи
+  workedDays: number;
+  paidVacationDays: number;
+  overtimeHours: number;
+  businessTripDays: number;
+  teamBonusPercent: number;
+  additionalActivity: number;
+  customBonusesValues: Record<string, number>;
+
+  // Відрахування
+  taxPercent: number;
+  amountReceived: number;
+  companyDebts: number;
+  customDeductionsValues: Record<string, number>;
+
+  createdAt: string;
+}
+
 
 // ── KeepInCRM Integration Types ───────────────────────────────────────────────
 

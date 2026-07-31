@@ -105,8 +105,30 @@ const INITIAL_APP_STATE = {
   lastModified: new Date().toISOString(),
 };
 
-const ATOMIC_COLLECTIONS = ['users', 'userGroups', 'lists', 'cards', 'tags', 'contentPlans', 'events', 'projects', 'metrics', 'boards', 'processes', 'notifications'];
+const ATOMIC_COLLECTIONS = ['users', 'userGroups', 'lists', 'cards', 'tags', 'contentPlans', 'events', 'projects', 'metrics', 'boards', 'processes', 'notifications', 'expenses', 'payrolls'];
 const SETTINGS_DOC = 'settings';
+
+const DEFAULT_PAYROLL_SETTINGS = {
+  labels: {
+    baseSalary: 'Ставка',
+    workingDaysInMonth: 'Кількість робочих днів в місяці',
+    salaryPerDay: 'Оклад за 1 день',
+    salaryPerHour: 'Оклад за 1 годину',
+    workedDays: 'Відпрацьованих днів',
+    paidVacationDays: 'Днів у оплачуваній відпустці',
+    overtimeHours: 'Кількість понаднормових годин',
+    businessTripDays: 'Кількість днів у відрядженні',
+    teamBonus: 'Командний бонус',
+    additionalActivity: 'Додаткова діяльність',
+    sum: 'Сума',
+    tax: 'Податок',
+    amountReceived: 'Сума яка прийшла на карту',
+    companyDebts: 'Будь які види боргів перед компанією',
+    balance: 'Баланс'
+  },
+  customBonuses: [],
+  customDeductions: []
+};
 
 const DEFAULT_NOTIFICATION_TEMPLATES = {
   taskAssigned: '🎯 *Тобі призначено нову задачу!*\n\n📌 *{{taskTitle}}*\n📅 Дедлайн: {{deadline}}\n🗂 Проєкт: {{projectName}}',
@@ -150,7 +172,8 @@ async function getDb(): Promise<any> {
         contentPlanStatuses: legacyData.contentPlanStatuses || INITIAL_APP_STATE.contentPlanStatuses,
         contentPlanColumns: legacyData.contentPlanColumns || INITIAL_APP_STATE.contentPlanColumns,
         aiReportSchedule: legacyData.aiReportSchedule || '0 8 * * *',
-        announcements: legacyData.announcements || []
+        announcements: legacyData.announcements || [],
+        payrollSettings: legacyData.payrollSettings || DEFAULT_PAYROLL_SETTINGS
       };
       await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).set(settings);
       
@@ -183,7 +206,8 @@ async function getDb(): Promise<any> {
         contentPlanStatuses: INITIAL_APP_STATE.contentPlanStatuses,
         contentPlanColumns: INITIAL_APP_STATE.contentPlanColumns,
         aiReportSchedule: '0 8 * * *',
-        announcements: []
+        announcements: [],
+        payrollSettings: DEFAULT_PAYROLL_SETTINGS
       });
     }
     
@@ -214,7 +238,8 @@ async function saveDb(data: any): Promise<void> {
       contentPlanStatuses: data.contentPlanStatuses || [],
       contentPlanColumns: data.contentPlanColumns || [],
       aiReportSchedule: data.aiReportSchedule || '0 8 * * *',
-      announcements: data.announcements || []
+      announcements: data.announcements || [],
+      payrollSettings: data.payrollSettings || DEFAULT_PAYROLL_SETTINGS
     };
     await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).set(settings);
     

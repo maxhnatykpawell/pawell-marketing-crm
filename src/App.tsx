@@ -17,9 +17,10 @@ import ProjectsView from './components/ProjectsView';
 import ProcessTreeView from './components/ProcessTreeView';
 import ExpensesView from './components/ExpensesView';
 import ExpenseModal from './components/ExpenseModal';
+import { PayrollView } from './components/Payroll/PayrollView';
 import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt } from 'lucide-react';
 
-type ActiveView = 'dashboard' | 'projects' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile' | 'expenses';
+type ActiveView = 'dashboard' | 'projects' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile' | 'expenses' | 'payroll';
 
 interface AppContextType {
   state: AppState;
@@ -78,6 +79,10 @@ interface AppContextType {
   addExpense: (expense: Omit<Expense, 'id'>) => void;
   updateExpense: (id: string, updates: Partial<Expense>) => void;
   deleteExpense: (id: string) => void;
+  addPayroll: (payroll: Omit<any, 'id' | 'createdAt'>) => void;
+  updatePayroll: (id: string, updates: Partial<any>) => void;
+  deletePayroll: (id: string) => void;
+  updatePayrollSettings: (settings: any) => void;
 }
 
 export const AppContext = createContext<AppContextType | null>(null);
@@ -724,6 +729,30 @@ export default function App() {
     deleteEntity('expenses', id).catch(console.error);
   }, []);
 
+  const addPayroll = useCallback((payroll: Omit<any, 'id' | 'createdAt'>) => {
+    const newPayroll = { ...payroll, id: uuidv4(), createdAt: new Date().toISOString() };
+    setState(prev => prev ? { ...prev, payrolls: [...(prev.payrolls || []), newPayroll] } : prev);
+    createEntity('payrolls', newPayroll).catch(console.error);
+  }, []);
+
+  const updatePayroll = useCallback((id: string, updates: Partial<any>) => {
+    setState(prev => prev ? { ...prev, payrolls: (prev.payrolls || []).map(p => p.id === id ? { ...p, ...updates } : p) } : prev);
+    updateEntity('payrolls', id, updates).catch(console.error);
+  }, []);
+
+  const deletePayroll = useCallback((id: string) => {
+    setState(prev => prev ? { ...prev, payrolls: (prev.payrolls || []).filter(p => p.id !== id) } : prev);
+    deleteEntity('payrolls', id).catch(console.error);
+  }, []);
+
+  const updatePayrollSettings = useCallback((settings: any) => {
+    if (!state) return;
+    const newState = { ...state, payrollSettings: settings };
+    setState(newState);
+    syncState(newState).catch(console.error);
+  }, [state]);
+
+
   const importTrelloBoard = useCallback((trelloJson: string) => {
     if (!state) return;
     try {
@@ -822,6 +851,7 @@ export default function App() {
     { view: 'calendar', label: 'Календар', Icon: LayoutGrid },
     { view: 'regulations', label: 'Регламенти', Icon: BookOpen },
     { view: 'expenses', label: 'Витрати', Icon: Receipt, adminOnly: true },
+    { view: 'payroll', label: 'Зарплати', Icon: Receipt },
   ];
 
   const navItems = allNavItems.filter(item => {
@@ -844,7 +874,8 @@ export default function App() {
       activeView, setActiveView, updateMetric, importTrelloBoard, confirmAction,
       createNotification, markNotificationAsRead,
       openCardId, setOpenCardId,
-      addExpense, updateExpense, deleteExpense
+      addExpense, updateExpense, deleteExpense,
+      addPayroll, updatePayroll, deletePayroll, updatePayrollSettings
     }}>
       <div className="min-h-screen bg-blue-50/50 flex flex-col font-sans text-gray-900">
         {/* Header */}
@@ -1012,6 +1043,7 @@ export default function App() {
           {activeView === 'regulations' && <TeamRegulationsView />}
           {activeView === 'profile' && <MyProfileView />}
           {activeView === 'expenses' && currentUser.role === 'admin' && <ExpensesView />}
+          {activeView === 'payroll' && <PayrollView />}
         </main>
 
         {/* Modals */}
