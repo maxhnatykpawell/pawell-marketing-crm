@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { X, Plus, Trash2 } from 'lucide-react';
-import { AppState, PayrollSettings } from '../../types';
+import { X, Plus, Trash2, Users, ChevronRight, User as UserIcon } from 'lucide-react';
+import { PayrollSettings, PayrollUserProfile, User } from '../../types';
+import { useAppContext } from '../../App';
 
 interface PayrollSettingsModalProps {
   settings: PayrollSettings;
@@ -8,42 +9,117 @@ interface PayrollSettingsModalProps {
   onSave: (newSettings: PayrollSettings) => Promise<void>;
 }
 
+type SettingsTab = 'global' | 'users';
+
 export const PayrollSettingsModal: React.FC<PayrollSettingsModalProps> = ({
   settings,
   onClose,
   onSave,
 }) => {
+  const { state } = useAppContext();
+  const [activeTab, setActiveTab] = useState<SettingsTab>('users');
   const [labels, setLabels] = useState(settings.labels);
   const [customBonuses, setCustomBonuses] = useState(settings.customBonuses || []);
   const [customDeductions, setCustomDeductions] = useState(settings.customDeductions || []);
+  const [userProfiles, setUserProfiles] = useState<Record<string, PayrollUserProfile>>(
+    settings.userProfiles || {}
+  );
+  const [selectedProfileUserId, setSelectedProfileUserId] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
 
   const handleLabelChange = (key: keyof typeof labels, value: string) => {
     setLabels({ ...labels, [key]: value });
   };
 
+  // ── Global custom bonuses/deductions ──────────────────────────────────────
   const addCustomBonus = () => {
     setCustomBonuses([...customBonuses, { id: crypto.randomUUID(), label: 'Новий бонус' }]);
   };
-
   const removeCustomBonus = (id: string) => {
     setCustomBonuses(customBonuses.filter((b) => b.id !== id));
   };
-
   const updateCustomBonus = (id: string, label: string) => {
     setCustomBonuses(customBonuses.map((b) => (b.id === id ? { ...b, label } : b)));
   };
-
   const addCustomDeduction = () => {
     setCustomDeductions([...customDeductions, { id: crypto.randomUUID(), label: 'Нове відрахування' }]);
   };
-
   const removeCustomDeduction = (id: string) => {
     setCustomDeductions(customDeductions.filter((d) => d.id !== id));
   };
-
   const updateCustomDeduction = (id: string, label: string) => {
     setCustomDeductions(customDeductions.map((d) => (d.id === id ? { ...d, label } : d)));
+  };
+
+  // ── Per-user profile management ───────────────────────────────────────────
+  const getOrCreateProfile = (userId: string): PayrollUserProfile => {
+    return userProfiles[userId] || { customBonuses: [], customDeductions: [] };
+  };
+
+  const updateProfile = (userId: string, profile: PayrollUserProfile) => {
+    setUserProfiles({ ...userProfiles, [userId]: profile });
+  };
+
+  const addUserBonus = (userId: string) => {
+    const profile = getOrCreateProfile(userId);
+    updateProfile(userId, {
+      ...profile,
+      customBonuses: [...profile.customBonuses, { id: crypto.randomUUID(), label: 'Новий бонус' }],
+    });
+  };
+
+  const removeUserBonus = (userId: string, bonusId: string) => {
+    const profile = getOrCreateProfile(userId);
+    updateProfile(userId, {
+      ...profile,
+      customBonuses: profile.customBonuses.filter((b) => b.id !== bonusId),
+    });
+  };
+
+  const updateUserBonus = (userId: string, bonusId: string, label: string) => {
+    const profile = getOrCreateProfile(userId);
+    updateProfile(userId, {
+      ...profile,
+      customBonuses: profile.customBonuses.map((b) => (b.id === bonusId ? { ...b, label } : b)),
+    });
+  };
+
+  const addUserDeduction = (userId: string) => {
+    const profile = getOrCreateProfile(userId);
+    updateProfile(userId, {
+      ...profile,
+      customDeductions: [...profile.customDeductions, { id: crypto.randomUUID(), label: 'Нове відрахування' }],
+    });
+  };
+
+  const removeUserDeduction = (userId: string, deductionId: string) => {
+    const profile = getOrCreateProfile(userId);
+    updateProfile(userId, {
+      ...profile,
+      customDeductions: profile.customDeductions.filter((d) => d.id !== deductionId),
+    });
+  };
+
+  const updateUserDeduction = (userId: string, deductionId: string, label: string) => {
+    const profile = getOrCreateProfile(userId);
+    updateProfile(userId, {
+      ...profile,
+      customDeductions: profile.customDeductions.map((d) => (d.id === deductionId ? { ...d, label } : d)),
+    });
+  };
+
+  const copyGlobalToUser = (userId: string) => {
+    const profile = getOrCreateProfile(userId);
+    updateProfile(userId, {
+      customBonuses: [
+        ...profile.customBonuses,
+        ...customBonuses.map((b) => ({ ...b, id: crypto.randomUUID() })),
+      ],
+      customDeductions: [
+        ...profile.customDeductions,
+        ...customDeductions.map((d) => ({ ...d, id: crypto.randomUUID() })),
+      ],
+    });
   };
 
   const handleSave = async () => {
@@ -52,14 +128,24 @@ export const PayrollSettingsModal: React.FC<PayrollSettingsModalProps> = ({
       labels,
       customBonuses,
       customDeductions,
+      userProfiles,
     });
     setIsSaving(false);
     onClose();
   };
 
+  const selectedProfile = selectedProfileUserId ? getOrCreateProfile(selectedProfileUserId) : null;
+  const selectedUser = state.users.find((u) => u.id === selectedProfileUserId);
+
+  const getUserProfileCount = (userId: string) => {
+    const p = userProfiles[userId];
+    if (!p) return 0;
+    return (p.customBonuses?.length || 0) + (p.customDeductions?.length || 0);
+  };
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl my-8 flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl my-8 flex flex-col max-h-[90vh]">
         <div className="p-6 border-b flex justify-between items-center sticky top-0 bg-white rounded-t-2xl z-10">
           <h2 className="text-2xl font-semibold text-gray-800">Налаштування зарплатних документів</h2>
           <button onClick={onClose} className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors">
@@ -67,96 +153,295 @@ export const PayrollSettingsModal: React.FC<PayrollSettingsModalProps> = ({
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto space-y-8">
-          {/* Стандартні поля */}
-          <section>
-            <h3 className="text-lg font-medium text-gray-900 mb-4 border-b pb-2">Назви стандартних полів</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {Object.entries(labels).map(([key, value]) => (
-                <div key={key} className="flex flex-col">
-                  <label className="text-xs text-gray-500 mb-1 capitalize">{key}</label>
-                  <input
-                    type="text"
-                    value={value}
-                    onChange={(e) => handleLabelChange(key as any, e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                  />
+        {/* Tabs */}
+        <div className="flex border-b px-6 bg-gray-50/50">
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+              activeTab === 'users'
+                ? 'border-blue-600 text-blue-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Users size={16} />
+            Профілі працівників
+          </button>
+          <button
+            onClick={() => setActiveTab('global')}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'global'
+                ? 'border-blue-600 text-blue-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Глобальні налаштування
+          </button>
+        </div>
+
+        <div className="p-6 overflow-y-auto space-y-8 flex-1">
+          {activeTab === 'global' && (
+            <>
+              {/* Стандартні поля */}
+              <section>
+                <h3 className="text-lg font-medium text-gray-900 mb-4 border-b pb-2">Назви стандартних полів</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {Object.entries(labels).map(([key, value]) => (
+                    <div key={key} className="flex flex-col">
+                      <label className="text-xs text-gray-500 mb-1 capitalize">{key}</label>
+                      <input
+                        type="text"
+                        value={value}
+                        onChange={(e) => handleLabelChange(key as any, e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                      />
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </section>
+              </section>
 
-          {/* Кастомні бонуси */}
-          <section>
-            <div className="flex items-center justify-between mb-4 border-b pb-2">
-              <h3 className="text-lg font-medium text-gray-900">Кастомні бонуси (Доходи)</h3>
-              <button
-                onClick={addCustomBonus}
-                className="flex items-center gap-1 text-sm text-green-600 hover:bg-green-50 px-3 py-1.5 rounded-lg transition-colors"
-              >
-                <Plus size={16} /> Додати бонус
-              </button>
-            </div>
-            {customBonuses.length === 0 ? (
-              <p className="text-sm text-gray-500 italic">Немає кастомних бонусів</p>
-            ) : (
-              <div className="space-y-3">
-                {customBonuses.map((bonus) => (
-                  <div key={bonus.id} className="flex items-center gap-3">
-                    <input
-                      type="text"
-                      value={bonus.label}
-                      onChange={(e) => updateCustomBonus(bonus.id, e.target.value)}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                      placeholder="Назва бонусу"
-                    />
-                    <button
-                      onClick={() => removeCustomBonus(bonus.id)}
-                      className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                    >
-                      <Trash2 size={18} />
-                    </button>
+              {/* Глобальні кастомні бонуси */}
+              <section>
+                <div className="flex items-center justify-between mb-4 border-b pb-2">
+                  <div>
+                    <h3 className="text-lg font-medium text-gray-900">Глобальні бонуси (шаблон)</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Застосовуються для працівників без індивідуального профілю</p>
                   </div>
-                ))}
-              </div>
-            )}
-          </section>
+                  <button
+                    onClick={addCustomBonus}
+                    className="flex items-center gap-1 text-sm text-green-600 hover:bg-green-50 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    <Plus size={16} /> Додати бонус
+                  </button>
+                </div>
+                {customBonuses.length === 0 ? (
+                  <p className="text-sm text-gray-500 italic">Немає глобальних бонусів</p>
+                ) : (
+                  <div className="space-y-3">
+                    {customBonuses.map((bonus) => (
+                      <div key={bonus.id} className="flex items-center gap-3">
+                        <input
+                          type="text"
+                          value={bonus.label}
+                          onChange={(e) => updateCustomBonus(bonus.id, e.target.value)}
+                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                          placeholder="Назва бонусу"
+                        />
+                        <button
+                          onClick={() => removeCustomBonus(bonus.id)}
+                          className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
 
-          {/* Кастомні відрахування */}
-          <section>
-            <div className="flex items-center justify-between mb-4 border-b pb-2">
-              <h3 className="text-lg font-medium text-gray-900">Кастомні відрахування (Витрати)</h3>
-              <button
-                onClick={addCustomDeduction}
-                className="flex items-center gap-1 text-sm text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
-              >
-                <Plus size={16} /> Додати відрахування
-              </button>
-            </div>
-            {customDeductions.length === 0 ? (
-              <p className="text-sm text-gray-500 italic">Немає кастомних відрахувань</p>
-            ) : (
-              <div className="space-y-3">
-                {customDeductions.map((deduction) => (
-                  <div key={deduction.id} className="flex items-center gap-3">
-                    <input
-                      type="text"
-                      value={deduction.label}
-                      onChange={(e) => updateCustomDeduction(deduction.id, e.target.value)}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                      placeholder="Назва відрахування"
-                    />
-                    <button
-                      onClick={() => removeCustomDeduction(deduction.id)}
-                      className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                    >
-                      <Trash2 size={18} />
-                    </button>
+              {/* Глобальні кастомні відрахування */}
+              <section>
+                <div className="flex items-center justify-between mb-4 border-b pb-2">
+                  <div>
+                    <h3 className="text-lg font-medium text-gray-900">Глобальні відрахування (шаблон)</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Застосовуються для працівників без індивідуального профілю</p>
                   </div>
-                ))}
+                  <button
+                    onClick={addCustomDeduction}
+                    className="flex items-center gap-1 text-sm text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    <Plus size={16} /> Додати відрахування
+                  </button>
+                </div>
+                {customDeductions.length === 0 ? (
+                  <p className="text-sm text-gray-500 italic">Немає глобальних відрахувань</p>
+                ) : (
+                  <div className="space-y-3">
+                    {customDeductions.map((deduction) => (
+                      <div key={deduction.id} className="flex items-center gap-3">
+                        <input
+                          type="text"
+                          value={deduction.label}
+                          onChange={(e) => updateCustomDeduction(deduction.id, e.target.value)}
+                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                          placeholder="Назва відрахування"
+                        />
+                        <button
+                          onClick={() => removeCustomDeduction(deduction.id)}
+                          className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </>
+          )}
+
+          {activeTab === 'users' && (
+            <div className="flex gap-6 min-h-[400px]">
+              {/* Users list */}
+              <div className="w-56 shrink-0 space-y-1 border-r pr-4">
+                <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-3">Працівники</p>
+                {state.users.map((user) => {
+                  const count = getUserProfileCount(user.id);
+                  const isActive = selectedProfileUserId === user.id;
+                  return (
+                    <button
+                      key={user.id}
+                      onClick={() => setSelectedProfileUserId(user.id)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-sm transition-all ${
+                        isActive
+                          ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200'
+                          : 'text-gray-700 hover:bg-gray-100'
+                      }`}
+                    >
+                      <img
+                        src={user.avatar}
+                        alt={user.name}
+                        className="w-7 h-7 rounded-full object-cover border border-gray-200 shrink-0"
+                      />
+                      <span className="flex-1 truncate font-medium">{user.name}</span>
+                      {count > 0 && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full leading-none">
+                          {count}
+                        </span>
+                      )}
+                      <ChevronRight size={14} className={`shrink-0 ${isActive ? 'text-blue-500' : 'text-gray-400'}`} />
+                    </button>
+                  );
+                })}
               </div>
-            )}
-          </section>
+
+              {/* User profile editor */}
+              <div className="flex-1 min-w-0">
+                {!selectedProfileUserId ? (
+                  <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                    <UserIcon size={48} className="mb-3 text-gray-300" />
+                    <p className="text-lg font-medium text-gray-500">Оберіть працівника</p>
+                    <p className="text-sm mt-1">Для налаштування індивідуальних бонусів та відрахувань</p>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={selectedUser?.avatar || ''}
+                          alt={selectedUser?.name || ''}
+                          className="w-10 h-10 rounded-full object-cover border-2 border-blue-200"
+                        />
+                        <div>
+                          <h3 className="text-lg font-semibold text-gray-900">{selectedUser?.name}</h3>
+                          <p className="text-xs text-gray-500">Індивідуальний профіль нарахувань</p>
+                        </div>
+                      </div>
+                      {(customBonuses.length > 0 || customDeductions.length > 0) && (
+                        <button
+                          onClick={() => copyGlobalToUser(selectedProfileUserId)}
+                          className="text-xs text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors border border-blue-200"
+                        >
+                          Копіювати з глобальних
+                        </button>
+                      )}
+                    </div>
+
+                    {/* User Bonuses */}
+                    <section>
+                      <div className="flex items-center justify-between mb-3 border-b pb-2">
+                        <h4 className="font-medium text-gray-800">Бонуси (Доходи)</h4>
+                        <button
+                          onClick={() => addUserBonus(selectedProfileUserId)}
+                          className="flex items-center gap-1 text-sm text-green-600 hover:bg-green-50 px-3 py-1 rounded-lg transition-colors"
+                        >
+                          <Plus size={14} /> Додати
+                        </button>
+                      </div>
+                      {(selectedProfile?.customBonuses?.length || 0) === 0 ? (
+                        <div className="bg-gray-50 rounded-xl p-4 text-center">
+                          <p className="text-sm text-gray-500">
+                            Немає індивідуальних бонусів.
+                          </p>
+                          <p className="text-xs text-gray-400 mt-1">
+                            Будуть використані глобальні налаштування ({customBonuses.length} бонус{customBonuses.length === 1 ? '' : 'ів'})
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {selectedProfile!.customBonuses.map((bonus) => (
+                            <div key={bonus.id} className="flex items-center gap-2">
+                              <div className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
+                              <input
+                                type="text"
+                                value={bonus.label}
+                                onChange={(e) =>
+                                  updateUserBonus(selectedProfileUserId, bonus.id, e.target.value)
+                                }
+                                className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-sm"
+                                placeholder="Назва бонусу"
+                              />
+                              <button
+                                onClick={() => removeUserBonus(selectedProfileUserId, bonus.id)}
+                                className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+
+                    {/* User Deductions */}
+                    <section>
+                      <div className="flex items-center justify-between mb-3 border-b pb-2">
+                        <h4 className="font-medium text-gray-800">Відрахування (Витрати)</h4>
+                        <button
+                          onClick={() => addUserDeduction(selectedProfileUserId)}
+                          className="flex items-center gap-1 text-sm text-red-600 hover:bg-red-50 px-3 py-1 rounded-lg transition-colors"
+                        >
+                          <Plus size={14} /> Додати
+                        </button>
+                      </div>
+                      {(selectedProfile?.customDeductions?.length || 0) === 0 ? (
+                        <div className="bg-gray-50 rounded-xl p-4 text-center">
+                          <p className="text-sm text-gray-500">
+                            Немає індивідуальних відрахувань.
+                          </p>
+                          <p className="text-xs text-gray-400 mt-1">
+                            Будуть використані глобальні налаштування ({customDeductions.length} відрахуван{customDeductions.length === 1 ? 'ня' : 'ь'})
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {selectedProfile!.customDeductions.map((deduction) => (
+                            <div key={deduction.id} className="flex items-center gap-2">
+                              <div className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
+                              <input
+                                type="text"
+                                value={deduction.label}
+                                onChange={(e) =>
+                                  updateUserDeduction(selectedProfileUserId, deduction.id, e.target.value)
+                                }
+                                className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-sm"
+                                placeholder="Назва відрахування"
+                              />
+                              <button
+                                onClick={() => removeUserDeduction(selectedProfileUserId, deduction.id)}
+                                className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="p-6 border-t bg-gray-50 flex justify-end gap-3 rounded-b-2xl sticky bottom-0">

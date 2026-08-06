@@ -270,6 +270,11 @@ export interface AppState {
 
 // ── Payroll Integration Types ───────────────────────────────────────────────
 
+export interface PayrollUserProfile {
+  customBonuses: { id: string; label: string }[];
+  customDeductions: { id: string; label: string }[];
+}
+
 export interface PayrollSettings {
   labels: {
     baseSalary: string;
@@ -290,6 +295,8 @@ export interface PayrollSettings {
   };
   customBonuses: { id: string; label: string }[];
   customDeductions: { id: string; label: string }[];
+  /** Per-user overrides for custom bonuses/deductions */
+  userProfiles?: Record<string, PayrollUserProfile>;
 }
 
 export interface PayrollDocument {

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Settings, Plus, FileText, Search, User as UserIcon } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Settings, Plus, FileText, Search, User as UserIcon, Trash2 } from 'lucide-react';
 import { useAppContext } from '../../App';
 import { PayrollSettingsModal } from './PayrollSettingsModal';
 import { PayrollForm } from './PayrollForm';
@@ -27,8 +27,21 @@ const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   customDeductions: [],
 };
 
+/** Merge global settings with per-user profile overrides */
+function getSettingsForUser(settings: PayrollSettings, userId: string): PayrollSettings {
+  const userProfile = settings.userProfiles?.[userId];
+  if (!userProfile) return settings;
+  
+  // If user has a profile, use their custom bonuses/deductions instead of global
+  return {
+    ...settings,
+    customBonuses: userProfile.customBonuses?.length ? userProfile.customBonuses : settings.customBonuses,
+    customDeductions: userProfile.customDeductions?.length ? userProfile.customDeductions : settings.customDeductions,
+  };
+}
+
 export const PayrollView: React.FC = () => {
-  const { state, currentUser, addPayroll, updatePayroll, deletePayroll, updatePayrollSettings } = useAppContext();
+  const { state, currentUser, addPayroll, updatePayroll, deletePayroll, updatePayrollSettings, confirmAction } = useAppContext();
   const isAdmin = currentUser?.role === 'admin';
   const payrolls = state.payrolls || [];
   const effectiveSettings = state.payrollSettings || DEFAULT_PAYROLL_SETTINGS;
@@ -45,22 +58,39 @@ export const PayrollView: React.FC = () => {
     }
   };
 
+  const handleDeleteDoc = (docId: string) => {
+    confirmAction('Ви дійсно хочете видалити цей зарплатний документ?', () => {
+      deletePayroll(docId);
+    });
+  };
+
   const getDocSummary = (doc: PayrollDocument) => {
-    const totalCustomBonuses = Object.values(doc.customBonusesValues || {}).reduce((sum, val) => sum + (Number(val) || 0), 0);
+    const totalCustomBonuses = Object.values(doc.customBonusesValues || {}).reduce((sum: number, val) => sum + (Number(val) || 0), 0);
     const workedDaysIncome = doc.workedDays * (doc.workingDaysInMonth > 0 ? doc.baseSalary / doc.workingDaysInMonth : 0);
     const teamBonusAmount = (workedDaysIncome * doc.teamBonusPercent) / 100;
     const sum = workedDaysIncome + teamBonusAmount + doc.additionalActivity + totalCustomBonuses;
     
     const taxAmount = (sum * doc.taxPercent) / 100;
-    const totalCustomDeductions = Object.values(doc.customDeductionsValues || {}).reduce((sum, val) => sum + (Number(val) || 0), 0);
-    const balance = sum - taxAmount - doc.amountReceived - doc.companyDebts - totalCustomDeductions;
+    const totalCustomDeductions = Object.values(doc.customDeductionsValues || {}).reduce((sum: number, val) => sum + (Number(val) || 0), 0);
+    const balance = sum - taxAmount - doc.amountReceived - doc.companyDebts - (totalCustomDeductions as number);
     
     return { sum, balance };
   };
 
+  // Determine which user we're working with
+  const targetUserId = isAdmin ? selectedUserId : currentUser?.userId || '';
+
   const visiblePayrolls = isAdmin 
     ? payrolls.filter(p => p.userId === selectedUserId)
     : payrolls.filter(p => p.userId === currentUser?.userId);
+
+  // Compute per-user settings for the form
+  const formSettings = useMemo(
+    () => getSettingsForUser(effectiveSettings, editingDoc?.userId || targetUserId),
+    [effectiveSettings, editingDoc, targetUserId]
+  );
+
+  const selectedUser = state.users.find(u => u.id === targetUserId);
 
   return (
     <div className="flex-1 p-8 overflow-y-auto bg-gray-50/50 relative min-h-screen">
@@ -83,7 +113,13 @@ export const PayrollView: React.FC = () => {
               </button>
             )}
             <button
-              onClick={() => setEditingDoc(null)}
+              onClick={() => {
+                if (!targetUserId) {
+                  alert('Спочатку оберіть працівника');
+                  return;
+                }
+                setEditingDoc(null);
+              }}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-sm shadow-blue-500/30 font-medium"
             >
               <Plus size={18} />
@@ -109,6 +145,11 @@ export const PayrollView: React.FC = () => {
                 <option key={u.id} value={u.id}>{u.name}</option>
               ))}
             </select>
+            {selectedUser && effectiveSettings.userProfiles?.[targetUserId] && (
+              <span className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded-full font-medium border border-blue-100">
+                Індивідуальний профіль
+              </span>
+            )}
           </div>
         )}
 
@@ -120,9 +161,18 @@ export const PayrollView: React.FC = () => {
             return (
               <div 
                 key={doc.id} 
-                className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer group"
+                className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer group relative"
                 onClick={() => setEditingDoc(doc)}
               >
+                {isAdmin && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDeleteDoc(doc.id); }}
+                    className="absolute top-3 right-3 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                    title="Видалити документ"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -161,7 +211,11 @@ export const PayrollView: React.FC = () => {
             <div className="col-span-full py-12 flex flex-col items-center justify-center text-gray-500 bg-white rounded-3xl border border-dashed border-gray-200">
               <FileText size={48} className="text-gray-300 mb-4" />
               <p className="text-lg font-medium text-gray-600">Немає зарплатних документів</p>
-              <p className="text-sm mt-1">Для обраного працівника ще не створено жодного документа</p>
+              <p className="text-sm mt-1">
+                {!targetUserId 
+                  ? 'Оберіть працівника для перегляду документів' 
+                  : 'Для обраного працівника ще не створено жодного документа'}
+              </p>
             </div>
           )}
         </div>
@@ -178,8 +232,8 @@ export const PayrollView: React.FC = () => {
       {editingDoc !== undefined && (
         <PayrollForm
           initialData={editingDoc}
-          settings={effectiveSettings}
-          userId={isAdmin ? selectedUserId : currentUser?.userId || ''}
+          settings={formSettings}
+          userId={targetUserId}
           onClose={() => setEditingDoc(undefined)}
           onSave={handleSaveDoc}
         />

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, Calculator } from 'lucide-react';
 import { PayrollDocument, PayrollSettings } from '../../types';
+import { useAppContext } from '../../App';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
 
@@ -20,6 +21,9 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
   onSave,
 }) => {
   const currentMonth = format(new Date(), 'yyyy-MM');
+  const { state } = useAppContext();
+  const userName = state.users.find(u => u.id === userId)?.name;
+  const userAvatar = state.users.find(u => u.id === userId)?.avatar;
   
   const [period, setPeriod] = useState(initialData?.period || currentMonth);
   const [baseSalary, setBaseSalary] = useState(initialData?.baseSalary || 0);
@@ -102,6 +106,14 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
               <h2 className="text-2xl font-semibold text-gray-800 uppercase">
                 Зарплатний документ
               </h2>
+              {userName && (
+                <div className="flex items-center gap-2 mt-1">
+                  {userAvatar && (
+                    <img src={userAvatar} alt={userName} className="w-5 h-5 rounded-full object-cover border border-gray-200" />
+                  )}
+                  <span className="text-sm text-gray-500">{userName}</span>
+                </div>
+              )}
             </div>
           </div>
           <button onClick={onClose} className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors">
