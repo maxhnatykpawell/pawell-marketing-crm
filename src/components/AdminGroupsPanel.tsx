@@ -10,7 +10,7 @@ export default function AdminGroupsPanel() {
   
   const defaultRights: AccessRights = {
     canEdit: true,
-    allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations']
+    allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations', 'payroll']
   };
 
   const [form, setForm] = useState<{ name: string; rights: AccessRights } | null>(null);
@@ -24,6 +24,7 @@ export default function AdminGroupsPanel() {
     { id: 'events', label: 'Події' },
     { id: 'calendar', label: 'Календар' },
     { id: 'regulations', label: 'Регламенти' },
+    { id: 'payroll', label: 'Зарплати' },
   ];
 
   if (currentUser?.role !== 'admin') return null;

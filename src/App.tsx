@@ -18,7 +18,7 @@ import ProcessTreeView from './components/ProcessTreeView';
 import ExpensesView from './components/ExpensesView';
 import ExpenseModal from './components/ExpenseModal';
 import { PayrollView } from './components/Payroll/PayrollView';
-import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt } from 'lucide-react';
+import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet } from 'lucide-react';
 
 type ActiveView = 'dashboard' | 'projects' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile' | 'expenses' | 'payroll';
 
@@ -175,7 +175,7 @@ export default function App() {
     const userGroup = state.userGroups?.find(g => g.id === userRecord?.groupId);
     
     const defaultRights = { 
-      allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations', 'profile'] 
+      allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations', 'profile', 'payroll'] 
     };
     
     const currentRights = currentUser.role === 'admin' 
@@ -832,7 +832,7 @@ export default function App() {
   
   const defaultRights: AccessRights = { 
     canEdit: true, 
-    allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations', 'profile'] 
+    allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations', 'profile', 'payroll'] 
   };
   
   const currentRights: AccessRights = currentUser.role === 'admin' 
@@ -851,7 +851,7 @@ export default function App() {
     { view: 'calendar', label: 'Календар', Icon: LayoutGrid },
     { view: 'regulations', label: 'Регламенти', Icon: BookOpen },
     { view: 'expenses', label: 'Витрати', Icon: Receipt, adminOnly: true },
-    { view: 'payroll', label: 'Зарплати', Icon: Receipt },
+    { view: 'payroll', label: 'Зарплати', Icon: Wallet },
   ];
 
   const navItems = allNavItems.filter(item => {

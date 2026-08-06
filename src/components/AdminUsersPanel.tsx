@@ -20,6 +20,7 @@ const viewsList = [
   { id: 'events', label: 'Події' },
   { id: 'calendar', label: 'Календар' },
   { id: 'regulations', label: 'Регламенти' },
+  { id: 'payroll', label: 'Зарплати' },
 ];
 
 export default function AdminUsersPanel() {
@@ -138,7 +139,7 @@ export default function AdminUsersPanel() {
     const group = state.userGroups?.find(g => g.id === user?.groupId);
     const defaultRights: AccessRights = {
       canEdit: true,
-      allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations'],
+      allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations', 'payroll'],
     };
     const hasCustom = !!user?.customRights;
     setRightsUserId(userId);
