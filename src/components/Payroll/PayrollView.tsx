@@ -3,12 +3,35 @@ import { Settings, Plus, FileText, Search, User as UserIcon } from 'lucide-react
 import { useAppContext } from '../../App';
 import { PayrollSettingsModal } from './PayrollSettingsModal';
 import { PayrollForm } from './PayrollForm';
-import { PayrollDocument } from '../../types';
+import { PayrollDocument, PayrollSettings } from '../../types';
+
+const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
+  labels: {
+    baseSalary: 'Ставка',
+    workingDaysInMonth: 'Кількість робочих днів в місяці',
+    salaryPerDay: 'Оклад за 1 день',
+    salaryPerHour: 'Оклад за 1 годину',
+    workedDays: 'Відпрацьованих днів',
+    paidVacationDays: 'Днів у оплачуваній відпустці',
+    overtimeHours: 'Кількість понаднормових годин',
+    businessTripDays: 'Кількість днів у відрядженні',
+    teamBonus: 'Командний бонус',
+    additionalActivity: 'Додаткова діяльність',
+    sum: 'Сума',
+    tax: 'Податок',
+    amountReceived: 'Сума яка прийшла на карту',
+    companyDebts: 'Будь які види боргів перед компанією',
+    balance: 'Баланс',
+  },
+  customBonuses: [],
+  customDeductions: [],
+};
 
 export const PayrollView: React.FC = () => {
   const { state, currentUser, addPayroll, updatePayroll, deletePayroll, updatePayrollSettings } = useAppContext();
   const isAdmin = currentUser?.role === 'admin';
   const payrolls = state.payrolls || [];
+  const effectiveSettings = state.payrollSettings || DEFAULT_PAYROLL_SETTINGS;
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [editingDoc, setEditingDoc] = useState<PayrollDocument | null | undefined>(undefined);
@@ -144,18 +167,18 @@ export const PayrollView: React.FC = () => {
         </div>
       </div>
 
-      {isSettingsOpen && state.payrollSettings && (
+      {isSettingsOpen && (
         <PayrollSettingsModal
-          settings={state.payrollSettings}
+          settings={effectiveSettings}
           onClose={() => setIsSettingsOpen(false)}
           onSave={async (newSettings) => updatePayrollSettings(newSettings)}
         />
       )}
 
-      {editingDoc !== undefined && state.payrollSettings && (
+      {editingDoc !== undefined && (
         <PayrollForm
           initialData={editingDoc}
-          settings={state.payrollSettings}
+          settings={effectiveSettings}
           userId={isAdmin ? selectedUserId : currentUser?.userId || ''}
           onClose={() => setEditingDoc(undefined)}
           onSave={handleSaveDoc}

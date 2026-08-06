@@ -199,7 +199,12 @@ async function getDb(): Promise<any> {
     const state: any = {};
     const settingsDoc = await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).get();
     if (settingsDoc.exists) {
-      Object.assign(state, settingsDoc.data());
+      const settingsData = settingsDoc.data() as any;
+      Object.assign(state, settingsData);
+      // Ensure payrollSettings always has a value (may be missing if doc was created before payroll feature)
+      if (!state.payrollSettings) {
+        state.payrollSettings = DEFAULT_PAYROLL_SETTINGS;
+      }
     } else {
       Object.assign(state, {
         contentPlanChannels: INITIAL_APP_STATE.contentPlanChannels,

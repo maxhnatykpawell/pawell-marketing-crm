@@ -49,12 +49,12 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
   const workedDaysIncome = workedDays * salaryPerDay;
   const teamBonusAmount = (workedDaysIncome * teamBonusPercent) / 100;
   
-  const totalCustomBonuses = Object.values(customBonusesValues).reduce((sum, val) => sum + (Number(val) || 0), 0);
+  const totalCustomBonuses = Object.values(customBonusesValues).reduce((sum: number, val) => sum + (Number(val) || 0), 0);
   const sum = workedDaysIncome + teamBonusAmount + additionalActivity + totalCustomBonuses;
   
   const taxAmount = (sum * taxPercent) / 100;
-  const totalCustomDeductions = Object.values(customDeductionsValues).reduce((sum, val) => sum + (Number(val) || 0), 0);
-  const balance = sum - taxAmount - amountReceived - companyDebts - totalCustomDeductions;
+  const totalCustomDeductions = Object.values(customDeductionsValues).reduce((sum: number, val) => sum + (Number(val) || 0), 0);
+  const balance = sum - taxAmount - amountReceived - companyDebts - (totalCustomDeductions as number);
 
   const handleCustomBonusChange = (id: string, value: string) => {
     setCustomBonusesValues({ ...customBonusesValues, [id]: Number(value) });
