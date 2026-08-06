@@ -270,9 +270,24 @@ export interface AppState {
 
 // ── Payroll Integration Types ───────────────────────────────────────────────
 
+export type PayrollFieldType = 'fixed' | 'multiplier' | 'percentage';
+
+export interface CustomPayrollField {
+  id: string;
+  label: string;
+  type?: PayrollFieldType; // 'fixed' is default for backwards compatibility
+  
+  // For 'multiplier' type
+  multiplierRate?: number;
+  multiplierUnit?: string;
+  
+  // For 'percentage' type
+  percentRate?: number;
+}
+
 export interface PayrollUserProfile {
-  customBonuses: { id: string; label: string }[];
-  customDeductions: { id: string; label: string }[];
+  customBonuses: CustomPayrollField[];
+  customDeductions: CustomPayrollField[];
 }
 
 export interface PayrollSettings {
@@ -293,8 +308,8 @@ export interface PayrollSettings {
     companyDebts: string;
     balance: string;
   };
-  customBonuses: { id: string; label: string }[];
-  customDeductions: { id: string; label: string }[];
+  customBonuses: CustomPayrollField[];
+  customDeductions: CustomPayrollField[];
   /** Per-user overrides for custom bonuses/deductions */
   userProfiles?: Record<string, PayrollUserProfile>;
 }

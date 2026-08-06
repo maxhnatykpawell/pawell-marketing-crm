@@ -65,14 +65,33 @@ export const PayrollView: React.FC = () => {
   };
 
   const getDocSummary = (doc: PayrollDocument) => {
-    const totalCustomBonuses = Object.values(doc.customBonusesValues || {}).reduce((sum: number, val) => sum + (Number(val) || 0), 0);
+    const docSettings = getSettingsForUser(effectiveSettings, doc.userId);
+
+    const totalCustomBonuses = Object.entries(doc.customBonusesValues || {}).reduce((sum, [id, val]) => {
+      const field = docSettings.customBonuses.find(b => b.id === id);
+      const numVal = Number(val) || 0;
+      if (!field || !field.type || field.type === 'fixed') return sum + numVal;
+      if (field.type === 'multiplier') return sum + (numVal * (field.multiplierRate || 0));
+      if (field.type === 'percentage') return sum + (numVal * (field.percentRate || 0) / 100);
+      return sum;
+    }, 0);
+
     const workedDaysIncome = doc.workedDays * (doc.workingDaysInMonth > 0 ? doc.baseSalary / doc.workingDaysInMonth : 0);
     const teamBonusAmount = (workedDaysIncome * doc.teamBonusPercent) / 100;
     const sum = workedDaysIncome + teamBonusAmount + doc.additionalActivity + totalCustomBonuses;
     
     const taxAmount = (sum * doc.taxPercent) / 100;
-    const totalCustomDeductions = Object.values(doc.customDeductionsValues || {}).reduce((sum: number, val) => sum + (Number(val) || 0), 0);
-    const balance = sum - taxAmount - doc.amountReceived - doc.companyDebts - (totalCustomDeductions as number);
+    
+    const totalCustomDeductions = Object.entries(doc.customDeductionsValues || {}).reduce((sum, [id, val]) => {
+      const field = docSettings.customDeductions.find(d => d.id === id);
+      const numVal = Number(val) || 0;
+      if (!field || !field.type || field.type === 'fixed') return sum + numVal;
+      if (field.type === 'multiplier') return sum + (numVal * (field.multiplierRate || 0));
+      if (field.type === 'percentage') return sum + (numVal * (field.percentRate || 0) / 100);
+      return sum;
+    }, 0);
+
+    const balance = sum - taxAmount - doc.amountReceived - doc.companyDebts - totalCustomDeductions;
     
     return { sum, balance };
   };

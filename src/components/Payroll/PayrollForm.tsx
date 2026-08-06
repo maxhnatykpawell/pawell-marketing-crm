@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, Calculator } from 'lucide-react';
-import { PayrollDocument, PayrollSettings } from '../../types';
+import { PayrollDocument, PayrollSettings, CustomPayrollField } from '../../types';
 import { useAppContext } from '../../App';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
@@ -53,12 +53,28 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
   const workedDaysIncome = workedDays * salaryPerDay;
   const teamBonusAmount = (workedDaysIncome * teamBonusPercent) / 100;
   
-  const totalCustomBonuses = Object.values(customBonusesValues).reduce((sum: number, val) => sum + (Number(val) || 0), 0);
+  const totalCustomBonuses = Object.entries(customBonusesValues).reduce((sum, [id, val]) => {
+    const field = settings.customBonuses.find(b => b.id === id);
+    const numVal = Number(val) || 0;
+    if (!field || !field.type || field.type === 'fixed') return sum + numVal;
+    if (field.type === 'multiplier') return sum + (numVal * (field.multiplierRate || 0));
+    if (field.type === 'percentage') return sum + (numVal * (field.percentRate || 0) / 100);
+    return sum;
+  }, 0);
   const sum = workedDaysIncome + teamBonusAmount + additionalActivity + totalCustomBonuses;
   
   const taxAmount = (sum * taxPercent) / 100;
-  const totalCustomDeductions = Object.values(customDeductionsValues).reduce((sum: number, val) => sum + (Number(val) || 0), 0);
-  const balance = sum - taxAmount - amountReceived - companyDebts - (totalCustomDeductions as number);
+  
+  const totalCustomDeductions = Object.entries(customDeductionsValues).reduce((sum, [id, val]) => {
+    const field = settings.customDeductions.find(d => d.id === id);
+    const numVal = Number(val) || 0;
+    if (!field || !field.type || field.type === 'fixed') return sum + numVal;
+    if (field.type === 'multiplier') return sum + (numVal * (field.multiplierRate || 0));
+    if (field.type === 'percentage') return sum + (numVal * (field.percentRate || 0) / 100);
+    return sum;
+  }, 0);
+  
+  const balance = sum - taxAmount - amountReceived - companyDebts - totalCustomDeductions;
 
   const handleCustomBonusChange = (id: string, value: string) => {
     setCustomBonusesValues({ ...customBonusesValues, [id]: Number(value) });
@@ -90,6 +106,56 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
     });
     setIsSaving(false);
     onClose();
+  };
+
+  const renderCustomField = (
+    field: CustomPayrollField, 
+    value: number | undefined, 
+    onChange: (id: string, val: string) => void
+  ) => {
+    const numVal = value || 0;
+    let computedAmount = 0;
+    
+    if (!field.type || field.type === 'fixed') {
+      computedAmount = numVal;
+    } else if (field.type === 'multiplier') {
+      computedAmount = numVal * (field.multiplierRate || 0);
+    } else if (field.type === 'percentage') {
+      computedAmount = numVal * (field.percentRate || 0) / 100;
+    }
+
+    return (
+      <div key={field.id} className="flex justify-between items-center gap-4">
+        <label className="text-gray-700 flex-1">
+          {field.label}
+          {field.type === 'multiplier' && (
+            <span className="text-xs text-gray-400 block">
+              {formatMoney(field.multiplierRate || 0)} ₴ / {field.multiplierUnit || 'шт'}
+            </span>
+          )}
+          {field.type === 'percentage' && (
+            <span className="text-xs text-gray-400 block">
+              {field.percentRate || 0}% від суми
+            </span>
+          )}
+        </label>
+        
+        <div className="flex items-center justify-end gap-3">
+          <input
+            type="number"
+            value={value || ''}
+            onChange={(e) => onChange(field.id, e.target.value)}
+            className="w-24 px-3 py-1.5 text-right border border-gray-300 rounded-lg bg-white"
+            placeholder={field.type === 'multiplier' ? 'К-сть' : 'Сума'}
+          />
+          {(field.type === 'multiplier' || field.type === 'percentage') && (
+            <span className="w-24 text-right font-medium text-gray-600">
+              {formatMoney(computedAmount)}
+            </span>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const formatMoney = (val: number) => Math.round(val).toLocaleString('uk-UA');
@@ -231,17 +297,9 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
                   <span className="w-24 text-right font-medium">{formatMoney(teamBonusAmount)}</span>
                 </div>
 
-                {settings.customBonuses?.map(bonus => (
-                  <div key={bonus.id} className="flex justify-between items-center">
-                    <label className="text-gray-700">{bonus.label}</label>
-                    <input
-                      type="number"
-                      value={customBonusesValues[bonus.id] || ''}
-                      onChange={(e) => handleCustomBonusChange(bonus.id, e.target.value)}
-                      className="w-24 px-3 py-1.5 text-right border border-gray-300 rounded-lg bg-white"
-                    />
-                  </div>
-                ))}
+                {settings.customBonuses?.map(bonus => 
+                  renderCustomField(bonus, customBonusesValues[bonus.id], handleCustomBonusChange)
+                )}
                 
                 <div className="flex justify-between items-center">
                   <label className="text-gray-700">{settings.labels.additionalActivity}</label>
@@ -300,17 +358,9 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
                 />
               </div>
 
-              {settings.customDeductions?.map(deduction => (
-                <div key={deduction.id} className="flex justify-between items-center">
-                  <label className="text-gray-700">{deduction.label}</label>
-                  <input
-                    type="number"
-                    value={customDeductionsValues[deduction.id] || ''}
-                    onChange={(e) => handleCustomDeductionChange(deduction.id, e.target.value)}
-                    className="w-32 px-3 py-1.5 text-right border border-gray-300 rounded-lg bg-white"
-                  />
-                </div>
-              ))}
+              {settings.customDeductions?.map(deduction => 
+                renderCustomField(deduction, customDeductionsValues[deduction.id], handleCustomDeductionChange)
+              )}
             </div>
           </div>
 

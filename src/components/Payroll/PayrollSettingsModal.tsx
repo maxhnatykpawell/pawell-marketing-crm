@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Plus, Trash2, Users, ChevronRight, User as UserIcon } from 'lucide-react';
-import { PayrollSettings, PayrollUserProfile, User } from '../../types';
+import { PayrollSettings, PayrollUserProfile, User, CustomPayrollField } from '../../types';
 import { useAppContext } from '../../App';
 
 interface PayrollSettingsModalProps {
@@ -11,6 +11,85 @@ interface PayrollSettingsModalProps {
 
 type SettingsTab = 'global' | 'users';
 
+const CustomFieldEditor: React.FC<{
+  field: CustomPayrollField;
+  onChange: (field: CustomPayrollField) => void;
+  onRemove: () => void;
+}> = ({ field, onChange, onRemove }) => {
+  const type = field.type || 'fixed';
+  
+  return (
+    <div className="flex flex-col gap-2 p-3 bg-white border border-gray-200 rounded-xl shadow-sm">
+      <div className="flex items-center gap-3">
+        <select
+          value={type}
+          onChange={(e) => onChange({ ...field, type: e.target.value as any })}
+          className="px-2 py-1.5 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+        >
+          <option value="fixed">Фікс. сума</option>
+          <option value="multiplier">Ставка</option>
+          <option value="percentage">Відсоток</option>
+        </select>
+        <input
+          type="text"
+          value={field.label}
+          onChange={(e) => onChange({ ...field, label: e.target.value })}
+          className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-sm"
+          placeholder="Назва"
+        />
+        <button
+          onClick={onRemove}
+          className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+          title="Видалити"
+        >
+          <Trash2 size={16} />
+        </button>
+      </div>
+      
+      {type === 'multiplier' && (
+        <div className="flex items-center gap-2 pl-1 bg-gray-50/50 p-2 rounded-lg border border-gray-100">
+          <span className="text-xs text-gray-500 font-medium">Платити:</span>
+          <div className="relative w-24">
+            <input
+              type="number"
+              value={field.multiplierRate || ''}
+              onChange={(e) => onChange({ ...field, multiplierRate: Number(e.target.value) })}
+              className="w-full px-2 py-1 border border-gray-300 rounded-md text-sm pr-6"
+              placeholder="0"
+            />
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">₴</span>
+          </div>
+          <span className="text-xs text-gray-500 font-medium">за 1</span>
+          <input
+            type="text"
+            value={field.multiplierUnit || ''}
+            onChange={(e) => onChange({ ...field, multiplierUnit: e.target.value })}
+            className="w-32 px-2 py-1 border border-gray-300 rounded-md text-sm"
+            placeholder="клієнта / годину"
+          />
+        </div>
+      )}
+      
+      {type === 'percentage' && (
+        <div className="flex items-center gap-2 pl-1 bg-gray-50/50 p-2 rounded-lg border border-gray-100">
+          <span className="text-xs text-gray-500 font-medium">Платити:</span>
+          <div className="relative w-24">
+            <input
+              type="number"
+              value={field.percentRate || ''}
+              onChange={(e) => onChange({ ...field, percentRate: Number(e.target.value) })}
+              className="w-full pl-2 pr-6 py-1 border border-gray-300 rounded-md text-sm"
+              placeholder="0"
+            />
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">%</span>
+          </div>
+          <span className="text-xs text-gray-500 font-medium">від введеної суми</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const PayrollSettingsModal: React.FC<PayrollSettingsModalProps> = ({
   settings,
   onClose,
@@ -19,8 +98,8 @@ export const PayrollSettingsModal: React.FC<PayrollSettingsModalProps> = ({
   const { state } = useAppContext();
   const [activeTab, setActiveTab] = useState<SettingsTab>('users');
   const [labels, setLabels] = useState(settings.labels);
-  const [customBonuses, setCustomBonuses] = useState(settings.customBonuses || []);
-  const [customDeductions, setCustomDeductions] = useState(settings.customDeductions || []);
+  const [customBonuses, setCustomBonuses] = useState<CustomPayrollField[]>(settings.customBonuses || []);
+  const [customDeductions, setCustomDeductions] = useState<CustomPayrollField[]>(settings.customDeductions || []);
   const [userProfiles, setUserProfiles] = useState<Record<string, PayrollUserProfile>>(
     settings.userProfiles || {}
   );
@@ -33,22 +112,22 @@ export const PayrollSettingsModal: React.FC<PayrollSettingsModalProps> = ({
 
   // ── Global custom bonuses/deductions ──────────────────────────────────────
   const addCustomBonus = () => {
-    setCustomBonuses([...customBonuses, { id: crypto.randomUUID(), label: 'Новий бонус' }]);
+    setCustomBonuses([...customBonuses, { id: crypto.randomUUID(), label: 'Новий бонус', type: 'fixed' }]);
   };
   const removeCustomBonus = (id: string) => {
     setCustomBonuses(customBonuses.filter((b) => b.id !== id));
   };
-  const updateCustomBonus = (id: string, label: string) => {
-    setCustomBonuses(customBonuses.map((b) => (b.id === id ? { ...b, label } : b)));
+  const updateCustomBonus = (id: string, updated: CustomPayrollField) => {
+    setCustomBonuses(customBonuses.map((b) => (b.id === id ? updated : b)));
   };
   const addCustomDeduction = () => {
-    setCustomDeductions([...customDeductions, { id: crypto.randomUUID(), label: 'Нове відрахування' }]);
+    setCustomDeductions([...customDeductions, { id: crypto.randomUUID(), label: 'Нове відрахування', type: 'fixed' }]);
   };
   const removeCustomDeduction = (id: string) => {
     setCustomDeductions(customDeductions.filter((d) => d.id !== id));
   };
-  const updateCustomDeduction = (id: string, label: string) => {
-    setCustomDeductions(customDeductions.map((d) => (d.id === id ? { ...d, label } : d)));
+  const updateCustomDeduction = (id: string, updated: CustomPayrollField) => {
+    setCustomDeductions(customDeductions.map((d) => (d.id === id ? updated : d)));
   };
 
   // ── Per-user profile management ───────────────────────────────────────────
@@ -64,7 +143,7 @@ export const PayrollSettingsModal: React.FC<PayrollSettingsModalProps> = ({
     const profile = getOrCreateProfile(userId);
     updateProfile(userId, {
       ...profile,
-      customBonuses: [...profile.customBonuses, { id: crypto.randomUUID(), label: 'Новий бонус' }],
+      customBonuses: [...profile.customBonuses, { id: crypto.randomUUID(), label: 'Новий бонус', type: 'fixed' }],
     });
   };
 
@@ -76,11 +155,11 @@ export const PayrollSettingsModal: React.FC<PayrollSettingsModalProps> = ({
     });
   };
 
-  const updateUserBonus = (userId: string, bonusId: string, label: string) => {
+  const updateUserBonus = (userId: string, bonusId: string, updated: CustomPayrollField) => {
     const profile = getOrCreateProfile(userId);
     updateProfile(userId, {
       ...profile,
-      customBonuses: profile.customBonuses.map((b) => (b.id === bonusId ? { ...b, label } : b)),
+      customBonuses: profile.customBonuses.map((b) => (b.id === bonusId ? updated : b)),
     });
   };
 
@@ -88,7 +167,7 @@ export const PayrollSettingsModal: React.FC<PayrollSettingsModalProps> = ({
     const profile = getOrCreateProfile(userId);
     updateProfile(userId, {
       ...profile,
-      customDeductions: [...profile.customDeductions, { id: crypto.randomUUID(), label: 'Нове відрахування' }],
+      customDeductions: [...profile.customDeductions, { id: crypto.randomUUID(), label: 'Нове відрахування', type: 'fixed' }],
     });
   };
 
@@ -100,11 +179,11 @@ export const PayrollSettingsModal: React.FC<PayrollSettingsModalProps> = ({
     });
   };
 
-  const updateUserDeduction = (userId: string, deductionId: string, label: string) => {
+  const updateUserDeduction = (userId: string, deductionId: string, updated: CustomPayrollField) => {
     const profile = getOrCreateProfile(userId);
     updateProfile(userId, {
       ...profile,
-      customDeductions: profile.customDeductions.map((d) => (d.id === deductionId ? { ...d, label } : d)),
+      customDeductions: profile.customDeductions.map((d) => (d.id === deductionId ? updated : d)),
     });
   };
 
@@ -218,21 +297,12 @@ export const PayrollSettingsModal: React.FC<PayrollSettingsModalProps> = ({
                 ) : (
                   <div className="space-y-3">
                     {customBonuses.map((bonus) => (
-                      <div key={bonus.id} className="flex items-center gap-3">
-                        <input
-                          type="text"
-                          value={bonus.label}
-                          onChange={(e) => updateCustomBonus(bonus.id, e.target.value)}
-                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                          placeholder="Назва бонусу"
-                        />
-                        <button
-                          onClick={() => removeCustomBonus(bonus.id)}
-                          className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                        >
-                          <Trash2 size={18} />
-                        </button>
-                      </div>
+                      <CustomFieldEditor
+                        key={bonus.id}
+                        field={bonus}
+                        onChange={(f) => updateCustomBonus(bonus.id, f)}
+                        onRemove={() => removeCustomBonus(bonus.id)}
+                      />
                     ))}
                   </div>
                 )}
@@ -257,21 +327,12 @@ export const PayrollSettingsModal: React.FC<PayrollSettingsModalProps> = ({
                 ) : (
                   <div className="space-y-3">
                     {customDeductions.map((deduction) => (
-                      <div key={deduction.id} className="flex items-center gap-3">
-                        <input
-                          type="text"
-                          value={deduction.label}
-                          onChange={(e) => updateCustomDeduction(deduction.id, e.target.value)}
-                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                          placeholder="Назва відрахування"
-                        />
-                        <button
-                          onClick={() => removeCustomDeduction(deduction.id)}
-                          className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                        >
-                          <Trash2 size={18} />
-                        </button>
-                      </div>
+                      <CustomFieldEditor
+                        key={deduction.id}
+                        field={deduction}
+                        onChange={(f) => updateCustomDeduction(deduction.id, f)}
+                        onRemove={() => removeCustomDeduction(deduction.id)}
+                      />
                     ))}
                   </div>
                 )}
@@ -369,24 +430,12 @@ export const PayrollSettingsModal: React.FC<PayrollSettingsModalProps> = ({
                       ) : (
                         <div className="space-y-2">
                           {selectedProfile!.customBonuses.map((bonus) => (
-                            <div key={bonus.id} className="flex items-center gap-2">
-                              <div className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
-                              <input
-                                type="text"
-                                value={bonus.label}
-                                onChange={(e) =>
-                                  updateUserBonus(selectedProfileUserId, bonus.id, e.target.value)
-                                }
-                                className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-sm"
-                                placeholder="Назва бонусу"
-                              />
-                              <button
-                                onClick={() => removeUserBonus(selectedProfileUserId, bonus.id)}
-                                className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
+                            <CustomFieldEditor
+                              key={bonus.id}
+                              field={bonus}
+                              onChange={(f) => updateUserBonus(selectedProfileUserId, bonus.id, f)}
+                              onRemove={() => removeUserBonus(selectedProfileUserId, bonus.id)}
+                            />
                           ))}
                         </div>
                       )}
@@ -415,24 +464,12 @@ export const PayrollSettingsModal: React.FC<PayrollSettingsModalProps> = ({
                       ) : (
                         <div className="space-y-2">
                           {selectedProfile!.customDeductions.map((deduction) => (
-                            <div key={deduction.id} className="flex items-center gap-2">
-                              <div className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
-                              <input
-                                type="text"
-                                value={deduction.label}
-                                onChange={(e) =>
-                                  updateUserDeduction(selectedProfileUserId, deduction.id, e.target.value)
-                                }
-                                className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-sm"
-                                placeholder="Назва відрахування"
-                              />
-                              <button
-                                onClick={() => removeUserDeduction(selectedProfileUserId, deduction.id)}
-                                className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
+                            <CustomFieldEditor
+                              key={deduction.id}
+                              field={deduction}
+                              onChange={(f) => updateUserDeduction(selectedProfileUserId, deduction.id, f)}
+                              onRemove={() => removeUserDeduction(selectedProfileUserId, deduction.id)}
+                            />
                           ))}
                         </div>
                       )}
