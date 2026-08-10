@@ -16,6 +16,7 @@ import jwt from 'jsonwebtoken';
 import admin from 'firebase-admin';
 
 import { buildCohortLtv } from './src/lib/cohortLtv';
+import { chunkList } from './src/lib/clientAnalytics';
 
 
 // ── Firebase Init ─────────────────────────────────────────────────────────────
@@ -1013,6 +1014,63 @@ async function syncKeepInCRM(
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** Колекція з клієнтами LTV, розбитими на частини */
+const LTV_CLIENTS_COLLECTION = 'crm_keepincrm_ltv_clients';
+
+/**
+ * Скільки клієнтів в одному документі.
+ *
+ * Ліміт документа Firestore — 1 МіБ. Важкий клієнт (багато тегів і місяців
+ * покупок) важить близько 512 Б, тож 1000 дає ~500 КіБ у найгіршому випадку —
+ * удвічі менше за ліміт, із запасом на майбутні поля.
+ */
+const LTV_CLIENTS_CHUNK_SIZE = 1000;
+
+/**
+ * Записати клієнтів частинами і прибрати зайві документи з попереднього прогону.
+ *
+ * Без прибирання старі частини лишалися б назавжди: якщо база схудла з 12 000 до
+ * 3 000, документи 3…11 висіли б із застарілими даними і поверталися б при читанні.
+ */
+async function writeLtvClientChunks(db: admin.firestore.Firestore, clients: any[]): Promise<void> {
+  const col = db.collection(LTV_CLIENTS_COLLECTION);
+  const chunks = chunkList(clients, LTV_CLIENTS_CHUNK_SIZE);
+
+  for (let i = 0; i < chunks.length; i++) {
+    await col.doc(String(i)).set({ index: i, clients: chunks[i] });
+  }
+
+  // Прибрати хвіст, що лишився від довшого попереднього списку
+  const existing = await col.listDocuments();
+  const stale = existing.filter(d => {
+    const n = Number(d.id);
+    return !Number.isNaN(n) && n >= chunks.length;
+  });
+  if (stale.length > 0) {
+    const batch = db.batch();
+    for (const d of stale) batch.delete(d);
+    await batch.commit();
+    console.log(`🧹 LTV: прибрано ${stale.length} застарілих частин`);
+  }
+}
+
+/**
+ * Прочитати всіх клієнтів LTV.
+ * Якщо частин немає — падаємо назад на старий формат, де клієнти лежали
+ * всередині самого знімка.
+ */
+async function readLtvClients(db: admin.firestore.Firestore): Promise<any[]> {
+  const snap = await db.collection(LTV_CLIENTS_COLLECTION).get();
+  if (!snap.empty) {
+    return snap.docs
+      .sort((a, b) => Number(a.id) - Number(b.id))
+      .flatMap(d => d.data().clients ?? []);
+  }
+
+  const legacy = await db.collection(CRM_COLLECTION).doc('keepincrm_ltv_snapshot').get();
+  return legacy.exists ? (legacy.data()?.clients ?? []) : [];
+}
+
 /**
  * @param range межі вивантаження угод. Обидві null (або аргумент відсутній) —
  *        розрахунок за весь час, єдиний варіант із повними когортами.
@@ -1129,7 +1187,7 @@ export async function syncKeepInCRMLTV(
 
     // monthlyRevenue прибираємо перед записом: він потрібен був тільки для когорт,
     // а в документі помітно роздував би кожного клієнта.
-    const topClients = allClientsSorted.slice(0, 5000).map(({ monthlyRevenue, ...rest }) => rest);
+    const clientsToStore = allClientsSorted.map(({ monthlyRevenue, ...rest }) => rest);
 
     const stageStats = Array.from(stageStatsMap.entries()).map(([stage, data]) => ({
       stage,
@@ -1148,17 +1206,23 @@ export async function syncKeepInCRMLTV(
        * поза ним не враховані, тож LTV занижений. UI має про це попередити.
        */
       scopedTo: from || to ? { from, to } : null,
-      clients: topClients,
       stageStats,
+      clientsCount: clientsToStore.length,
+      chunkCount: chunkList(clientsToStore, LTV_CLIENTS_CHUNK_SIZE).length,
       lastSyncedAt: new Date().toISOString()
     };
 
     const db = initFirebase();
     if (db) {
+      // Клієнти живуть окремо від агрегатів: разом вони не влазять у ліміт
+      // документа Firestore (1 МіБ) вже на кількох тисячах записів, і падав би
+      // весь знімок цілком — разом із когортами й ARPU.
+      await writeLtvClientChunks(db, clientsToStore);
       await db.collection(CRM_COLLECTION).doc('keepincrm_ltv_snapshot').set(snapshot);
     } else {
+      // Локальний JSON ліміту на розмір не має — тримаємо все в одному об'єкті.
       const state = await getDb();
-      state.keepincrm_ltv = snapshot;
+      state.keepincrm_ltv = { ...snapshot, clients: clientsToStore };
       await saveDb(state);
     }
 
@@ -1169,7 +1233,17 @@ export async function syncKeepInCRMLTV(
     );
     return snapshot;
   } catch (err: any) {
-    console.error('❌ Помилка LTV синхронізації:', err.message || err);
+    const message = err.message || String(err);
+    console.error('❌ Помилка LTV синхронізації:', message);
+    // Слід у знімку: інакше нічне падіння крона (він ковтає помилку) лишалося б
+    // непоміченим, і UI місяцями показував би застарілі дані як свіжі.
+    const db = initFirebase();
+    if (db) {
+      await db.collection(CRM_COLLECTION).doc('keepincrm_ltv_snapshot').set({
+        lastSyncError: message,
+        lastSyncErrorAt: new Date().toISOString(),
+      }, { merge: true }).catch(() => { /* не маскуємо початкову помилку */ });
+    }
     throw err;
   }
 }
@@ -1644,17 +1718,39 @@ async function startServer() {
     }
   });
 
-  /** GET /api/keepincrm/ltv — повернути останній збережений зріз LTV */
+  /**
+   * GET /api/keepincrm/ltv — агрегати LTV без списку клієнтів.
+   * Дашборду для картки потрібне одне число, тож тягнути сюди кількатисячний
+   * масив на кожне завантаження сторінки не варто — за ним ходять окремо.
+   */
   app.get('/api/keepincrm/ltv', requireAuth, async (req, res) => {
     try {
       const db = initFirebase();
       if (db) {
         const snap = await db.collection(CRM_COLLECTION).doc('keepincrm_ltv_snapshot').get();
-        if (snap.exists) return res.json(snap.data());
-        return res.json(null);
+        if (!snap.exists) return res.json(null);
+        // clients присутнє лише у знімках старого формату — не віддаємо його тут
+        const { clients, ...aggregates } = snap.data() as any;
+        return res.json(aggregates);
       }
       const state = await getDb();
-      res.json(state.keepincrm_ltv || null);
+      if (!state.keepincrm_ltv) return res.json(null);
+      const { clients, ...aggregates } = state.keepincrm_ltv as any;
+      res.json(aggregates);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** GET /api/keepincrm/ltv/clients — повний список клієнтів (для модалки) */
+  app.get('/api/keepincrm/ltv/clients', requireAuth, async (_req, res) => {
+    try {
+      const db = initFirebase();
+      if (db) {
+        return res.json(await readLtvClients(db));
+      }
+      const state = await getDb();
+      res.json((state.keepincrm_ltv as any)?.clients ?? []);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

@@ -1,7 +1,7 @@
 import {
   enrichClients, applyFilters, sortClients, collectTags, collectCohortMonths,
   computeDistribution, clientsToCsv, countActiveFilters, recencyBucket,
-  EMPTY_FILTERS, ClientRecord, ClientFilters,
+  EMPTY_FILTERS, ClientRecord, ClientFilters, chunkList,
 } from './clientAnalytics';
 
 let failures = 0;
@@ -149,6 +149,28 @@ console.log('\nCSV');
 
   check('лапки й крапка з комою екрануються', dataLine.startsWith('"ТОВ ""Альфа""; філія"'), true);
   check('роздільник — крапка з комою', csv.split('\r\n')[0].split(';')[1], 'Дохід');
+}
+
+console.log('\nРозбиття на частини');
+{
+  const n = (count: number) => Array.from({ length: count }, (_, i) => i);
+
+  check('порожній список — жодної частини', chunkList([], 100), []);
+  check('менше за розмір — одна частина', chunkList(n(3), 100).map(c => c.length), [3]);
+  check('рівно розмір — одна частина', chunkList(n(100), 100).map(c => c.length), [100]);
+  check('на один більше — дві частини', chunkList(n(101), 100).map(c => c.length), [100, 1]);
+  check('кілька повних', chunkList(n(250), 100).map(c => c.length), [100, 100, 50]);
+  check('порядок зберігається', chunkList(n(5), 2).flat(), [0, 1, 2, 3, 4]);
+  check('нульовий розмір відхиляється', (() => {
+    try { chunkList(n(5), 0); return 'не кинуло'; } catch { return 'кинуло'; }
+  })(), 'кинуло');
+
+  // Прибирання застарілих документів спирається на кількість частин: якщо база
+  // схудла, документи з індексом >= chunks.length мають піти.
+  const before = chunkList(n(2500), 1000).length;   // 3 частини: 0,1,2
+  const after  = chunkList(n(500), 1000).length;    // 1 частина: 0
+  check('старих індексів на видалення', [before, after, [1, 2].every(i => i >= after)], [3, 1, true]);
+  check('порожня база прибирає всі частини', chunkList([], 1000).length, 0);
 }
 
 console.log(failures === 0 ? '\n✅ Усі перевірки пройдено\n' : `\n❌ Провалено: ${failures}\n`);

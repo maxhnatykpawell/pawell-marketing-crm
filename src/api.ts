@@ -428,6 +428,16 @@ export const getKeepInCRMHistory = async (
 /**
  * Отримати розрахований LTV за весь час
  */
+/**
+ * Повний список клієнтів LTV. Лежить окремо від агрегатів і може важити кілька
+ * мегабайт, тож тягнеться лише коли він справді потрібен — при відкритті модалки.
+ */
+export const getKeepInCRMLTVClients = async (): Promise<any[]> => {
+  const res = await fetch('/api/keepincrm/ltv/clients', { headers: authHeaders() });
+  if (!res.ok) throw new Error('Не вдалось завантажити список клієнтів');
+  return res.json();
+};
+
 export const getKeepInCRMLTV = async (): Promise<any | null> => {
   const res = await fetch('/api/keepincrm/ltv', { headers: authHeaders() });
   if (!res.ok) throw new Error('Failed to load LTV snapshot');

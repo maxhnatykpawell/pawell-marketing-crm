@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
-import { X, Users, DollarSign, Gem, Download, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { X, Users, DollarSign, Gem, Download, ArrowUp, ArrowDown, AlertTriangle, Loader2 } from 'lucide-react';
+import { getKeepInCRMLTVClients } from '../api';
 import { LTV_HORIZONS, CohortLtvRow, CohortLtvHorizon } from '../lib/cohortLtv';
 import { describePeriod } from './PeriodPicker';
 import ClientFilterBar from './analytics/ClientFilterBar';
@@ -10,12 +11,6 @@ import {
   enrichClients, applyFilters, sortClients, collectTags, collectCohortMonths,
   computeDistribution, clientsToCsv,
 } from '../lib/clientAnalytics';
-
-/**
- * Скільки клієнтів сервер віддає у знімку. Якщо їх рівно стільки — список
- * майже напевно обрізаний, і фільтри працюють по неповному набору.
- */
-const SERVER_CLIENT_CAP = 5000;
 
 /** Заголовок колонки, що керує сортуванням; напрямок показано стрілкою */
 function SortableTh({
@@ -100,8 +95,9 @@ interface LtvAnalyticsModalProps {
     totalLTVRevenue: number;
     uniqueClientsCount: number;
     ltv: number;
-    clients: ClientLTV[];
     stageStats?: StageStat[];
+    /** Помилка останньої синхронізації, якщо вона впала */
+    lastSyncError?: string | null;
     cohortLtv?: {
       rows: CohortLtvRow[];
       horizons: Record<number, CohortLtvHorizon | null>;
@@ -135,7 +131,26 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
     });
   };
 
-  const allClients = data.clients || [];
+  // Клієнти лежать окремо від агрегатів і можуть важити мегабайти — тягнемо їх
+  // тут, а не разом зі знімком для картки на дашборді.
+  const [allClients, setAllClients] = useState<ClientLTV[]>([]);
+  const [clientsLoading, setClientsLoading] = useState(true);
+  const [clientsError, setClientsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await getKeepInCRMLTVClients();
+        if (!cancelled) setAllClients(list);
+      } catch (e: any) {
+        if (!cancelled) setClientsError(e.message || 'Не вдалось завантажити клієнтів');
+      } finally {
+        if (!cancelled) setClientsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Похідні поля рахуємо один раз, а не на кожен фільтр
   const enriched = useMemo(() => enrichClients(allClients), [allClients]);
@@ -267,19 +282,32 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
           filteredCount={filteredClients.length}
         />
 
-        {allClients.length >= SERVER_CLIENT_CAP && (
-          <div className="flex items-center gap-2 px-6 py-2 text-xs text-amber-700 bg-amber-50 border-b border-amber-100 flex-shrink-0">
+        {clientsError && (
+          <div className="flex items-center gap-2 px-6 py-2 text-xs text-red-700 bg-red-50 border-b border-red-100 flex-shrink-0">
             <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-            Сервер віддає не більше {SERVER_CLIENT_CAP.toLocaleString('uk-UA')} клієнтів — список обрізаний,
-            і фільтри працюють по неповному набору.
+            {clientsError}
+          </div>
+        )}
+
+        {data.lastSyncError && (
+          <div className="flex items-center gap-2 px-6 py-2 text-xs text-red-700 bg-red-50 border-b border-red-100 flex-shrink-0">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+            Остання синхронізація впала: {data.lastSyncError}. Дані нижче застарілі.
           </div>
         )}
 
         {activeTab === 'clients' && (
           <>
-            {allClients.length === 0 && (
+            {clientsLoading && (
+              <div className="flex items-center justify-center gap-2 px-6 py-3 text-sm text-gray-500 bg-gray-50 border-b border-gray-100">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Завантаження списку клієнтів...
+              </div>
+            )}
+
+            {!clientsLoading && !clientsError && allClients.length === 0 && (
               <div className="px-6 py-3 text-sm text-orange-600 bg-orange-50 border-b border-orange-100">
-                Масив клієнтів порожній — можливо, синхронізація ще не збирала ці дані.
+                Список клієнтів порожній — можливо, синхронізація ще не збирала ці дані.
               </div>
             )}
 
