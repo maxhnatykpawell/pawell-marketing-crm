@@ -435,14 +435,22 @@ export const getKeepInCRMLTV = async (): Promise<any | null> => {
 };
 
 /**
- * Запустити розрахунок LTV вручну (для адмінів)
- * @param year необов'язковий рік для розрахунку LTV лише за цей рік (напр. '2026')
+ * Запустити розрахунок LTV вручну (для адмінів).
+ *
+ * @param from початок діапазону 'YYYY-MM-DD'; null/undefined = без нижньої межі
+ * @param to   кінець діапазону 'YYYY-MM-DD'; null/undefined = без верхньої межі
+ *
+ * Обидва null означають розрахунок за весь час — єдиний варіант, у якому когорти
+ * повні. Будь-який діапазон обрізає історію покупок і занижує LTV.
  */
-export const triggerKeepInCRMSyncLTV = async (year?: string): Promise<{ success: boolean; snapshot: any }> => {
+export const triggerKeepInCRMSyncLTV = async (
+  from?: string | null,
+  to?: string | null,
+): Promise<{ success: boolean; snapshot: any }> => {
   const res = await fetch('/api/keepincrm/sync-ltv', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ year }),
+    body: JSON.stringify({ from: from ?? null, to: to ?? null }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

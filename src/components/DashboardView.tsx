@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAppContext } from '../App';
-import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, isToday, subDays, startOfMonth } from 'date-fns';
+import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, isToday, subDays } from 'date-fns';
 import { uk } from 'date-fns/locale';
 import { TrendingUp, TrendingDown, Target, Edit2, Check, Calendar as CalendarIcon, Send, Loader2, RefreshCw, Users, Zap, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { Metric, KeepInCRMHistoryResponse, KeepInCRMSourceStat, KeepInCRMAgreementStat } from '../types';
@@ -8,6 +8,15 @@ import { getKeepInCRMHistory, triggerKeepInCRMSync, triggerKeepInCRMHistorySync,
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { DollarSign, Gem, ExternalLink } from 'lucide-react';
 import LtvAnalyticsModal from './LtvAnalyticsModal';
+import PeriodPicker, { PeriodKey, PeriodValue, makePeriod, describePeriod } from './PeriodPicker';
+import LtvSyncDialog from './LtvSyncDialog';
+
+/**
+ * Скільки днів когорта «дозріває», перш ніж її конверсію можна вважати усталеною.
+ * Лід, залучений сьогодні, ще не встиг стати клієнтом, тому свіжі дні завжди
+ * занижують конверсію. Підберіть під реальний цикл угоди у вашому відділі.
+ */
+const COHORT_MATURITY_DAYS = 14;
 
 export default function DashboardView() {
   const { state, updateMetric, setActiveView, setActiveEventId, currentUser } = useAppContext();
@@ -17,8 +26,9 @@ export default function DashboardView() {
   const [isSendingReport, setIsSendingReport] = useState(false);
 
   // ── KeepInCRM State ──────────────────────────────────────────────────────────
-  type KPeriod = 'today' | 'yesterday' | '7d' | '30d' | 'month';
-  const [kPeriod, setKPeriod]     = useState<KPeriod>('today');
+  /** Пресети дашборда: тут завжди є конкретні межі, «весь час» не має сенсу */
+  const K_PRESETS: PeriodKey[] = ['today', 'yesterday', '7d', '30d', 'month', 'custom'];
+  const [kPeriod, setKPeriod]     = useState<PeriodValue>(() => makePeriod('today'));
   const [kData, setKData]         = useState<KeepInCRMHistoryResponse | null>(null);
   const [kLoading, setKLoading]   = useState(true);
   const [kSyncing, setKSyncing]   = useState(false);
@@ -26,9 +36,13 @@ export default function DashboardView() {
   
   // ── LTV State ────────────────────────────────────────────────────────────────
   const [ltvData, setLtvData]     = useState<any>(null);
+  /** Зведений LTV на горизонті 12 міс; null поки жодна когорта не дожила до нього */
+  const ltv12 = ltvData?.cohortLtv?.horizons?.[12] ?? null;
   const [ltvLoading, setLtvLoading] = useState(true);
   const [ltvSyncing, setLtvSyncing] = useState(false);
+  const [ltvError, setLtvError]     = useState<string | null>(null);
   const [isLtvModalOpen, setIsLtvModalOpen] = useState(false);
+  const [isLtvSyncOpen, setIsLtvSyncOpen]   = useState(false);
 
   // ── History sync progress (polling) ──────────────────────────────────────────
   const [hSyncRunning, setHSyncRunning] = useState(false);
@@ -39,34 +53,21 @@ export default function DashboardView() {
   const [hSyncError, setHSyncError]     = useState<string | null>(null);
   const pollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
 
-  /** YYYY-MM-DD для поточного дня */
-  const todayStr = format(new Date(), 'yyyy-MM-dd');
-
-  /** Повернути from/to для вибраного періоду */
-  const periodRange = useCallback((p: KPeriod): { from: string; to: string } => {
-    const now = new Date();
-    switch (p) {
-      case 'today':     return { from: todayStr, to: todayStr };
-      case 'yesterday': { const d = format(subDays(now, 1), 'yyyy-MM-dd'); return { from: d, to: d }; }
-      case '7d':        return { from: format(subDays(now, 6), 'yyyy-MM-dd'), to: todayStr };
-      case '30d':       return { from: format(subDays(now, 29), 'yyyy-MM-dd'), to: todayStr };
-      case 'month':     return { from: format(startOfMonth(now), 'yyyy-MM-dd'), to: todayStr };
-    }
-  }, [todayStr]);
-
-  const loadKData = useCallback(async (p: KPeriod) => {
+  const loadKData = useCallback(async (p: PeriodValue) => {
+    // Дашборд завжди працює з конкретним діапазоном; порожні межі означають, що
+    // користувач ще не добрав довільний період — запит робити нема з чим.
+    if (!p.from || !p.to) return;
     setKLoading(true);
     setKError(null);
     try {
-      const { from, to } = periodRange(p);
-      const data = await getKeepInCRMHistory(from, to, true);
+      const data = await getKeepInCRMHistory(p.from, p.to, true);
       setKData(data);
     } catch (e: any) {
       setKError(e.message || 'Не вдалось завантажити дані KeepInCRM');
     } finally {
       setKLoading(false);
     }
-  }, [periodRange]);
+  }, []);
 
   useEffect(() => { loadKData(kPeriod); }, [kPeriod, loadKData]);
 
@@ -83,7 +84,7 @@ export default function DashboardView() {
   useEffect(() => { loadLTV(); }, [loadLTV]);
 
   /** Polling: читає /api/keepincrm/sync-status кожні 1.5с поки синх активний */
-  const startPolling = useCallback((currentPeriod: KPeriod) => {
+  const startPolling = useCallback((currentPeriod: PeriodValue) => {
     if (pollRef.current) return;
     pollRef.current = setInterval(async () => {
       try {
@@ -122,8 +123,6 @@ export default function DashboardView() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleKPeriod = (p: KPeriod) => { setKPeriod(p); };
-
   const handleKSync = async () => {
     setKSyncing(true);
     setKError(null);
@@ -137,23 +136,15 @@ export default function DashboardView() {
     }
   };
 
-  const handleLTVSync = async () => {
-    const userInput = window.prompt(
-      'Введіть рік (наприклад, 2026) для розрахунку LTV за цей рік.\nАбо залиште поле порожнім, щоб завантажити всю історію за всі часи (може зайняти багато часу і перевантажити сервер):',
-      new Date().getFullYear().toString()
-    );
-    
-    // Якщо натиснули "Скасувати"
-    if (userInput === null) return;
-    
-    const year = userInput.trim() || undefined;
-
+  const handleLTVSync = async (period: PeriodValue) => {
     setLtvSyncing(true);
+    setLtvError(null);
     try {
-      const res = await triggerKeepInCRMSyncLTV(year);
+      const res = await triggerKeepInCRMSyncLTV(period.from, period.to);
       setLtvData(res.snapshot);
+      setIsLtvSyncOpen(false);
     } catch (e: any) {
-      alert(e.message);
+      setLtvError(e.message || 'Не вдалось порахувати LTV');
     } finally {
       setLtvSyncing(false);
     }
@@ -182,6 +173,28 @@ export default function DashboardView() {
     }
   };
 
+
+  /**
+   * Дні періоду, чиї когорти ще не дозріли. Конверсія по них свідомо занижена —
+   * частина лідів просто не встигла конвертнутись.
+   */
+  const immatureDates = React.useMemo(() => {
+    if (!kData) return [] as string[];
+    const cutoff = format(subDays(new Date(), COHORT_MATURITY_DAYS), 'yyyy-MM-dd');
+    return kData.entries.map(e => e.date).filter(d => d > cutoff).sort();
+  }, [kData]);
+
+  /**
+   * Дані для графіків. Знімки, зняті до переходу на когортну модель, не мають
+   * totalAcquiredToday — добудовуємо його з лідів і клієнтів, це той самий набір.
+   */
+  const chartData = React.useMemo(
+    () => (kData?.entries ?? []).map(e => ({
+      ...e,
+      acquired: e.totalAcquiredToday ?? ((e.totalLeadsToday || 0) + (e.totalClientsToday || 0)),
+    })),
+    [kData],
+  );
 
   const today = new Date();
   const weekStart = startOfWeek(today, { weekStartsOn: 1 });
@@ -339,21 +352,12 @@ export default function DashboardView() {
           </div>
 
           {/* Period picker */}
-          <div className="flex items-center bg-gray-100 rounded-lg p-0.5 gap-0.5">
-            {(['today','yesterday','7d','30d','month'] as const).map(p => (
-              <button
-                key={p}
-                onClick={() => handleKPeriod(p)}
-                className={`px-2.5 py-1 text-xs font-medium rounded-md transition ${
-                  kPeriod === p
-                    ? 'bg-white text-violet-700 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {{ today: 'Сьогодні', yesterday: 'Вчора', '7d': '7 днів', '30d': '30 днів', month: 'Місяць' }[p]}
-              </button>
-            ))}
-          </div>
+          <PeriodPicker
+            value={kPeriod}
+            onChange={setKPeriod}
+            presets={K_PRESETS}
+            disabled={kLoading && !kData}
+          />
 
           {/* Sync button (admin only) */}
           {currentUser?.role === 'admin' && (
@@ -368,9 +372,9 @@ export default function DashboardView() {
                 {hSyncRunning ? `${hSyncDone}/${hSyncTotal} днів...` : 'Синх. історію (30д)'}
               </button>
               <button
-                onClick={handleLTVSync}
+                onClick={() => setIsLtvSyncOpen(true)}
                 disabled={ltvSyncing || hSyncRunning}
-                title="Синхронізувати LTV за весь час"
+                title="Порахувати LTV за обраний період"
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${ltvSyncing ? 'animate-spin' : ''}`} />
@@ -438,19 +442,19 @@ export default function DashboardView() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
 
-              {/* Leads */}
+              {/* Залучено (когорта періоду) */}
               <KeepInCRMSourceCard
-                title="Ліди за період"
-                total={kData.aggregated.totalLeads}
-                stats={kData.aggregated.leadsBySource}
+                title="Залучено за період"
+                total={kData.aggregated.totalAcquired}
+                stats={kData.aggregated.acquiredBySource}
                 color="blue"
                 icon={<Users className="w-4 h-4" />}
-                change={kData.comparison?.leadsChange ?? null}
+                change={kData.comparison?.acquiredChange ?? null}
               />
 
-              {/* Clients */}
+              {/* Скільки з цієї когорти вже конвертувалось */}
               <KeepInCRMSourceCard
-                title="Клієнти за період"
+                title="Стали клієнтами"
                 total={kData.aggregated.totalClients}
                 stats={kData.aggregated.clientsBySource}
                 color="green"
@@ -479,9 +483,9 @@ export default function DashboardView() {
                 countChange={kData.comparison?.agreementsChange ?? null}
               />
 
-              {/* LTV */}
+              {/* Когортний LTV на горизонті 12 міс. ARPU лишається довідковим числом нижче. */}
               <div className="flex flex-col">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">LTV (За весь час)</p>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">LTV клієнта</p>
                 <div 
                   onClick={() => ltvData && setIsLtvModalOpen(true)}
                   className={`flex-1 flex flex-col justify-center bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl border border-purple-100 p-5 relative overflow-hidden transition-all ${ltvData ? 'cursor-pointer hover:shadow-md hover:border-purple-300 group' : ''}`}
@@ -494,13 +498,47 @@ export default function DashboardView() {
                       <div className="flex items-center justify-between text-purple-600 mb-1 relative z-10">
                         <div className="flex items-center">
                           <Gem className="w-4 h-4 mr-1.5" />
-                          <span className="text-sm font-semibold tracking-wide">Довічна цінність</span>
+                          <span className="text-sm font-semibold tracking-wide">
+                            {ltv12 ? 'За 12 місяців' : 'ARPU · за весь час'}
+                          </span>
                         </div>
                         <ExternalLink className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
                       </div>
-                      <span className="text-3xl font-black text-gray-900 mt-1 relative z-10">{ltvData.ltv?.toLocaleString('uk-UA') ?? 0} ₴</span>
-                      <p className="text-xs text-gray-500 mt-2 font-medium relative z-10">Клієнтів, що купили: {ltvData.uniqueClientsCount ?? 0}</p>
-                      
+
+                      {ltv12 ? (
+                        <>
+                          <span className="text-3xl font-black text-gray-900 mt-1 relative z-10">
+                            {ltv12.ltv.toLocaleString('uk-UA')} ₴
+                          </span>
+                          <p className="text-xs text-gray-500 mt-2 font-medium relative z-10">
+                            по {ltv12.cohorts} зрілих когортах · {ltv12.clients} клієнтів
+                          </p>
+                          <p className="text-[11px] text-gray-400 mt-0.5 relative z-10">
+                            ARPU за весь час: {ltvData.ltv?.toLocaleString('uk-UA') ?? 0} ₴
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-3xl font-black text-gray-900 mt-1 relative z-10">
+                            {ltvData.ltv?.toLocaleString('uk-UA') ?? 0} ₴
+                          </span>
+                          <p className="text-xs text-gray-500 mt-2 font-medium relative z-10">
+                            Клієнтів, що купили: {ltvData.uniqueClientsCount ?? 0}
+                          </p>
+                          {/* Жодна когорта ще не прожила 12 міс — чесніше показати ARPU */}
+                          <p className="text-[11px] text-amber-600 mt-1 relative z-10">
+                            ⏳ Для LTV бракує когорт віком 12 міс.
+                          </p>
+                        </>
+                      )}
+
+                      {ltvData.scopedTo && (
+                        <p className="text-[11px] text-amber-600 mt-1 relative z-10">
+                          ⚠️ Дані лише за {describePeriod({ key: 'custom', ...ltvData.scopedTo })} — LTV занижений
+                        </p>
+                      )}
+
+
                       <div className="absolute -right-6 -bottom-6 opacity-10 group-hover:scale-110 transition-transform duration-300">
                         <Gem className="w-24 h-24 text-purple-600" />
                       </div>
@@ -511,15 +549,20 @@ export default function DashboardView() {
                 </div>
               </div>
 
-              {/* Conversion */}
+              {/* Когортна конверсія */}
               <div className="flex flex-col">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Конверсія лід → клієнт</p>
+                <p
+                  className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3"
+                  title="Яка частка записів, залучених у цей період, вже стала клієнтами"
+                >
+                  Конверсія когорти
+                </p>
                 <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-br from-violet-50 to-indigo-50 rounded-xl border border-violet-100 p-6">
                   <span className="text-5xl font-black text-violet-700 leading-none">
                     {kData.aggregated.avgConversionRate}%
                   </span>
-                  <p className="text-xs text-violet-500 mt-2 font-medium">
-                    {kData.aggregated.totalClients} з {kData.aggregated.totalLeads} лідів
+                  <p className="text-xs text-violet-500 mt-2 font-medium text-center">
+                    {kData.aggregated.totalClients} з {kData.aggregated.totalAcquired} залучених
                   </p>
                   <div className="w-full mt-4 bg-violet-100 rounded-full h-2">
                     <div
@@ -527,8 +570,9 @@ export default function DashboardView() {
                       style={{ width: `${Math.min(kData.aggregated.avgConversionRate, 100)}%` }}
                     />
                   </div>
-                  {/* Comparison badge */}
-                  {kData.comparison !== null && (
+
+                  {/* Порівняння з попереднім періодом (null = ділення на нуль) */}
+                  {kData.comparison && kData.comparison.conversionChange !== null && (
                     <div className={`mt-3 flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full ${
                       kData.comparison.conversionChange >= 0
                         ? 'bg-green-50 text-green-700'
@@ -540,6 +584,18 @@ export default function DashboardView() {
                       {kData.comparison.conversionChange >= 0 ? '+' : ''}{kData.comparison.conversionChange}% відносно поп. пер.
                     </div>
                   )}
+
+                  {/* Свіжі когорти ще не встигли конвертнутись — попереджаємо явно */}
+                  {immatureDates.length > 0 && (
+                    <p
+                      className="mt-3 text-[10px] leading-snug text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5 text-center"
+                      title={`Когорти молодші за ${COHORT_MATURITY_DAYS} дн. ще накопичують конверсії, тому показник занижений`}
+                    >
+                      ⏳ {immatureDates.length === kData.entries.length
+                        ? 'Весь період ще дозріває'
+                        : `Останні ${immatureDates.length} дн. ще дозрівають`}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -549,11 +605,11 @@ export default function DashboardView() {
           {/* ── Sales Funnel ─────────────────────────────────────────────── */}
           {kData && (
             <SalesFunnel
-              leads={kData.aggregated.totalLeads}
+              acquired={kData.aggregated.totalAcquired}
               clients={kData.aggregated.totalClients}
               agreements={kData.aggregated.totalAgreements ?? 0}
               agreementsSum={kData.aggregated.totalAgreementsSum ?? 0}
-              leadsChange={kData.comparison?.leadsChange ?? null}
+              acquiredChange={kData.comparison?.acquiredChange ?? null}
               clientsChange={kData.comparison?.clientsChange ?? null}
               agreementsChange={kData.comparison?.agreementsChange ?? null}
             />
@@ -563,12 +619,12 @@ export default function DashboardView() {
           {kData && kData.entries.length > 0 && (
             <div className="mt-8 pt-6 border-t border-gray-100">
               <div className="flex items-center justify-between mb-6">
-                <h3 className="text-sm font-bold text-gray-800">Динаміка залучення (ліди та клієнти)</h3>
+                <h3 className="text-sm font-bold text-gray-800">Динаміка залучення та конверсії</h3>
               </div>
               <div className="h-[280px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart
-                    data={kData.entries}
+                    data={chartData}
                     margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
                   >
                     <defs>
@@ -607,20 +663,20 @@ export default function DashboardView() {
                       contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', fontSize: '12px' }}
                       labelFormatter={(label) => `Дата: ${label}`}
                     />
-                    <Area 
-                      type="monotone" 
-                      name="Ліди"
-                      dataKey="totalLeadsToday" 
-                      stroke="#3b82f6" 
+                    <Area
+                      type="monotone"
+                      name="Залучено"
+                      dataKey="acquired"
+                      stroke="#3b82f6"
                       strokeWidth={2}
-                      fillOpacity={1} 
-                      fill="url(#colorLeads)" 
+                      fillOpacity={1}
+                      fill="url(#colorLeads)"
                       activeDot={{ r: 4, strokeWidth: 0, fill: '#3b82f6' }}
                     />
-                    <Area 
-                      type="monotone" 
-                      name="Клієнти"
-                      dataKey="totalClientsToday" 
+                    <Area
+                      type="monotone"
+                      name="Стали клієнтами"
+                      dataKey="totalClientsToday"
                       stroke="#10b981" 
                       strokeWidth={2}
                       fillOpacity={1} 
@@ -648,7 +704,7 @@ export default function DashboardView() {
               <div className="h-[280px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart
-                    data={kData.entries}
+                    data={chartData}
                     margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
                   >
                     <defs>
@@ -796,9 +852,19 @@ export default function DashboardView() {
       
       {/* LTV Analytics Modal */}
       {isLtvModalOpen && ltvData && (
-        <LtvAnalyticsModal 
-          data={ltvData} 
-          onClose={() => setIsLtvModalOpen(false)} 
+        <LtvAnalyticsModal
+          data={ltvData}
+          onClose={() => setIsLtvModalOpen(false)}
+        />
+      )}
+
+      {/* Вибір періоду для розрахунку LTV */}
+      {isLtvSyncOpen && (
+        <LtvSyncDialog
+          syncing={ltvSyncing}
+          error={ltvError}
+          onClose={() => { setIsLtvSyncOpen(false); setLtvError(null); }}
+          onConfirm={handleLTVSync}
         />
       )}
     </div>
@@ -900,54 +966,54 @@ function AvgDealCard({ totalSum, totalCount, bySource, sumChange }: AvgDealCardP
 // ── Sales Funnel ─────────────────────────────────────────────────────────────
 
 interface SalesFunnelProps {
-  leads: number;
+  acquired: number;
   clients: number;
   agreements: number;
   agreementsSum: number;
-  leadsChange: number | null;
+  acquiredChange: number | null;
   clientsChange: number | null;
   agreementsChange: number | null;
 }
 
-function SalesFunnel({ leads, clients, agreements, agreementsSum, leadsChange, clientsChange, agreementsChange }: SalesFunnelProps) {
-  // Конверсії між рівнями
-  const conv1 = leads > 0 ? Math.round((clients / leads) * 1000) / 10 : 0;
-  const conv2 = clients > 0 ? Math.round((agreements / clients) * 1000) / 10 : 0;
-  const convTotal = leads > 0 ? Math.round((agreements / leads) * 1000) / 10 : 0;
+function SalesFunnel({ acquired, clients, agreements, agreementsSum, acquiredChange, clientsChange, agreementsChange }: SalesFunnelProps) {
+  // Єдина конверсія, яку чесно дають денні знімки: обидва числа описують ту саму
+  // когорту — записи, залучені в цей період. Ступінь «Клієнт → Угода» тут навмисне
+  // не рахується: угоди за період не прив'язані до когорти (угода може бути з
+  // клієнтом, заведеним рік тому), тож таке відношення нічого не вимірювало б.
+  const conv1 = acquired > 0 ? Math.round((clients / acquired) * 1000) / 10 : 0;
 
   const stages = [
     {
-      key: 'leads',
-      label: 'Ліди',
-      value: leads,
+      key: 'acquired',
+      label: 'Залучено',
+      value: acquired,
       pct: 100,
       color: { fill: '#3b82f6', light: '#eff6ff', border: '#bfdbfe', text: '#1d4ed8' },
-      change: leadsChange,
+      change: acquiredChange,
       sub: null,
+      note: null as string | null,
     },
     {
       key: 'clients',
-      label: 'Клієнти',
+      label: 'Стали клієнтами',
       value: clients,
-      pct: leads > 0 ? (clients / leads) * 100 : 0,
+      pct: acquired > 0 ? (clients / acquired) * 100 : 0,
       color: { fill: '#10b981', light: '#ecfdf5', border: '#a7f3d0', text: '#065f46' },
       change: clientsChange,
       sub: null,
+      note: null as string | null,
     },
     {
       key: 'agreements',
       label: 'Угоди',
       value: agreements,
-      pct: leads > 0 ? (agreements / leads) * 100 : 0,
+      // Ширина рівня угод відносна до когорти лише візуально — див. note нижче.
+      pct: acquired > 0 ? Math.min((agreements / acquired) * 100, 100) : 0,
       color: { fill: '#8b5cf6', light: '#f5f3ff', border: '#ddd6fe', text: '#5b21b6' },
       change: agreementsChange,
       sub: agreementsSum > 0 ? `${agreementsSum.toLocaleString('uk-UA')} ₴` : null,
+      note: 'обсяг за період, не прив\'язаний до когорти',
     },
-  ];
-
-  const conversions = [
-    { label: 'Лід → Клієнт', value: conv1 },
-    { label: 'Клієнт → Угода', value: conv2 },
   ];
 
   return (
@@ -955,9 +1021,9 @@ function SalesFunnel({ leads, clients, agreements, agreementsSum, leadsChange, c
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h3 className="text-sm font-bold text-gray-800">Воронка продажів</h3>
-        {leads > 0 && (
+        {acquired > 0 && (
           <span className="text-xs text-gray-400 font-medium">
-            Загальна конверсія: <span className="text-gray-600 font-semibold">{convTotal}%</span>
+            Конверсія когорти: <span className="text-gray-600 font-semibold">{conv1}%</span>
           </span>
         )}
       </div>
@@ -1064,9 +1130,12 @@ function SalesFunnel({ leads, clients, agreements, agreementsSum, leadsChange, c
                     </span>
                   )}
                 </div>
+                {s.note && (
+                  <p className="text-[10px] text-gray-400 mt-1 leading-snug">{s.note}</p>
+                )}
               </div>
 
-              {/* Change badge */}
+              {/* Change badge — null означає нульову базу, відсоток не визначений */}
               {s.change !== null && (
                 <span
                   className={`flex-shrink-0 text-[11px] font-bold px-2 py-0.5 rounded-full ${
@@ -1079,14 +1148,17 @@ function SalesFunnel({ leads, clients, agreements, agreementsSum, leadsChange, c
             </div>
           ))}
 
-          {/* Conversion rates */}
-          <div className="grid grid-cols-2 gap-3 pt-1">
-            {conversions.map((c, i) => (
-              <div key={i} className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3 text-center">
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{c.label}</p>
-                <p className="text-2xl font-black text-gray-800 mt-1">{c.value}<span className="text-sm font-semibold text-gray-400">%</span></p>
-              </div>
-            ))}
+          {/* Когортна конверсія — єдиний перехід, який ці дані дозволяють виміряти */}
+          <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3 text-center">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+              Залучений → Клієнт
+            </p>
+            <p className="text-2xl font-black text-gray-800 mt-1">
+              {conv1}<span className="text-sm font-semibold text-gray-400">%</span>
+            </p>
+            <p className="text-[10px] text-gray-400 mt-0.5">
+              {clients.toLocaleString('uk-UA')} з {acquired.toLocaleString('uk-UA')} залучених
+            </p>
           </div>
         </div>
 

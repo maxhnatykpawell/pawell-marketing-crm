@@ -358,15 +358,23 @@ export interface KeepInCRMAgreementStat {
 export interface KeepInCRMSnapshot {
   /** Дата, за яку знято зріз (ISO-рядок, тільки дата: 2026-07-20) */
   date: string;
-  /** Ліди за поточний день по джерелах */
+  /** Записи когорти, що досі лишаються лідами, по джерелах */
   leadsToday: KeepInCRMSourceStat[];
-  /** Клієнти (контрагенти) за поточний день по джерелах */
+  /** Записи когорти, що вже стали клієнтами, по джерелах */
   clientsToday: KeepInCRMSourceStat[];
-  /** Загальна кількість лідів за день */
+  /**
+   * Скільки всього записів залучено цього дня (ліди + клієнти) — знаменник конверсії.
+   * Відсутнє у знімках, знятих до переходу на когортну модель.
+   */
+  totalAcquiredToday?: number;
+  /** Скільки із залучених цього дня досі лишаються лідами */
   totalLeadsToday: number;
-  /** Загальна кількість клієнтів за день */
+  /** Скільки із залучених цього дня вже стали клієнтами */
   totalClientsToday: number;
-  /** Конверсія лід → клієнт за день (0–100 %) */
+  /**
+   * Когортна конверсія: totalClientsToday / totalAcquiredToday (0–100 %).
+   * «Яка частка залучених у цей день стала клієнтами» — станом на lastSyncedAt.
+   */
   conversionRateToday: number;
   /** Угоди за поточний день по джерелах */
   agreementsToday?: KeepInCRMAgreementStat[];
@@ -382,26 +390,34 @@ export interface KeepInCRMSnapshot {
 
 /** Агреговані показники за довільний період */
 export interface KeepInCRMPeriodAggregated {
-  totalLeads: number;
-  totalClients: number;
-  avgConversionRate: number;               // середній % конверсії по дням
+  totalAcquired: number;                   // усі залучені за період (ліди + клієнти)
+  totalLeads: number;                      // з них досі лишаються лідами
+  totalClients: number;                    // з них стали клієнтами
+  avgConversionRate: number;               // когортна конверсія: totalClients / totalAcquired
   totalAgreements?: number;
   totalAgreementsSum?: number;
-  leadsBySource: KeepInCRMSourceStat[];    // зведені по джерелу за весь період
-  clientsBySource: KeepInCRMSourceStat[];
+  acquiredBySource: KeepInCRMSourceStat[]; // усі залучені по джерелу за період
+  leadsBySource: KeepInCRMSourceStat[];    // з них досі ліди
+  clientsBySource: KeepInCRMSourceStat[];  // з них конвертувались
   agreementsBySource?: KeepInCRMAgreementStat[];
 }
 
 /** Порівняння поточного і попереднього еквівалентного периоду */
 export interface KeepInCRMComparison {
+  totalAcquired: number;
   totalLeads: number;
   totalClients: number;
   avgConversionRate: number;
-  leadsChange: number;       // % зміна (позитивне = ріст)
-  clientsChange: number;
-  conversionChange: number;
-  agreementsChange?: number;
-  agreementsSumChange?: number;
+  /**
+   * % зміни відносно попереднього періоду (позитивне = ріст).
+   * null, коли база нульова — відсоток від нуля не визначений.
+   */
+  acquiredChange: number | null;
+  leadsChange: number | null;
+  clientsChange: number | null;
+  conversionChange: number | null;
+  agreementsChange?: number | null;
+  agreementsSumChange?: number | null;
 }
 
 /** Відповідь /api/keepincrm/history */

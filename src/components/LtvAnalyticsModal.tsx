@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { X, Search, Filter, Users, DollarSign, Gem, Tag } from 'lucide-react';
+import { LTV_HORIZONS, CohortLtvRow, CohortLtvHorizon } from '../lib/cohortLtv';
+import { describePeriod } from './PeriodPicker';
 
 interface ClientLTV {
   id: string;
@@ -67,6 +69,9 @@ interface StageStat {
   avgCycleDays: number;
 }
 
+/** Скільки місяців показувати в матриці, щоб таблиця лишалась читабельною */
+const LTV_MAX_MONTHS = 24;
+
 interface LtvAnalyticsModalProps {
   onClose: () => void;
   data: {
@@ -75,6 +80,12 @@ interface LtvAnalyticsModalProps {
     ltv: number;
     clients: ClientLTV[];
     stageStats?: StageStat[];
+    cohortLtv?: {
+      rows: CohortLtvRow[];
+      horizons: Record<number, CohortLtvHorizon | null>;
+    };
+    /** Діапазон, яким обмежено вивантаження; null = за весь час */
+    scopedTo?: { from: string | null; to: string | null } | null;
   };
 }
 
@@ -144,6 +155,17 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
   const sortedCohortKeys = Object.keys(cohortsData).sort().reverse(); 
   const maxMonthOffset = Math.max(0, ...Object.values(cohortsData).flatMap((c: any) => Object.keys(c.retention).map(Number)));
 
+  // ── Когортний LTV (з сервера, по всіх клієнтах) ────────────────────────────
+  const ltvCohortRows = useMemo(
+    () => [...(data.cohortLtv?.rows ?? [])].sort((a, b) => b.month.localeCompare(a.month)),
+    [data.cohortLtv],
+  );
+  const ltvMaxOffset = Math.min(
+    LTV_MAX_MONTHS,
+    Math.max(0, ...ltvCohortRows.map(r => r.maxOffset)),
+  );
+  const ltvMaxValue = Math.max(0, ...ltvCohortRows.flatMap(r => Object.values(r.ltvByOffset)));
+
   // Перерахунок LTV для поточної вибірки
   const sampleRevenue = filteredClients.reduce((sum, c) => sum + c.revenue, 0);
   const sampleCount = filteredClients.length;
@@ -175,7 +197,7 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
                 onClick={() => setActiveTab('clients')}
                 className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${activeTab === 'clients' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
-                Клієнти (LTV & RFM)
+                Клієнти (ARPU & RFM)
               </button>
               <button 
                 onClick={() => setActiveTab('funnel')}
@@ -265,7 +287,7 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
 
           {allClients.length === 0 && (
             <div className="text-sm text-orange-500 font-medium ml-auto">
-              Увага: Масив клієнтів пустий. Можливо, синхронізація ще не збирала ці дані. Оновіть LTV.
+              Увага: Масив клієнтів пустий. Можливо, синхронізація ще не збирала ці дані. Оновіть дані.
             </div>
           )}
 
@@ -275,7 +297,7 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-6 bg-gray-50/50 flex-shrink-0">
           <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between">
             <div>
-              <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">Середній чек (LTV)</p>
+              <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">Дохід на клієнта (ARPU)</p>
               <p className="text-3xl font-black text-purple-600">{sampleLtv.toLocaleString('uk-UA')} ₴</p>
             </div>
             <div className="w-12 h-12 bg-purple-50 rounded-full flex items-center justify-center">
@@ -310,7 +332,7 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
             <thead>
               <tr className="border-b border-gray-200">
                 <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Клієнт / RFM</th>
-                <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">LTV (Сума)</th>
+                <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Дохід (сума)</th>
                 <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">К-ть угод / Остання</th>
                 <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Теги</th>
               </tr>
@@ -546,6 +568,105 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
                     </tbody>
                   </table>
                 </div>
+              )}
+            </div>
+
+            {/* ── Когортний LTV ──────────────────────────────────────────────
+                На відміну від таблиці утримання вище, ці числа приходять з сервера
+                і рахуються по ВСІХ клієнтах — фільтри вибірки на них не впливають. */}
+            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col">
+              <h3 className="text-base font-black text-gray-800 mb-2">Когортний LTV</h3>
+              <p className="text-sm text-gray-500 mb-1">
+                Накопичений середній дохід з одного клієнта через N місяців після першої покупки.
+              </p>
+              <p className="text-xs text-gray-400 mb-6">
+                Рахується по всіх клієнтах — фільтри та пошук на цю таблицю не впливають.
+                {data.scopedTo && (
+                  <span className="text-amber-600 font-semibold">
+                    {' '}Синхронізовано лише за {describePeriod({ key: 'custom', ...data.scopedTo })}, тож LTV занижений.
+                  </span>
+                )}
+              </p>
+
+              {!ltvCohortRows.length ? (
+                <div className="py-12 text-center text-gray-400 text-sm">
+                  Немає даних про когорти. Запустіть синхронізацію LTV.
+                </div>
+              ) : (
+                <>
+                  {/* Зведення по горизонтах */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                    {LTV_HORIZONS.map(h => {
+                      const stat = data.cohortLtv?.horizons?.[h] ?? null;
+                      return (
+                        <div key={h} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                            LTV · {h} міс.
+                          </p>
+                          {stat ? (
+                            <>
+                              <p className="text-xl font-black text-purple-700 mt-1">
+                                {stat.ltv.toLocaleString('uk-UA')} ₴
+                              </p>
+                              <p className="text-[10px] text-gray-400 mt-0.5">
+                                {stat.cohorts} когорт · {stat.clients} клієнтів
+                              </p>
+                            </>
+                          ) : (
+                            <p className="text-xs text-gray-400 italic mt-2">
+                              ще немає когорт такого віку
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[800px]">
+                      <thead>
+                        <tr>
+                          <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200">Когорта</th>
+                          <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200 text-center">Розмір</th>
+                          {Array.from({ length: ltvMaxOffset + 1 }).map((_, i) => (
+                            <th key={i} className="py-3 px-3 text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200 text-center">M{i}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {ltvCohortRows.map(row => (
+                          <tr key={row.month} className="hover:bg-gray-50/50 transition">
+                            <td className="py-3 px-4 text-sm font-bold text-gray-800 whitespace-nowrap">{row.month}</td>
+                            <td className="py-3 px-4 text-sm font-bold text-blue-600 text-center">{row.size}</td>
+                            {Array.from({ length: ltvMaxOffset + 1 }).map((_, i) => {
+                              // Когорта ще не дожила до цього зміщення — комірки немає,
+                              // і це принципово інше, ніж «дохід нульовий».
+                              if (i > row.maxOffset) {
+                                return <td key={i} className="p-1"><div className="w-full h-10" /></td>;
+                              }
+                              const value = row.ltvByOffset[i] ?? 0;
+                              const intensity = ltvMaxValue > 0 ? value / ltvMaxValue : 0;
+                              return (
+                                <td key={i} className="p-1">
+                                  <div
+                                    className="w-full h-10 flex items-center justify-center rounded text-[11px] font-semibold whitespace-nowrap"
+                                    style={{
+                                      backgroundColor: `rgba(139, 92, 246, ${Math.max(0.06, intensity * 0.85)})`,
+                                      color: intensity > 0.5 ? '#fff' : '#4c1d95',
+                                    }}
+                                    title={`${row.month}, ${i} міс.: ${value.toLocaleString('uk-UA')} ₴ на клієнта`}
+                                  >
+                                    {value > 0 ? value.toLocaleString('uk-UA') : '—'}
+                                  </div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </div>
           </div>

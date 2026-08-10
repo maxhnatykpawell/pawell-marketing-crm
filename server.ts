@@ -15,6 +15,8 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import admin from 'firebase-admin';
 
+import { buildCohortLtv } from './src/lib/cohortLtv';
+
 
 // ── Firebase Init ─────────────────────────────────────────────────────────────
 
@@ -892,14 +894,28 @@ function groupAgreementsBySource(agreements: any[], allSourceNames: string[] = [
 
 /**
  * Основна функція синхронізації: запитує KeepInCRM, рахує метрики, зберігає в стан.
+ *
+ * КОГОРТНА МОДЕЛЬ. Знімок за дату D описує когорту записів, *створених* у день D,
+ * у тому стані, в якому вони перебувають на момент синхронізації:
+ *   totalAcquiredToday — скільки всього записів залучено того дня (ліди + клієнти);
+ *   totalClientsToday  — скільки з них на цей момент вже мають lead: false;
+ *   totalLeadsToday    — скільки з них досі lead: true (не конвертувались).
+ * Тому конверсія = clients / acquired і відповідає на питання «яка частка залучених
+ * у день D стала клієнтами». Щоб показник дозрівав, минулі дні треба періодично
+ * пересинхронізовувати — цим займається setupKeepInCRMCohortCron().
+ *
+ * @param opts.sourceNames — заздалегідь отриманий список джерел; дозволяє не смикати
+ *        /sources на кожен день під час пакетної ре-синхронізації.
  */
-async function syncKeepInCRM(targetDate?: string): Promise<void> {
+async function syncKeepInCRM(
+  targetDate?: string,
+  opts: { sourceNames?: string[] } = {},
+): Promise<{ ok: boolean; error?: string }> {
   const apiKey = KEEPINCRM_API_KEY();
-  const subdomain = KEEPINCRM_SUBDOMAIN();
 
   if (!apiKey) {
     console.log('⚠️ KeepInCRM синхронізація пропущена: KEEPINCRM_API_KEY не задано.');
-    return;
+    return { ok: false, error: 'missing_api_key' };
   }
 
   const today = targetDate || todayKyiv(); // YYYY-MM-DD
@@ -918,14 +934,9 @@ async function syncKeepInCRM(targetDate?: string): Promise<void> {
     const leadsRaw = allClientsRaw.filter(c => c.lead === true || String(c.lead) === 'true');
     const clientsRaw = allClientsRaw.filter(c => c.lead === false || c.lead == null || String(c.lead) === 'false');
 
-    console.log(`🐞 KeepInCRM Debug: Отримано всього записів з API: ${allClientsRaw.length}`);
-    if (allClientsRaw.length > 0) {
-      console.log(`🐞 KeepInCRM Debug First Item: id=${allClientsRaw[0].id}, lead=${allClientsRaw[0].lead} (type: ${typeof allClientsRaw[0].lead})`);
-    }
-
-    // Отримуємо ВСІ існуючі джерела з CRM
-    const sourcesRaw = await keepinFetchAll('/sources', {});
-    const allSourceNames = sourcesRaw.map(s => s.name);
+    // Отримуємо ВСІ існуючі джерела з CRM (або беремо передані — див. opts.sourceNames)
+    const allSourceNames = opts.sourceNames
+      ?? (await keepinFetchAll('/sources', {})).map(s => s.name);
 
     // Отримуємо угоди за день
     const allAgreementsRaw = await keepinFetchAll('/agreements', {
@@ -933,40 +944,29 @@ async function syncKeepInCRM(targetDate?: string): Promise<void> {
       'q[created_at_lteq]': `${today}T23:59:59.999+03:00`
     });
 
-    // ── Діагностика угод ──────────────────────────────────────────────────────
-    console.log(`🐞 KeepInCRM Agreements Debug: знайдено ${allAgreementsRaw.length} угод за ${today}`);
-    if (allAgreementsRaw.length > 0) {
-      const sample = allAgreementsRaw[0];
-      // Показуємо всі числові/рядкові поля першої угоди для діагностики
-      const sampleKeys = Object.keys(sample).filter(k => {
-        const v = sample[k];
-        return typeof v === 'number' || (typeof v === 'string' && v !== '');
-      });
-      console.log(`🐞 KeepInCRM Agreement[0] fields: ${JSON.stringify(sampleKeys)}`);
-      console.log(`🐞 KeepInCRM Agreement[0] sample: id=${sample.id}, budget=${sample.budget}, total=${sample.total}, total_price=${sample.total_price}, jobs_total=${sample.jobs_total}, amount=${sample.amount}`);
-      console.log(`🐞 KeepInCRM Agreement[0] source fields: source=${JSON.stringify(sample.source)}, client.source=${JSON.stringify(sample.client?.source)}`);
-    }
-    // ─────────────────────────────────────────────────────────────────────────
-
     const leadsToday = groupBySource(leadsRaw, allSourceNames);
     const clientsToday = groupBySource(clientsRaw, allSourceNames);
     const agreementsToday = groupAgreementsBySource(allAgreementsRaw, allSourceNames);
-    
+
+    // ── Когортна конверсія ───────────────────────────────────────────────────
+    // Знаменник — усі записи, залучені цього дня, а не лише ті, що досі ліди.
+    // Інакше конверсія ділила б дві різні когорти одна на одну.
+    const totalAcquiredToday = allClientsRaw.length;
     const totalLeadsToday = leadsRaw.length;
     const totalClientsToday = clientsRaw.length;
     const conversionRateToday =
-      totalLeadsToday > 0
-        ? Math.round((totalClientsToday / totalLeadsToday) * 1000) / 10
+      totalAcquiredToday > 0
+        ? Math.round((totalClientsToday / totalAcquiredToday) * 1000) / 10
         : 0;
-        
+
     const totalAgreementsToday = allAgreementsRaw.length;
     const totalAgreementsSumToday = allAgreementsRaw.reduce((sum, a) => sum + extractAgreementSum(a), 0);
-    console.log(`🐞 KeepInCRM Agreements: totalSum=${totalAgreementsSumToday}, agreementsToday=${JSON.stringify(agreementsToday)}`);
 
     const snapshot = {
       date: today,
       leadsToday,
       clientsToday,
+      totalAcquiredToday,
       totalLeadsToday,
       totalClientsToday,
       conversionRateToday,
@@ -995,28 +995,42 @@ async function syncKeepInCRM(targetDate?: string): Promise<void> {
       await saveDb(state);
     }
 
-    console.log(`✅ KeepInCRM синх: лідів=${totalLeadsToday}, клієнтів=${totalClientsToday}, конверсія=${conversionRateToday}%`);
+    console.log(`✅ KeepInCRM синх ${today}: залучено=${totalAcquiredToday}, з них клієнтів=${totalClientsToday}, досі лідів=${totalLeadsToday}, конверсія=${conversionRateToday}%`);
+    return { ok: true };
   } catch (err: any) {
-    console.error('❌ KeepInCRM синх помилка:', err.message || err);
+    const message = err.message || String(err);
+    console.error(`❌ KeepInCRM синх помилка (${today}):`, message);
     const db = initFirebase();
     if (db) {
       await db.collection(CRM_COLLECTION).doc('keepincrm_snapshot').set({
-        lastSyncError: err.message || String(err),
+        lastSyncError: message,
         lastSyncedAt: new Date().toISOString(),
       }, { merge: true });
     }
+    return { ok: false, error: message };
   }
 }
 
-export async function syncKeepInCRMLTV(year?: string): Promise<any> {
-  const label = year ? `рік ${year}` : 'всі угоди';
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * @param range межі вивантаження угод. Обидві null (або аргумент відсутній) —
+ *        розрахунок за весь час, єдиний варіант із повними когортами.
+ */
+export async function syncKeepInCRMLTV(
+  range?: { from?: string | null; to?: string | null },
+): Promise<any> {
+  // Приймаємо лише валідні дати — інакше зіпсований ввід тихо перетворив би
+  // розрахунок на «за весь час», і ніхто б не помітив підміни.
+  const from = range?.from && ISO_DATE.test(range.from) ? range.from : null;
+  const to   = range?.to   && ISO_DATE.test(range.to)   ? range.to   : null;
+
+  const label = from || to ? `${from ?? '…'} — ${to ?? '…'}` : 'всі угоди';
   console.log(`🔄 Запуск LTV синхронізації з KeepInCRM (${label})...`);
   try {
     const params: Record<string, string> = {};
-    if (year && /^\d{4}$/.test(year)) {
-      params['q[created_at_gteq]'] = `${year}-01-01T00:00:00.000+03:00`;
-      params['q[created_at_lteq]'] = `${year}-12-31T23:59:59.999+03:00`;
-    }
+    if (from) params['q[created_at_gteq]'] = `${from}T00:00:00.000+03:00`;
+    if (to)   params['q[created_at_lteq]'] = `${to}T23:59:59.999+03:00`;
 
     const allAgreementsRaw = await keepinFetchAll('/agreements', params);
     
@@ -1040,7 +1054,11 @@ export async function syncKeepInCRMLTV(year?: string): Promise<any> {
             revenue: 0,
             agreementsCount: 0,
             tags: [],
-            purchaseMonths: []
+            purchaseMonths: [],
+            // Дохід по місяцях — потрібен для когортного LTV. Живе лише в пам'яті
+            // під час синхронізації; у знімок пишеться вже агрегована матриця когорт,
+            // інакше документ роздувся б на кожного клієнта.
+            monthlyRevenue: {} as Record<string, number>,
           };
           clientsMap.set(clientId, clientData);
         }
@@ -1060,6 +1078,7 @@ export async function syncKeepInCRMLTV(year?: string): Promise<any> {
             if (!clientData.purchaseMonths.includes(yyyyMm)) {
               clientData.purchaseMonths.push(yyyyMm);
             }
+            clientData.monthlyRevenue[yyyyMm] = (clientData.monthlyRevenue[yyyyMm] || 0) + amount;
           }
         }
 
@@ -1100,10 +1119,17 @@ export async function syncKeepInCRMLTV(year?: string): Promise<any> {
     }
 
     const uniqueClientsCount = clientsMap.size;
+    // ARPU — середній дохід на клієнта за весь час. Лишається як довідкове число.
     const ltv = uniqueClientsCount > 0 ? Math.round(totalLTVRevenue / uniqueClientsCount) : 0;
-    
+
     const allClientsSorted = Array.from(clientsMap.values()).sort((a, b) => b.revenue - a.revenue);
-    const topClients = allClientsSorted.slice(0, 5000);
+
+    // Когорти рахуємо по ВСІХ клієнтах, а не лише по збережених у знімку.
+    const cohortLtv = buildCohortLtv(allClientsSorted, todayKyiv().slice(0, 7));
+
+    // monthlyRevenue прибираємо перед записом: він потрібен був тільки для когорт,
+    // а в документі помітно роздував би кожного клієнта.
+    const topClients = allClientsSorted.slice(0, 5000).map(({ monthlyRevenue, ...rest }) => rest);
 
     const stageStats = Array.from(stageStatsMap.entries()).map(([stage, data]) => ({
       stage,
@@ -1116,6 +1142,12 @@ export async function syncKeepInCRMLTV(year?: string): Promise<any> {
       totalLTVRevenue,
       uniqueClientsCount,
       ltv,
+      cohortLtv,
+      /**
+       * Коли синхронізація обмежена діапазоном, когорти обрізані: покупки клієнта
+       * поза ним не враховані, тож LTV занижений. UI має про це попередити.
+       */
+      scopedTo: from || to ? { from, to } : null,
       clients: topClients,
       stageStats,
       lastSyncedAt: new Date().toISOString()
@@ -1130,7 +1162,11 @@ export async function syncKeepInCRMLTV(year?: string): Promise<any> {
       await saveDb(state);
     }
 
-    console.log(`✅ LTV Синхронізація завершена. LTV: ${ltv}, Унікальних покупців: ${uniqueClientsCount}, Загальний дохід: ${totalLTVRevenue}`);
+    const h12 = cohortLtv.horizons[12];
+    console.log(
+      `✅ LTV синх (${label}). ARPU: ${ltv}, покупців: ${uniqueClientsCount}, дохід: ${totalLTVRevenue}. ` +
+      `Когорт: ${cohortLtv.rows.length}, LTV-12міс: ${h12 ? `${h12.ltv} (по ${h12.cohorts} зрілих когортах)` : 'ще немає зрілих когорт'}`
+    );
     return snapshot;
   } catch (err: any) {
     console.error('❌ Помилка LTV синхронізації:', err.message || err);
@@ -1157,20 +1193,21 @@ function aggregateEntries(entries: any[]) {
   const sourceClients: Record<string, number> = {};
   const sourceAgreements: Record<string, { count: number; sum: number }> = {};
   
+  let totalAcquired = 0;
   let totalLeads = 0;
   let totalClients = 0;
   let totalAgreements = 0;
   let totalAgreementsSum = 0;
-  let convSum = 0;
-  let convDays = 0;
 
   for (const e of entries) {
     totalLeads += e.totalLeadsToday || 0;
     totalClients += e.totalClientsToday || 0;
+    // Знімки, зняті до переходу на когортну модель, не мають totalAcquiredToday —
+    // відновлюємо його як ліди + клієнти, це той самий набір записів.
+    totalAcquired += e.totalAcquiredToday ?? ((e.totalLeadsToday || 0) + (e.totalClientsToday || 0));
     totalAgreements += e.totalAgreementsToday || 0;
     totalAgreementsSum += e.totalAgreementsSumToday || 0;
-    
-    if (typeof e.conversionRateToday === 'number') { convSum += e.conversionRateToday; convDays++; }
+
     for (const s of (e.leadsToday || [])) sourceLeads[s.source] = (sourceLeads[s.source] || 0) + s.count;
     for (const s of (e.clientsToday || [])) sourceClients[s.source] = (sourceClients[s.source] || 0) + s.count;
     for (const s of (e.agreementsToday || [])) {
@@ -1183,25 +1220,38 @@ function aggregateEntries(entries: any[]) {
   const toArr = (map: Record<string, number>) =>
     Object.entries(map).map(([source, count]) => ({ source, count })).sort((a, b) => b.count - a.count);
 
+  // Залучено по джерелах = ті, що досі ліди, плюс ті, що вже конвертувались.
+  const sourceAcquired: Record<string, number> = { ...sourceLeads };
+  for (const [src, n] of Object.entries(sourceClients)) {
+    sourceAcquired[src] = (sourceAcquired[src] || 0) + n;
+  }
+
   const aggArr = Object.entries(sourceAgreements)
     .map(([source, data]) => ({ source, count: data.count, totalSum: data.sum }))
     .sort((a, b) => b.count - a.count);
 
   return {
+    totalAcquired,
     totalLeads,
     totalClients,
     totalAgreements,
     totalAgreementsSum,
-    avgConversionRate: totalLeads > 0 ? Math.round((totalClients / totalLeads) * 1000) / 10 : 0,
+    // Когортна конверсія за період: яка частка всіх залучених стала клієнтами.
+    avgConversionRate: totalAcquired > 0 ? Math.round((totalClients / totalAcquired) * 1000) / 10 : 0,
+    acquiredBySource: toArr(sourceAcquired),
     leadsBySource: toArr(sourceLeads),
     clientsBySource: toArr(sourceClients),
     agreementsBySource: aggArr,
   };
 }
 
-/** Порахувати % зміну; повертає null якщо base = 0 */
-function pctChange(current: number, base: number): number {
-  if (base === 0) return current > 0 ? 100 : 0;
+/**
+ * Порахувати % зміну відносно бази.
+ * Повертає null, коли база нульова: зростання «з 0 до 1» і «з 0 до 500» не мають
+ * осмисленого відсотка, і показувати для обох «+100%» — оманливо.
+ */
+function pctChange(current: number, base: number): number | null {
+  if (base === 0) return null;
   return Math.round(((current - base) / base) * 1000) / 10;
 }
 
@@ -1263,7 +1313,7 @@ function setupKeepInCRMLTVCron() {
 
 interface SyncState {
   running: boolean;
-  type: 'history' | 'snapshot' | null; // що саме синхронізується
+  type: 'history' | 'snapshot' | 'cohort' | null; // що саме синхронізується
   total: number;          // скільки днів загалом (для history)
   done: number;           // скільки вже оброблено
   currentDate: string;    // яка дата зараз обробляється
@@ -1291,6 +1341,83 @@ function resetSyncState(error?: string) {
   syncState.currentDate = '';
 }
 
+/**
+ * Пересинхронізувати хвіст із N днів.
+ *
+ * Потрібно для когортної конверсії: знімок дня фіксує стан записів на момент
+ * синхронізації, а лід, залучений у понеділок, може стати клієнтом у п'ятницю.
+ * Без цього перерахунку конверсія минулих днів назавжди лишалась би такою, якою
+ * була в день залучення — тобто майже нульовою.
+ *
+ * Список джерел тягнемо один раз на весь прогін, а не на кожен день.
+ * Дні, що впали, рахуються окремо і не видаються за успішні.
+ */
+async function resyncCohortWindow(days: number): Promise<{ done: number; failed: string[] }> {
+  const sourceNames = (await keepinFetchAll('/sources', {})).map(s => s.name);
+
+  const today = new Date(todayKyiv() + 'T00:00:00Z');
+  const dates: string[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setUTCDate(d.getUTCDate() - i);
+    dates.push(d.toISOString().slice(0, 10));
+  }
+
+  const failed: string[] = [];
+  let done = 0;
+
+  for (const d of dates) {
+    syncState.currentDate = d;
+    const res = await syncKeepInCRM(d, { sourceNames });
+    if (res.ok) done++; else failed.push(d);
+    syncState.done++;
+  }
+
+  return { done, failed };
+}
+
+let keepinCRMCohortCronTask: any = null;
+
+/** Щодоби о 04:00 перераховує хвіст, щоб когорти дозрівали. */
+function setupKeepInCRMCohortCron() {
+  if (keepinCRMCohortCronTask) {
+    keepinCRMCohortCronTask.stop();
+    keepinCRMCohortCronTask = null;
+  }
+
+  const parsed = parseInt(process.env.KEEPINCRM_COHORT_WINDOW_DAYS || '30', 10);
+  const windowDays = isNaN(parsed) || parsed < 1 ? 30 : Math.min(parsed, 90);
+  const cronExpr = '0 4 * * *';
+
+  keepinCRMCohortCronTask = cron.schedule(cronExpr, async () => {
+    if (!KEEPINCRM_API_KEY()) return;
+    if (syncState.running) {
+      console.log('⏭️ Когортний перерахунок пропущено: інша синхронізація вже виконується.');
+      return;
+    }
+
+    syncState.running     = true;
+    syncState.type        = 'cohort';
+    syncState.total       = windowDays;
+    syncState.done        = 0;
+    syncState.currentDate = '';
+    syncState.startedAt   = new Date().toISOString();
+    syncState.finishedAt  = null;
+    syncState.error       = null;
+
+    try {
+      const { done, failed } = await resyncCohortWindow(windowDays);
+      resetSyncState(failed.length ? `Не вдалось оновити ${failed.length} дн.: ${failed.join(', ')}` : undefined);
+      console.log(`✅ Когортний перерахунок: оновлено ${done}/${windowDays} днів${failed.length ? `, впало ${failed.length}` : ''}`);
+    } catch (err: any) {
+      resetSyncState(err.message || String(err));
+      console.error('❌ Когортний перерахунок впав:', err.message || err);
+    }
+  }, { timezone: 'Europe/Kyiv' });
+
+  console.log(`📈 KeepInCRM когортний перерахунок: щодоби о 04:00, вікно ${windowDays} дн.`);
+}
+
 // ── Main Server ───────────────────────────────────────────────────────────────
 
 async function startServer() {
@@ -1314,6 +1441,7 @@ async function startServer() {
   // KeepInCRM: запускаємо cron + першу синхронізацію при старті сервера
   setupKeepInCRMCron();
   setupKeepInCRMLTVCron();
+  setupKeepInCRMCohortCron();
   syncKeepInCRM().catch(() => { /* помилка записується в снімок */ });
   syncKeepInCRMLTV().catch(() => {});
 
@@ -1535,8 +1663,8 @@ async function startServer() {
   /** POST /api/keepincrm/sync-ltv — примусова ручна синхронізація LTV */
   app.post('/api/keepincrm/sync-ltv', requireAuth, requireAdmin, async (req, res) => {
     try {
-      const { year } = req.body || {};
-      const snapshot = await syncKeepInCRMLTV(year);
+      const { from, to } = req.body || {};
+      const snapshot = await syncKeepInCRMLTV({ from, to });
       res.json({ success: true, snapshot });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
@@ -1598,9 +1726,11 @@ async function startServer() {
         const prevAgg = aggregateEntries(prevEntries);
 
         comparison = {
+          totalAcquired:     prevAgg.totalAcquired,
           totalLeads:        prevAgg.totalLeads,
           totalClients:      prevAgg.totalClients,
           avgConversionRate: prevAgg.avgConversionRate,
+          acquiredChange:    pctChange(aggregated.totalAcquired,     prevAgg.totalAcquired),
           leadsChange:       pctChange(aggregated.totalLeads,        prevAgg.totalLeads),
           clientsChange:     pctChange(aggregated.totalClients,      prevAgg.totalClients),
           conversionChange:  pctChange(aggregated.avgConversionRate, prevAgg.avgConversionRate),
@@ -1652,21 +1782,12 @@ async function startServer() {
     // ─────────────────────────────────────────────────────────────────────────
 
     try {
-      const days = Number(req.body.days) || 30;
-
-      const toDate = new Date(todayKyiv() + 'T00:00:00Z');
-      const datesToSync: string[] = [];
-      for (let i = 0; i < days; i++) {
-        const d = new Date(toDate);
-        d.setUTCDate(d.getUTCDate() - i);
-        datesToSync.push(d.toISOString().slice(0, 10));
-      }
-      datesToSync.reverse(); // від старішого до новішого
+      const days = Math.min(Math.max(Number(req.body.days) || 30, 1), 90);
 
       // ── Встановити lock і повернути відповідь одразу ─────────────────────
       syncState.running    = true;
       syncState.type       = 'history';
-      syncState.total      = datesToSync.length;
+      syncState.total      = days;
       syncState.done       = 0;
       syncState.currentDate = '';
       syncState.startedAt  = new Date().toISOString();
@@ -1679,13 +1800,12 @@ async function startServer() {
       // ── Асинхронна синхронізація (не блокує HTTP-відповідь) ──────────────
       (async () => {
         try {
-          for (const d of datesToSync) {
-            syncState.currentDate = d;
-            await syncKeepInCRM(d);
-            syncState.done++;
-          }
-          resetSyncState();
-          console.log(`✅ KeepInCRM history sync завершено: ${days} днів`);
+          const { done, failed } = await resyncCohortWindow(days);
+          // Дні, що впали, більше не видаються за успішні: syncKeepInCRM ковтає
+          // власні помилки, тож без цієї перевірки UI показував би «30/30 ✅»
+          // навіть коли не записався жоден день.
+          resetSyncState(failed.length ? `Не вдалось оновити ${failed.length} з ${days} дн.: ${failed.join(', ')}` : undefined);
+          console.log(`✅ KeepInCRM history sync: оновлено ${done}/${days} днів${failed.length ? `, впало ${failed.length}` : ''}`);
         } catch (err: any) {
           resetSyncState(err.message || String(err));
           console.error('❌ KeepInCRM history sync помилка:', err.message || err);
