@@ -1,30 +1,52 @@
 import React, { useState, useMemo } from 'react';
-import { X, Search, Filter, Users, DollarSign, Gem, Tag } from 'lucide-react';
+import { X, Users, DollarSign, Gem, Download, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react';
 import { LTV_HORIZONS, CohortLtvRow, CohortLtvHorizon } from '../lib/cohortLtv';
 import { describePeriod } from './PeriodPicker';
+import ClientFilterBar from './analytics/ClientFilterBar';
+import RevenueDistributionCard from './analytics/RevenueDistribution';
+import {
+  ClientRecord as ClientLTV, EnrichedClient, ClientFilters, EMPTY_FILTERS,
+  SortKey, SortDir, SORT_LABELS,
+  enrichClients, applyFilters, sortClients, collectTags, collectCohortMonths,
+  computeDistribution, clientsToCsv,
+} from '../lib/clientAnalytics';
 
-interface ClientLTV {
-  id: string;
-  name: string;
-  revenue: number;
-  agreementsCount: number;
-  tags: string[];
-  lastPurchaseDate?: string;
-  purchaseMonths?: string[];
-}
+/**
+ * Скільки клієнтів сервер віддає у знімку. Якщо їх рівно стільки — список
+ * майже напевно обрізаний, і фільтри працюють по неповному набору.
+ */
+const SERVER_CLIENT_CAP = 5000;
 
-function getRfmSegment(client: ClientLTV): { label: string; color: string; icon: string } {
-  if (!client.lastPurchaseDate) return { label: 'Звичайний', color: 'bg-gray-100 text-gray-700 border-gray-200', icon: '🙂' };
-  
-  const daysSince = Math.floor((new Date().getTime() - new Date(client.lastPurchaseDate).getTime()) / (1000 * 3600 * 24));
-  
-  if (client.agreementsCount >= 3 && daysSince <= 90) return { label: 'Чемпіон', color: 'bg-amber-100 text-amber-800 border-amber-200', icon: '👑' };
-  if (client.agreementsCount >= 2 && daysSince <= 180) return { label: 'Лояльний', color: 'bg-emerald-100 text-emerald-800 border-emerald-200', icon: '🌟' };
-  if (client.agreementsCount >= 2 && daysSince > 180) return { label: 'Сплячий', color: 'bg-blue-100 text-blue-800 border-blue-200', icon: '💤' };
-  if (client.agreementsCount === 1 && daysSince > 180) return { label: 'Зона ризику', color: 'bg-red-100 text-red-800 border-red-200', icon: '🚨' };
-  if (client.agreementsCount === 1 && daysSince <= 60) return { label: 'Новий', color: 'bg-purple-100 text-purple-800 border-purple-200', icon: '🆕' };
-  
-  return { label: 'Звичайний', color: 'bg-gray-100 text-gray-700 border-gray-200', icon: '🙂' };
+/** Заголовок колонки, що керує сортуванням; напрямок показано стрілкою */
+function SortableTh({
+  label, sortKey: key, active, dir, onSort, align = 'left',
+}: {
+  label: string;
+  sortKey: SortKey;
+  active: SortKey;
+  dir: SortDir;
+  onSort: (k: SortKey) => void;
+  align?: 'left' | 'right';
+}) {
+  const isActive = active === key;
+  return (
+    <th
+      className={`py-3 px-4 sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb] ${align === 'right' ? 'text-right' : 'text-left'}`}
+    >
+      <button
+        onClick={() => onSort(key)}
+        title={`Сортувати за: ${SORT_LABELS[key]}`}
+        className={`inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider transition ${
+          isActive ? 'text-purple-700' : 'text-gray-500 hover:text-gray-700'
+        }`}
+      >
+        {label}
+        {isActive
+          ? (dir === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)
+          : <ArrowDown className="w-3 h-3 opacity-0" />}
+      </button>
+    </th>
+  );
 }
 
 interface CohortData {
@@ -91,11 +113,12 @@ interface LtvAnalyticsModalProps {
 
 export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalProps) {
   const [activeTab, setActiveTab] = useState<'clients' | 'funnel' | 'cohorts'>('clients');
-  const [segment, setSegment] = useState<string>('all');
-  const [rfmSegment, setRfmSegment] = useState<string>('all');
-  const [searchTag, setSearchTag] = useState<string>('');
-  const [topN, setTopN] = useState<number | 'all'>('all');
-  
+  const [filters, setFilters] = useState<ClientFilters>(EMPTY_FILTERS);
+  const [sortKey, setSortKey] = useState<SortKey>('revenue');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  /** Ліміт РЯДКІВ у таблиці. Метрики рахуються по всій вибірці, а не по зрізу. */
+  const [limit, setLimit] = useState<number | 'all'>('all');
+
   const [closedStages, setClosedStages] = useState<string[]>(() => {
     try {
       const stored = localStorage.getItem('pawell_closed_stages');
@@ -114,41 +137,47 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
 
   const allClients = data.clients || [];
 
-  // Фільтрація клієнтів
-  const filteredClients = useMemo(() => {
-    let result = [...allClients];
+  // Похідні поля рахуємо один раз, а не на кожен фільтр
+  const enriched = useMemo(() => enrichClients(allClients), [allClients]);
 
-    // 1. Фільтр по сегменту (B2B, B2C, B2G)
-    if (segment !== 'all') {
-      result = result.filter(c => {
-        const clientTags = c.tags.map(t => t.toLowerCase());
-        return clientTags.includes(segment.toLowerCase());
-      });
+  const tagOptions = useMemo(() => collectTags(allClients), [allClients]);
+  const cohortOptions = useMemo(() => collectCohortMonths(enriched), [enriched]);
+
+  /** Вибірка після фільтрів — саме на ній рахуються ВСІ метрики */
+  const filteredClients = useMemo(
+    () => sortClients(applyFilters(enriched, filters), sortKey, sortDir),
+    [enriched, filters, sortKey, sortDir],
+  );
+
+  /** Зріз лише для показу в таблиці */
+  const visibleClients = useMemo(
+    () => (limit === 'all' ? filteredClients : filteredClients.slice(0, limit)),
+    [filteredClients, limit],
+  );
+
+  const distribution = useMemo(() => computeDistribution(filteredClients), [filteredClients]);
+
+  const toggleSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      // Для тексту природний порядок за зростанням, для чисел — за спаданням
+      setSortDir(key === 'name' || key === 'cohort' ? 'asc' : 'desc');
     }
+  };
 
-    // 2. Фільтр по RFM сегменту
-    if (rfmSegment !== 'all') {
-      result = result.filter(c => getRfmSegment(c).label === rfmSegment);
-    }
-
-    // 3. Фільтр по будь-якому введеному тегу (наприклад "батареї")
-    if (searchTag.trim() !== '') {
-      const q = searchTag.toLowerCase().trim();
-      result = result.filter(c => {
-        return c.tags.some(t => t.toLowerCase().includes(q));
-      });
-    }
-
-    // 4. Сортування за доходом (вже відсортовано з бекенду, але для надійності)
-    result.sort((a, b) => b.revenue - a.revenue);
-
-    // 5. Фільтр по кількості (Топ N)
-    if (topN !== 'all') {
-      result = result.slice(0, topN);
-    }
-
-    return result;
-  }, [allClients, segment, rfmSegment, searchTag, topN]);
+  const exportCsv = () => {
+    const blob = new Blob(['﻿' + clientsToCsv(filteredClients)], {
+      type: 'text/csv;charset=utf-8;',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `clients-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   // Когорти
   const cohortsData = useMemo(() => calculateCohorts(filteredClients), [filteredClients]);
@@ -165,11 +194,6 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
     Math.max(0, ...ltvCohortRows.map(r => r.maxOffset)),
   );
   const ltvMaxValue = Math.max(0, ...ltvCohortRows.flatMap(r => Object.values(r.ltvByOffset)));
-
-  // Перерахунок LTV для поточної вибірки
-  const sampleRevenue = filteredClients.reduce((sum, c) => sum + c.revenue, 0);
-  const sampleCount = filteredClients.length;
-  const sampleLtv = sampleCount > 0 ? Math.round(sampleRevenue / sampleCount) : 0;
 
   // Funnel calculations
   const allStages = data.stageStats || [];
@@ -205,7 +229,7 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
               >
                 Швидкість Воронки
               </button>
-              <button 
+              <button
                 onClick={() => setActiveTab('cohorts')}
                 className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${activeTab === 'cohorts' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
@@ -213,191 +237,180 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
               </button>
             </div>
           </div>
-          <button 
-            onClick={onClose}
-            className="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={exportCsv}
+              disabled={filteredClients.length === 0}
+              title="Вивантажити поточну вибірку в CSV"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:border-purple-300 hover:text-purple-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Download className="w-4 h-4" />
+              CSV
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
+
+        {/* Фільтри живуть над вкладками: вони впливають на вміст усіх трьох,
+            тож ховати їх на двох із них означало б приховати активний стан. */}
+        <ClientFilterBar
+          filters={filters}
+          onChange={setFilters}
+          tags={tagOptions}
+          cohorts={cohortOptions}
+          totalCount={allClients.length}
+          filteredCount={filteredClients.length}
+        />
+
+        {allClients.length >= SERVER_CLIENT_CAP && (
+          <div className="flex items-center gap-2 px-6 py-2 text-xs text-amber-700 bg-amber-50 border-b border-amber-100 flex-shrink-0">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+            Сервер віддає не більше {SERVER_CLIENT_CAP.toLocaleString('uk-UA')} клієнтів — список обрізаний,
+            і фільтри працюють по неповному набору.
+          </div>
+        )}
 
         {activeTab === 'clients' && (
           <>
-            {/* Filters */}
-            <div className="flex flex-wrap items-center gap-4 px-6 py-4 border-b border-gray-100 bg-white">
-          
-          <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-gray-400" />
-            <span className="text-sm font-medium text-gray-700">Сегмент:</span>
-            <select 
-              value={segment} 
-              onChange={e => setSegment(e.target.value)}
-              className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-purple-400"
-            >
-              <option value="all">Всі B2B/B2C</option>
-              <option value="B2B">Тільки B2B</option>
-              <option value="B2C">Тільки B2C</option>
-              <option value="B2G">Тільки B2G</option>
-            </select>
-          </div>
+            {allClients.length === 0 && (
+              <div className="px-6 py-3 text-sm text-orange-600 bg-orange-50 border-b border-orange-100">
+                Масив клієнтів порожній — можливо, синхронізація ще не збирала ці дані.
+              </div>
+            )}
 
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-gray-700 ml-2">RFM:</span>
-            <select 
-              value={rfmSegment} 
-              onChange={e => setRfmSegment(e.target.value)}
-              className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-purple-400"
-            >
-              <option value="all">Всі клієнти</option>
-              <option value="Чемпіон">Чемпіони 👑</option>
-              <option value="Лояльний">Лояльні 🌟</option>
-              <option value="Сплячий">Сплячі 💤</option>
-              <option value="Новий">Нові 🆕</option>
-              <option value="Зона ризику">Зона ризику 🚨</option>
-            </select>
-          </div>
+            <div className="flex-1 overflow-auto bg-gray-50/50">
+              {/* Метрики вибірки */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-6 pb-0">
+                {[
+                  { label: 'Дохід на клієнта (ARPU)', value: `${distribution.mean.toLocaleString('uk-UA')} ₴`, tone: 'text-purple-600', bg: 'bg-purple-50', icon: <Gem className="w-6 h-6 text-purple-500" /> },
+                  { label: 'Загальний дохід вибірки', value: `${distribution.total.toLocaleString('uk-UA')} ₴`, tone: 'text-emerald-600', bg: 'bg-emerald-50', icon: <DollarSign className="w-6 h-6 text-emerald-500" /> },
+                  { label: 'Клієнтів у вибірці', value: distribution.count.toLocaleString('uk-UA'), tone: 'text-blue-600', bg: 'bg-blue-50', icon: <Users className="w-6 h-6 text-blue-500" /> },
+                ].map(m => (
+                  <div key={m.label} className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between">
+                    <div className="min-w-0">
+                      <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">{m.label}</p>
+                      <p className={`text-3xl font-black ${m.tone} truncate`}>{m.value}</p>
+                    </div>
+                    <div className={`w-12 h-12 ${m.bg} rounded-full flex items-center justify-center flex-shrink-0 ml-3`}>
+                      {m.icon}
+                    </div>
+                  </div>
+                ))}
+              </div>
 
-          <div className="flex items-center gap-2 ml-4">
-            <Search className="w-4 h-4 text-gray-400" />
-            <span className="text-sm font-medium text-gray-700">Пошук по тегу:</span>
-            <input 
-              type="text" 
-              placeholder="Напр. 'батареї', 'ремонт'..."
-              value={searchTag}
-              onChange={e => setSearchTag(e.target.value)}
-              className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-purple-400 w-48"
-            />
-          </div>
+              <div className="p-6">
+                <RevenueDistributionCard dist={distribution} />
+              </div>
 
-          <div className="flex items-center gap-2">
-            <Users className="w-4 h-4 text-gray-400" />
-            <span className="text-sm font-medium text-gray-700">Розмір бази:</span>
-            <select 
-              value={topN === 'all' ? 'all' : topN.toString()} 
-              onChange={e => setTopN(e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
-              className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-purple-400"
-            >
-              <option value="all">Всі клієнти</option>
-              <option value="50">Топ-50</option>
-              <option value="100">Топ-100</option>
-              <option value="500">Топ-500</option>
-              <option value="1000">Топ-1000</option>
-            </select>
-          </div>
-
-          {allClients.length === 0 && (
-            <div className="text-sm text-orange-500 font-medium ml-auto">
-              Увага: Масив клієнтів пустий. Можливо, синхронізація ще не збирала ці дані. Оновіть дані.
-            </div>
-          )}
-
-        </div>
-
-        {/* Dynamic Metrics Row */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-6 bg-gray-50/50 flex-shrink-0">
-          <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between">
-            <div>
-              <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">Дохід на клієнта (ARPU)</p>
-              <p className="text-3xl font-black text-purple-600">{sampleLtv.toLocaleString('uk-UA')} ₴</p>
-            </div>
-            <div className="w-12 h-12 bg-purple-50 rounded-full flex items-center justify-center">
-              <Gem className="w-6 h-6 text-purple-500" />
-            </div>
-          </div>
-          
-          <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between">
-            <div>
-              <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">Загальний дохід групи</p>
-              <p className="text-3xl font-black text-emerald-600">{sampleRevenue.toLocaleString('uk-UA')} ₴</p>
-            </div>
-            <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center">
-              <DollarSign className="w-6 h-6 text-emerald-500" />
-            </div>
-          </div>
-
-          <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between">
-            <div>
-              <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">Клієнтів у вибірці</p>
-              <p className="text-3xl font-black text-blue-600">{sampleCount.toLocaleString('uk-UA')}</p>
-            </div>
-            <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center">
-              <Users className="w-6 h-6 text-blue-500" />
-            </div>
-          </div>
-        </div>
-
-        {/* Table */}
-        <div className="flex-1 overflow-auto bg-white p-6 pt-0">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-gray-200">
-                <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Клієнт / RFM</th>
-                <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Дохід (сума)</th>
-                <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">К-ть угод / Остання</th>
-                <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Теги</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filteredClients.map((client, index) => {
-                const rfm = getRfmSegment(client);
-                return (
-                <tr key={client.id} className="hover:bg-gray-50/50 transition group">
-                  <td className="py-3 px-4">
-                    <div className="flex flex-col gap-1">
+              {/* Таблиця */}
+              <div className="px-6 pb-6">
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-gray-200 bg-white">
+                  <SortableTh label="Клієнт / RFM" sortKey="name"     active={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Дохід"        sortKey="revenue"  active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
+                  <SortableTh label="Угод"         sortKey="deals"    active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
+                  <SortableTh label="Середній чек" sortKey="avgCheck" active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
+                  <SortableTh label="Остання"      sortKey="recency"  active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
+                  <SortableTh label="Когорта"      sortKey="cohort"   active={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Теги</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {visibleClients.map((client, index) => (
+                  <tr key={client.id} className="hover:bg-gray-50/50 transition">
+                    <td className="py-3 px-4">
                       <div className="flex items-center gap-3">
-                        <span className="text-xs font-bold text-gray-400 w-6">{index + 1}.</span>
-                        <span className="text-sm font-semibold text-gray-800">{client.name}</span>
-                      </div>
-                      <div className="flex ml-9">
-                        <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${rfm.color}`}>
-                          <span>{rfm.icon}</span> {rfm.label}
-                        </span>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className="text-sm font-bold text-gray-900">{client.revenue.toLocaleString('uk-UA')} ₴</span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-sm font-medium text-gray-700">{client.agreementsCount}</span>
-                      {client.lastPurchaseDate ? (
-                        <span className="text-[10px] text-gray-500 font-medium">
-                          {Math.floor((new Date().getTime() - new Date(client.lastPurchaseDate).getTime()) / (1000 * 3600 * 24))} дн. тому
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-gray-400">-</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="flex flex-wrap gap-1.5">
-                      {client.tags && client.tags.length > 0 ? (
-                        client.tags.map(t => (
-                          <span key={t} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-gray-100 text-gray-600 border border-gray-200 whitespace-nowrap">
-                            <Tag className="w-2.5 h-2.5" />
-                            {t}
+                        <span className="text-xs font-bold text-gray-300 w-6 flex-shrink-0">{index + 1}</span>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-gray-800 truncate" title={client.name}>{client.name}</p>
+                          <span className={`inline-flex items-center gap-1 mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${client.rfm.color}`}>
+                            <span>{client.rfm.icon}</span> {client.rfm.label}
                           </span>
-                        ))
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <span className="text-sm font-bold text-gray-900 whitespace-nowrap">
+                        {client.revenue.toLocaleString('uk-UA')} ₴
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-right text-sm font-medium text-gray-700">
+                      {client.agreementsCount}
+                    </td>
+                    <td className="py-3 px-4 text-right text-sm text-gray-600 whitespace-nowrap">
+                      {client.avgCheck.toLocaleString('uk-UA')} ₴
+                    </td>
+                    <td className="py-3 px-4 text-right whitespace-nowrap">
+                      {client.recencyDays !== null ? (
+                        <span className="text-xs text-gray-500">{client.recencyDays} дн.</span>
                       ) : (
-                        <span className="text-xs text-gray-400">-</span>
+                        <span className="text-xs text-gray-300">—</span>
                       )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-              {filteredClients.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="py-12 text-center text-gray-400 text-sm">
-                    За вашими фільтрами не знайдено жодного клієнта
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        </>
+                    </td>
+                    <td className="py-3 px-4 text-xs text-gray-500 whitespace-nowrap">
+                      {client.cohortMonth ?? '—'}
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex flex-wrap gap-1">
+                        {client.tags.length > 0 ? client.tags.map(t => (
+                          <button
+                            key={t}
+                            onClick={() => setFilters(f => f.tagsInclude.includes(t) ? f : { ...f, tagsInclude: [...f.tagsInclude, t] })}
+                            title={`Відфільтрувати за тегом «${t}»`}
+                            className="px-2 py-0.5 rounded text-[10px] font-semibold bg-gray-100 text-gray-600 border border-gray-200 whitespace-nowrap hover:bg-purple-100 hover:text-purple-700 hover:border-purple-200 transition"
+                          >
+                            {t}
+                          </button>
+                        )) : (
+                          <span className="text-xs text-gray-300">—</span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {filteredClients.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="py-12 text-center text-gray-400 text-sm">
+                      За цими фільтрами жодного клієнта не знайдено
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+
+            {/* Ліміт показу — саме показу: метрики вище рахуються по всій вибірці */}
+            {filteredClients.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 bg-gray-50/50">
+                <span className="text-xs text-gray-500">
+                  Показано {visibleClients.length.toLocaleString('uk-UA')} з {filteredClients.length.toLocaleString('uk-UA')}
+                  <span className="text-gray-400"> · метрики й CSV — по всій вибірці</span>
+                </span>
+                <div className="flex items-center gap-1">
+                  {([50, 100, 500, 'all'] as const).map(n => (
+                    <button
+                      key={String(n)}
+                      onClick={() => setLimit(n)}
+                      className={`px-2.5 py-1 text-xs font-medium rounded-md transition ${
+                        limit === n ? 'bg-purple-600 text-white' : 'text-gray-500 hover:bg-gray-200'
+                      }`}
+                    >
+                      {n === 'all' ? 'Всі' : n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+              </div>
+            </div>
+          </>
         )}
 
         {activeTab === 'funnel' && (
