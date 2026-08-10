@@ -1,13 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search, SlidersHorizontal, X, RotateCcw, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   ClientFilters, EMPTY_FILTERS, RecencyBucket, RECENCY_LABELS, RFM_LABELS,
   countActiveFilters,
 } from '../../lib/clientAnalytics';
 
+/**
+ * Затримка перед тим, як введений текст піде у фільтр.
+ * Без неї кожен символ запускає перефільтрацію, сортування і перерахунок
+ * розподілу по всій базі — на десятках тисяч клієнтів це відчутно гальмує.
+ */
+const SEARCH_DEBOUNCE_MS = 250;
+
 interface Props {
   filters: ClientFilters;
-  onChange: (next: ClientFilters) => void;
+  /** Приймає оновлювач, а не значення — інакше відкладений пошук міг би
+   *  затерти фільтр, змінений уже після початку набору тексту. */
+  onChange: React.Dispatch<React.SetStateAction<ClientFilters>>;
   tags: { tag: string; count: number }[];
   cohorts: { month: string; count: number }[];
   totalCount: number;
@@ -32,7 +41,23 @@ export default function ClientFilterBar({ filters, onChange, tags, cohorts, tota
   const [open, setOpen] = useState(false);
   const activeCount = countActiveFilters(filters);
 
-  const patch = (p: Partial<ClientFilters>) => onChange({ ...filters, ...p });
+  const patch = (p: Partial<ClientFilters>) => onChange(f => ({ ...f, ...p }));
+
+  // Поле пошуку тримає власний стан, щоб набір тексту лишався миттєвим,
+  // а важкий перерахунок запускався лише після паузи.
+  const [draftSearch, setDraftSearch] = useState(filters.search);
+
+  // Зовнішня зміна (напр. «Скинути все») має відображатись у полі
+  useEffect(() => { setDraftSearch(filters.search); }, [filters.search]);
+
+  useEffect(() => {
+    if (draftSearch === filters.search) return;
+    const t = setTimeout(() => onChange(f => ({ ...f, search: draftSearch })), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+    // filters.search навмисно поза залежностями: ефект має реагувати лише на
+    // набір тексту, інакше він перезапускався б від власного ж результату.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftSearch, onChange]);
 
   const toggleIn = <T extends string>(list: T[], value: T): T[] =>
     list.includes(value) ? list.filter(v => v !== value) : [...list, value];
@@ -120,8 +145,8 @@ export default function ClientFilterBar({ filters, onChange, tags, cohorts, tota
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
-            value={filters.search}
-            onChange={e => patch({ search: e.target.value })}
+            value={draftSearch}
+            onChange={e => setDraftSearch(e.target.value)}
             placeholder="Пошук за назвою клієнта..."
             className="w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg outline-none focus:border-purple-400"
           />

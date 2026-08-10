@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { X, Users, DollarSign, Gem, Download, ArrowUp, ArrowDown, AlertTriangle, Loader2 } from 'lucide-react';
 import { getKeepInCRMLTVClients } from '../api';
 import { LTV_HORIZONS, CohortLtvRow, CohortLtvHorizon } from '../lib/cohortLtv';
@@ -43,6 +43,72 @@ function SortableTh({
     </th>
   );
 }
+
+/**
+ * Рядок таблиці клієнтів.
+ *
+ * Мемоізований: об'єкти клієнтів зберігають ідентичність при фільтрації й
+ * сортуванні, тож рядки, які не змінились, не перемальовуються — а їх тут
+ * до сотень, кожен по десятку вузлів.
+ */
+const ClientRow = React.memo(function ClientRow({
+  client, index, onTagClick,
+}: {
+  client: EnrichedClient;
+  index: number;
+  onTagClick: (tag: string) => void;
+}) {
+  return (
+    <tr className="hover:bg-gray-50/50 transition">
+      <td className="py-3 px-4">
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-bold text-gray-300 w-6 flex-shrink-0">{index + 1}</span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-800 truncate" title={client.name}>{client.name}</p>
+            <span className={`inline-flex items-center gap-1 mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${client.rfm.color}`}>
+              <span>{client.rfm.icon}</span> {client.rfm.label}
+            </span>
+          </div>
+        </div>
+      </td>
+      <td className="py-3 px-4 text-right">
+        <span className="text-sm font-bold text-gray-900 whitespace-nowrap">
+          {client.revenue.toLocaleString('uk-UA')} ₴
+        </span>
+      </td>
+      <td className="py-3 px-4 text-right text-sm font-medium text-gray-700">
+        {client.agreementsCount}
+      </td>
+      <td className="py-3 px-4 text-right text-sm text-gray-600 whitespace-nowrap">
+        {client.avgCheck.toLocaleString('uk-UA')} ₴
+      </td>
+      <td className="py-3 px-4 text-right whitespace-nowrap">
+        {client.recencyDays !== null
+          ? <span className="text-xs text-gray-500">{client.recencyDays} дн.</span>
+          : <span className="text-xs text-gray-300">—</span>}
+      </td>
+      <td className="py-3 px-4 text-xs text-gray-500 whitespace-nowrap">
+        {client.cohortMonth ?? '—'}
+      </td>
+      <td className="py-3 px-4">
+        <div className="flex flex-wrap gap-1">
+          {client.tags.length > 0 ? client.tags.map(t => (
+            <button
+              key={t}
+              onClick={() => onTagClick(t)}
+              title={`Відфільтрувати за тегом «${t}»`}
+              className="px-2 py-0.5 rounded text-[10px] font-semibold bg-gray-100 text-gray-600 border border-gray-200 whitespace-nowrap hover:bg-purple-100 hover:text-purple-700 hover:border-purple-200 transition"
+            >
+              {t}
+            </button>
+          )) : (
+            <span className="text-xs text-gray-300">—</span>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+});
 
 interface CohortData {
   size: number;
@@ -112,8 +178,14 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
   const [filters, setFilters] = useState<ClientFilters>(EMPTY_FILTERS);
   const [sortKey, setSortKey] = useState<SortKey>('revenue');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
-  /** Ліміт РЯДКІВ у таблиці. Метрики рахуються по всій вибірці, а не по зрізу. */
-  const [limit, setLimit] = useState<number | 'all'>('all');
+  /**
+   * Ліміт РЯДКІВ у таблиці. Метрики й CSV рахуються по всій вибірці, а не по зрізу.
+   *
+   * Варіанта «всі» тут навмисно немає: один рядок — це близько 25 DOM-вузлів, тож
+   * навіть 5 000 клієнтів дають 125 тисяч вузлів, які React перебудовує на кожну
+   * зміну фільтра. Кому потрібен повний список — той бере CSV.
+   */
+  const [limit, setLimit] = useState<number>(100);
 
   const [closedStages, setClosedStages] = useState<string[]>(() => {
     try {
@@ -166,9 +238,14 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
 
   /** Зріз лише для показу в таблиці */
   const visibleClients = useMemo(
-    () => (limit === 'all' ? filteredClients : filteredClients.slice(0, limit)),
+    () => filteredClients.slice(0, limit),
     [filteredClients, limit],
   );
+
+  /** Стабільне посилання, щоб мемоізовані рядки не перемальовувались даремно */
+  const addTagFilter = useCallback((tag: string) => {
+    setFilters(f => (f.tagsInclude.includes(tag) ? f : { ...f, tagsInclude: [...f.tagsInclude, tag] }));
+  }, []);
 
   const distribution = useMemo(() => computeDistribution(filteredClients), [filteredClients]);
 
@@ -194,8 +271,12 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
     URL.revokeObjectURL(url);
   };
 
-  // Когорти
-  const cohortsData = useMemo(() => calculateCohorts(filteredClients), [filteredClients]);
+  // Когорти рахуємо лише коли їхня вкладка відкрита: це найдорожча операція
+  // конвеєра (близько 85 % часу), а на інших вкладках її результат не видно.
+  const cohortsData = useMemo(
+    () => (activeTab === 'cohorts' ? calculateCohorts(filteredClients) : {}),
+    [filteredClients, activeTab],
+  );
   const sortedCohortKeys = Object.keys(cohortsData).sort().reverse(); 
   const maxMonthOffset = Math.max(0, ...Object.values(cohortsData).flatMap((c: any) => Object.keys(c.retention).map(Number)));
 
@@ -352,56 +433,7 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {visibleClients.map((client, index) => (
-                  <tr key={client.id} className="hover:bg-gray-50/50 transition">
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs font-bold text-gray-300 w-6 flex-shrink-0">{index + 1}</span>
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-gray-800 truncate" title={client.name}>{client.name}</p>
-                          <span className={`inline-flex items-center gap-1 mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${client.rfm.color}`}>
-                            <span>{client.rfm.icon}</span> {client.rfm.label}
-                          </span>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <span className="text-sm font-bold text-gray-900 whitespace-nowrap">
-                        {client.revenue.toLocaleString('uk-UA')} ₴
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-right text-sm font-medium text-gray-700">
-                      {client.agreementsCount}
-                    </td>
-                    <td className="py-3 px-4 text-right text-sm text-gray-600 whitespace-nowrap">
-                      {client.avgCheck.toLocaleString('uk-UA')} ₴
-                    </td>
-                    <td className="py-3 px-4 text-right whitespace-nowrap">
-                      {client.recencyDays !== null ? (
-                        <span className="text-xs text-gray-500">{client.recencyDays} дн.</span>
-                      ) : (
-                        <span className="text-xs text-gray-300">—</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-xs text-gray-500 whitespace-nowrap">
-                      {client.cohortMonth ?? '—'}
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex flex-wrap gap-1">
-                        {client.tags.length > 0 ? client.tags.map(t => (
-                          <button
-                            key={t}
-                            onClick={() => setFilters(f => f.tagsInclude.includes(t) ? f : { ...f, tagsInclude: [...f.tagsInclude, t] })}
-                            title={`Відфільтрувати за тегом «${t}»`}
-                            className="px-2 py-0.5 rounded text-[10px] font-semibold bg-gray-100 text-gray-600 border border-gray-200 whitespace-nowrap hover:bg-purple-100 hover:text-purple-700 hover:border-purple-200 transition"
-                          >
-                            {t}
-                          </button>
-                        )) : (
-                          <span className="text-xs text-gray-300">—</span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
+                  <ClientRow key={client.id} client={client} index={index} onTagClick={addTagFilter} />
                 ))}
                 {filteredClients.length === 0 && (
                   <tr>
@@ -418,18 +450,21 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
               <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 bg-gray-50/50">
                 <span className="text-xs text-gray-500">
                   Показано {visibleClients.length.toLocaleString('uk-UA')} з {filteredClients.length.toLocaleString('uk-UA')}
-                  <span className="text-gray-400"> · метрики й CSV — по всій вибірці</span>
+                  <span className="text-gray-400">
+                    {' · '}метрики й CSV — по всій вибірці
+                    {filteredClients.length > visibleClients.length && ', повний список — через CSV'}
+                  </span>
                 </span>
                 <div className="flex items-center gap-1">
-                  {([50, 100, 500, 'all'] as const).map(n => (
+                  {[50, 100, 500, 1000].map(n => (
                     <button
-                      key={String(n)}
+                      key={n}
                       onClick={() => setLimit(n)}
                       className={`px-2.5 py-1 text-xs font-medium rounded-md transition ${
                         limit === n ? 'bg-purple-600 text-white' : 'text-gray-500 hover:bg-gray-200'
                       }`}
                     >
-                      {n === 'all' ? 'Всі' : n}
+                      {n}
                     </button>
                   ))}
                 </div>
