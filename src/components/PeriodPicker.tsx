@@ -67,12 +67,30 @@ interface Props {
   onChange: (next: PeriodValue) => void;
   /** Які пресети показувати; 'custom' вмикає поля з датами */
   presets: PeriodKey[];
+  /**
+   * Точність довільного діапазону. 'month' — коли дані існують лише помісячно
+   * (аналітика клієнтів), інакше поля обіцяли б точність, якої немає.
+   */
+  granularity?: 'day' | 'month';
   /** Заблокувати вибір (напр. поки триває синхронізація) */
   disabled?: boolean;
   className?: string;
 }
 
-export default function PeriodPicker({ value, onChange, presets, disabled, className = '' }: Props) {
+export default function PeriodPicker({
+  value, onChange, presets, granularity = 'day', disabled, className = '',
+}: Props) {
+  const byMonth = granularity === 'month';
+  /** 'YYYY-MM-DD' → 'YYYY-MM' для полів типу month */
+  const toField = (v: string) => (byMonth ? v.slice(0, 7) : v);
+  /** Назад: початок місяця для «з», кінець — для «до» */
+  const fromField = (v: string, edge: 'from' | 'to') => {
+    if (!byMonth || !v) return v;
+    if (edge === 'from') return `${v}-01`;
+    const [y, m] = v.split('-').map(Number);
+    return `${v}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
+  };
+
   // Локальний стан полів: доки користувач друкує, діапазон може бути невалідним,
   // і повідомляти про такий назовні не варто.
   const [draftFrom, setDraftFrom] = useState(value.from ?? '');
@@ -129,22 +147,30 @@ export default function PeriodPicker({ value, onChange, presets, disabled, class
           <label className="flex items-center gap-1.5 text-xs text-gray-500">
             з
             <input
-              type="date"
-              value={draftFrom}
+              type={byMonth ? 'month' : 'date'}
+              value={toField(draftFrom)}
               disabled={disabled}
-              max={draftTo || undefined}
-              onChange={e => { setDraftFrom(e.target.value); commitCustom(e.target.value, draftTo); }}
+              max={toField(draftTo) || undefined}
+              onChange={e => {
+                const v = fromField(e.target.value, 'from');
+                setDraftFrom(v);
+                commitCustom(v, draftTo);
+              }}
               className="border border-gray-200 rounded-md px-2 py-1 text-xs text-gray-700 outline-none focus:border-violet-400 disabled:opacity-50"
             />
           </label>
           <label className="flex items-center gap-1.5 text-xs text-gray-500">
             до
             <input
-              type="date"
-              value={draftTo}
+              type={byMonth ? 'month' : 'date'}
+              value={toField(draftTo)}
               disabled={disabled}
-              min={draftFrom || undefined}
-              onChange={e => { setDraftTo(e.target.value); commitCustom(draftFrom, e.target.value); }}
+              min={toField(draftFrom) || undefined}
+              onChange={e => {
+                const v = fromField(e.target.value, 'to');
+                setDraftTo(v);
+                commitCustom(draftFrom, v);
+              }}
               className="border border-gray-200 rounded-md px-2 py-1 text-xs text-gray-700 outline-none focus:border-violet-400 disabled:opacity-50"
             />
           </label>

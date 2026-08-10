@@ -2,15 +2,19 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { X, Users, DollarSign, Gem, Download, ArrowUp, ArrowDown, AlertTriangle, Loader2 } from 'lucide-react';
 import { getKeepInCRMLTVClients } from '../api';
 import { LTV_HORIZONS, CohortLtvRow, CohortLtvHorizon } from '../lib/cohortLtv';
-import { describePeriod } from './PeriodPicker';
 import ClientFilterBar from './analytics/ClientFilterBar';
 import RevenueDistributionCard from './analytics/RevenueDistribution';
 import {
-  ClientRecord as ClientLTV, EnrichedClient, ClientFilters, EMPTY_FILTERS,
-  SortKey, SortDir, SORT_LABELS,
+  ClientRecord as ClientLTV, EnrichedClient, ClientFilters, MonthRange,
+  SortKey, SortDir, SORT_LABELS, DEFAULT_RFM_THRESHOLDS,
   enrichClients, applyFilters, sortClients, collectTags, collectCohortMonths,
-  computeDistribution, clientsToCsv,
+  computeDistribution, clientsToCsv, getPurchaseMonths,
 } from '../lib/clientAnalytics';
+import { loadView, saveView } from '../lib/analyticsViewState';
+import PeriodPicker, { PeriodKey, PeriodValue, describePeriod } from './PeriodPicker';
+
+/** Пресети періоду аналітики — усі місячної точності */
+const ANALYTICS_PRESETS: PeriodKey[] = ['all', 'month', 'ytd', 'year', 'custom'];
 
 /** Заголовок колонки, що керує сортуванням; напрямок показано стрілкою */
 function SortableTh({
@@ -73,11 +77,24 @@ const ClientRow = React.memo(function ClientRow({
       </td>
       <td className="py-3 px-4 text-right">
         <span className="text-sm font-bold text-gray-900 whitespace-nowrap">
-          {client.revenue.toLocaleString('uk-UA')} ₴
+          {client.periodRevenue.toLocaleString('uk-UA')} ₴
         </span>
+        {client.periodRevenue !== client.revenue && (
+          <span
+            className="block text-[10px] text-gray-400 whitespace-nowrap"
+            title="Дохід за весь час"
+          >
+            з {client.revenue.toLocaleString('uk-UA')} ₴
+          </span>
+        )}
       </td>
       <td className="py-3 px-4 text-right text-sm font-medium text-gray-700">
-        {client.agreementsCount}
+        {client.periodDeals}
+        {client.periodDeals !== client.agreementsCount && (
+          <span className="block text-[10px] text-gray-400" title="Угод за весь час">
+            з {client.agreementsCount}
+          </span>
+        )}
       </td>
       <td className="py-3 px-4 text-right text-sm text-gray-600 whitespace-nowrap">
         {client.avgCheck.toLocaleString('uk-UA')} ₴
@@ -119,9 +136,9 @@ function calculateCohorts(clients: ClientLTV[]): Record<string, CohortData> {
   const cohorts: Record<string, CohortData> = {};
 
   clients.forEach(c => {
-    if (!c.purchaseMonths || c.purchaseMonths.length === 0) return;
-    
-    const sortedMonths = [...c.purchaseMonths].sort();
+    const sortedMonths = getPurchaseMonths(c);
+    if (sortedMonths.length === 0) return;
+
     const firstMonth = sortedMonths[0]; 
     
     if (!cohorts[firstMonth]) {
@@ -174,10 +191,15 @@ interface LtvAnalyticsModalProps {
 }
 
 export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalProps) {
-  const [activeTab, setActiveTab] = useState<'clients' | 'funnel' | 'cohorts'>('clients');
-  const [filters, setFilters] = useState<ClientFilters>(EMPTY_FILTERS);
-  const [sortKey, setSortKey] = useState<SortKey>('revenue');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  // Вибір відновлюється з попереднього сеансу — фільтри й період це налаштування
+  // робочого місця, а не разова дія.
+  const saved = useMemo(() => loadView(), []);
+
+  const [activeTab, setActiveTab] = useState<'clients' | 'funnel' | 'cohorts'>(saved.tab);
+  const [filters, setFilters] = useState<ClientFilters>(saved.filters);
+  const [period, setPeriod] = useState<PeriodValue>(saved.period as PeriodValue);
+  const [sortKey, setSortKey] = useState<SortKey>(saved.sortKey);
+  const [sortDir, setSortDir] = useState<SortDir>(saved.sortDir);
   /**
    * Ліміт РЯДКІВ у таблиці. Метрики й CSV рахуються по всій вибірці, а не по зрізу.
    *
@@ -185,7 +207,18 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
    * навіть 5 000 клієнтів дають 125 тисяч вузлів, які React перебудовує на кожну
    * зміну фільтра. Кому потрібен повний список — той бере CSV.
    */
-  const [limit, setLimit] = useState<number>(100);
+  const [limit, setLimit] = useState<number>(saved.limit);
+
+  // Зберігаємо вибір при кожній зміні
+  useEffect(() => {
+    saveView({ filters, period, sortKey, sortDir, limit, tab: activeTab });
+  }, [filters, period, sortKey, sortDir, limit, activeTab]);
+
+  /** Період у місяцях — саме така точність у помісячних даних */
+  const monthRange = useMemo<MonthRange | null>(
+    () => (period.from && period.to ? { from: period.from.slice(0, 7), to: period.to.slice(0, 7) } : null),
+    [period.from, period.to],
+  );
 
   const [closedStages, setClosedStages] = useState<string[]>(() => {
     try {
@@ -225,7 +258,13 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
   }, []);
 
   // Похідні поля рахуємо один раз, а не на кожен фільтр
-  const enriched = useMemo(() => enrichClients(allClients), [allClients]);
+  const enriched = useMemo(
+    () => enrichClients(allClients, new Date(), DEFAULT_RFM_THRESHOLDS, monthRange),
+    [allClients, monthRange],
+  );
+
+  /** Чи є в даних помісячні суми — у знімках старого формату їх немає */
+  const hasMonthlyStats = allClients.length === 0 || !!allClients[0].monthlyStats;
 
   const tagOptions = useMemo(() => collectTags(allClients), [allClients]);
   const cohortOptions = useMemo(() => collectCohortMonths(enriched), [enriched]);
@@ -350,6 +389,28 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
               <X className="w-5 h-5" />
             </button>
           </div>
+        </div>
+
+        {/* Період аналітики */}
+        <div className="flex flex-wrap items-center gap-3 px-6 py-3 border-b border-gray-100 bg-gray-50/60 flex-shrink-0">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Період</span>
+          <PeriodPicker
+            value={period}
+            onChange={setPeriod}
+            presets={ANALYTICS_PRESETS}
+            granularity="month"
+          />
+          <span className="text-xs text-gray-500">
+            Дохід, угоди й середній чек — {monthRange ? <strong className="text-gray-800">за {describePeriod(period)}</strong> : 'за весь час'}
+          </span>
+
+          {!hasMonthlyStats && monthRange && (
+            <span className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+              Знімок старого формату — суми по місяцях відсутні, тож період лише відбирає клієнтів,
+              а числа лишаються за весь час. Перезапустіть синхронізацію LTV.
+            </span>
+          )}
         </div>
 
         {/* Фільтри живуть над вкладками: вони впливають на вміст усіх трьох,

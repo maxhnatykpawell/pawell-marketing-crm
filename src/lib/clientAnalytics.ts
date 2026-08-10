@@ -5,14 +5,39 @@
  * модалка лишалась про рендер, а не про математику.
  */
 
+export interface MonthStats {
+  revenue: number;
+  deals: number;
+}
+
 export interface ClientRecord {
   id: string;
   name: string;
+  /** Дохід за весь час */
   revenue: number;
+  /** Кількість угод за весь час */
   agreementsCount: number;
   tags: string[];
   lastPurchaseDate?: string;
+  /**
+   * Дохід і кількість угод по місяцях — дозволяє рахувати аналітику за довільний
+   * період без повторного вивантаження з CRM.
+   */
+  monthlyStats?: Record<string, MonthStats>;
+  /** Старий формат знімків: лише перелік місяців, без сум */
   purchaseMonths?: string[];
+}
+
+/** Період аналітики з місячною точністю — дрібнішої в даних немає */
+export interface MonthRange {
+  from: string; // 'YYYY-MM'
+  to: string;   // 'YYYY-MM'
+}
+
+/** Місяці покупок, з підтримкою знімків старого формату */
+export function getPurchaseMonths(c: ClientRecord): string[] {
+  if (c.monthlyStats) return Object.keys(c.monthlyStats).sort();
+  return [...(c.purchaseMonths ?? [])].sort();
 }
 
 export interface RfmSegment {
@@ -23,12 +48,26 @@ export interface RfmSegment {
 
 /** Клієнт із похідними полями, порахованими один раз */
 export interface EnrichedClient extends ClientRecord {
-  /** Середній чек: дохід ÷ кількість угод */
+  /** Дохід у вибраному періоді (без періоду — за весь час) */
+  periodRevenue: number;
+  /** Угоди у вибраному періоді (без періоду — за весь час) */
+  periodDeals: number;
+  /** Середній чек у періоді: periodRevenue ÷ periodDeals */
   avgCheck: number;
-  /** Днів від останньої покупки; null якщо дати немає */
+  /**
+   * Днів від останньої покупки — завжди відносно СЬОГОДНІ й за весь час.
+   * Це факт про теперішній стан клієнта, а не про період, тому не звужується:
+   * інакше «сплячий» клієнт виглядав би свіжим лише тому, що ви дивитесь
+   * на місяць, у якому він купував.
+   */
   recencyDays: number | null;
-  /** Місяць першої покупки 'YYYY-MM'; null якщо немає дат */
+  /**
+   * Місяць ПЕРШОЇ покупки за весь час. Теж не звужується періодом: когорта —
+   * це походження клієнта, і воно не змінюється від того, який зріз ви відкрили.
+   */
   cohortMonth: string | null;
+  /** Чи була у клієнта хоч одна угода у вибраному періоді */
+  inPeriod: boolean;
   rfm: RfmSegment;
 }
 
@@ -86,10 +125,16 @@ export function getRfmSegment(
 
 // ── Збагачення ────────────────────────────────────────────────────────────────
 
+/**
+ * @param period якщо заданий — дохід, угоди й середній чек рахуються лише за
+ *        місяці в цьому діапазоні. Знімки старого формату не мають помісячних
+ *        сум, тож для них показники лишаються за весь час (див. hasMonthlyStats).
+ */
 export function enrichClients(
   clients: ClientRecord[],
   now: Date = new Date(),
   thresholds: RfmThresholds = DEFAULT_RFM_THRESHOLDS,
+  period: MonthRange | null = null,
 ): EnrichedClient[] {
   return clients.map(c => {
     let recencyDays: number | null = null;
@@ -98,13 +143,38 @@ export function enrichClients(
       if (!isNaN(t)) recencyDays = Math.floor((now.getTime() - t) / 86_400_000);
     }
 
-    const months = [...(c.purchaseMonths ?? [])].sort();
+    const months = getPurchaseMonths(c);
+
+    let periodRevenue = c.revenue;
+    let periodDeals = c.agreementsCount;
+    let inPeriod = true;
+
+    if (period) {
+      if (c.monthlyStats) {
+        periodRevenue = 0;
+        periodDeals = 0;
+        for (const [m, s] of Object.entries(c.monthlyStats)) {
+          if (m >= period.from && m <= period.to) {
+            periodRevenue += s.revenue;
+            periodDeals += s.deals;
+          }
+        }
+        inPeriod = periodDeals > 0;
+      } else {
+        // Старий формат: сум по місяцях немає, але самі місяці є — принаймні
+        // можемо сказати, чи була активність у періоді.
+        inPeriod = months.some(m => m >= period.from && m <= period.to);
+      }
+    }
 
     return {
       ...c,
-      avgCheck: c.agreementsCount > 0 ? Math.round(c.revenue / c.agreementsCount) : 0,
+      periodRevenue,
+      periodDeals,
+      avgCheck: periodDeals > 0 ? Math.round(periodRevenue / periodDeals) : 0,
       recencyDays,
       cohortMonth: months.length > 0 ? months[0] : null,
+      inPeriod,
       rfm: getRfmSegment(c, recencyDays, thresholds),
     };
   });
@@ -191,11 +261,13 @@ export function applyFilters(clients: EnrichedClient[], f: ClientFilters): Enric
   return clients.filter(c => {
     const tags = c.tags.map(t => t.toLowerCase());
 
+    // Клієнти без жодної угоди в періоді до вибірки не потрапляють
+    if (!c.inPeriod) return false;
     if (include.length && !include.some(t => tags.includes(t))) return false;
     if (exclude.length && exclude.some(t => tags.includes(t))) return false;
     if (f.rfm.length && !f.rfm.includes(c.rfm.label)) return false;
-    if (!inRange(c.revenue, f.revenueMin, f.revenueMax)) return false;
-    if (!inRange(c.agreementsCount, f.dealsMin, f.dealsMax)) return false;
+    if (!inRange(c.periodRevenue, f.revenueMin, f.revenueMax)) return false;
+    if (!inRange(c.periodDeals, f.dealsMin, f.dealsMax)) return false;
     if (!inRange(c.avgCheck, f.avgCheckMin, f.avgCheckMax)) return false;
     if (f.recency.length && !f.recency.includes(recencyBucket(c.recencyDays))) return false;
     if (f.cohortMonth && c.cohortMonth !== f.cohortMonth) return false;
@@ -224,8 +296,8 @@ export function sortClients(clients: EnrichedClient[], key: SortKey, dir: SortDi
 
   return [...clients].sort((a, b) => {
     switch (key) {
-      case 'revenue':  return (a.revenue - b.revenue) * sign;
-      case 'deals':    return (a.agreementsCount - b.agreementsCount) * sign;
+      case 'revenue':  return (a.periodRevenue - b.periodRevenue) * sign;
+      case 'deals':    return (a.periodDeals - b.periodDeals) * sign;
       case 'avgCheck': return (a.avgCheck - b.avgCheck) * sign;
       case 'name':     return a.name.localeCompare(b.name, 'uk') * sign;
       case 'recency': {
@@ -308,7 +380,7 @@ export function computeDistribution(clients: EnrichedClient[], bucketCount = 6):
     return { count: 0, total: 0, mean: 0, median: 0, p90: 0, top10Share: 0, buckets: [] };
   }
 
-  const sorted = clients.map(c => c.revenue).sort((a, b) => a - b);
+  const sorted = clients.map(c => c.periodRevenue).sort((a, b) => a - b);
   const total = sorted.reduce((s, v) => s + v, 0);
 
   const topCount = Math.max(1, Math.round(count * 0.1));
@@ -364,6 +436,40 @@ export function chunkList<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+/**
+ * Розбити список так, щоб кожна частина лишалась у межах байтового бюджету.
+ *
+ * Фіксована кількість тут не працює: клієнт із 48 місяцями покупок і вісьмома
+ * тегами важить у сім разів більше за клієнта з двома місяцями й одним тегом,
+ * тож будь-яке «безпечне» число або марнує місце, або вилітає за ліміт.
+ *
+ * Елемент, що сам по собі більший за бюджет, кладеться в окрему частину:
+ * розділити його ми не можемо, і мовчки викидати — гірше, ніж перевищити.
+ */
+export function chunkBySize<T>(items: T[], maxBytes: number): T[][] {
+  if (maxBytes < 1) throw new Error('Бюджет має бути додатним');
+
+  const chunks: T[][] = [];
+  let current: T[] = [];
+  let currentBytes = 0;
+
+  for (const item of items) {
+    const bytes = JSON.stringify(item).length;
+
+    if (current.length > 0 && currentBytes + bytes > maxBytes) {
+      chunks.push(current);
+      current = [];
+      currentBytes = 0;
+    }
+
+    current.push(item);
+    currentBytes += bytes;
+  }
+
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
 // ── Експорт ───────────────────────────────────────────────────────────────────
 
 /**
@@ -376,12 +482,18 @@ export function clientsToCsv(clients: EnrichedClient[]): string {
     return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
 
-  const header = ['Клієнт', 'Дохід', 'Угод', 'Середній чек', 'Остання покупка', 'Днів тому', 'Когорта', 'RFM', 'Теги'];
+  const header = [
+    'Клієнт', 'Дохід за період', 'Угод за період', 'Середній чек',
+    'Дохід за весь час', 'Угод за весь час',
+    'Остання покупка', 'Днів тому', 'Когорта', 'RFM', 'Теги',
+  ];
   const rows = clients.map(c => [
     c.name,
+    c.periodRevenue,
+    c.periodDeals,
+    c.avgCheck,
     c.revenue,
     c.agreementsCount,
-    c.avgCheck,
     c.lastPurchaseDate ? c.lastPurchaseDate.slice(0, 10) : '',
     c.recencyDays ?? '',
     c.cohortMonth ?? '',

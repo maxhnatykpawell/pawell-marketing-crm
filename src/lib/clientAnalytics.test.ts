@@ -1,7 +1,7 @@
 import {
   enrichClients, applyFilters, sortClients, collectTags, collectCohortMonths,
   computeDistribution, clientsToCsv, countActiveFilters, recencyBucket,
-  EMPTY_FILTERS, ClientRecord, ClientFilters, chunkList,
+  EMPTY_FILTERS, ClientRecord, ClientFilters, chunkList, chunkBySize, getPurchaseMonths,
 } from './clientAnalytics';
 
 let failures = 0;
@@ -148,7 +148,9 @@ console.log('\nCSV');
   const dataLine = csv.split('\r\n')[1];
 
   check('лапки й крапка з комою екрануються', dataLine.startsWith('"ТОВ ""Альфа""; філія"'), true);
-  check('роздільник — крапка з комою', csv.split('\r\n')[0].split(';')[1], 'Дохід');
+  check('роздільник — крапка з комою', csv.split('\r\n')[0].split(';')[1], 'Дохід за період');
+  check('є і періодні, і загальні числа', csv.split('\r\n')[0].split(';').slice(1, 6),
+    ['Дохід за період', 'Угод за період', 'Середній чек', 'Дохід за весь час', 'Угод за весь час']);
 }
 
 console.log('\nРозбиття на частини');
@@ -171,6 +173,90 @@ console.log('\nРозбиття на частини');
   const after  = chunkList(n(500), 1000).length;    // 1 частина: 0
   check('старих індексів на видалення', [before, after, [1, 2].every(i => i >= after)], [3, 1, true]);
   check('порожня база прибирає всі частини', chunkList([], 1000).length, 0);
+}
+
+console.log('\nПеріод аналітики');
+{
+  const c = (id: string, stats: Record<string, [number, number]>): ClientRecord => ({
+    id, name: `Клієнт ${id}`,
+    revenue: Object.values(stats).reduce((s, [r]) => s + r, 0),
+    agreementsCount: Object.values(stats).reduce((s, [, d]) => s + d, 0),
+    tags: [], lastPurchaseDate: '2026-08-01',
+    monthlyStats: Object.fromEntries(Object.entries(stats).map(([m, [revenue, deals]]) => [m, { revenue, deals }])),
+  });
+
+  const data = [
+    c('1', { '2025-06': [1000, 2], '2026-03': [500, 1] }),
+    c('2', { '2026-03': [300, 3] }),
+    c('3', { '2024-01': [9000, 5] }),
+  ];
+
+  const all = enrichClients(data, NOW);
+  check('без періоду — суми за весь час', all.map(x => x.periodRevenue), [1500, 300, 9000]);
+  check('без періоду всі в вибірці', all.map(x => x.inPeriod), [true, true, true]);
+
+  const q1 = enrichClients(data, NOW, undefined, { from: '2026-01', to: '2026-06' });
+  check('дохід звужується до періоду', q1.map(x => x.periodRevenue), [500, 300, 0]);
+  check('угоди звужуються до періоду', q1.map(x => x.periodDeals), [1, 3, 0]);
+  check('без активності — поза вибіркою', q1.map(x => x.inPeriod), [true, true, false]);
+  check('середній чек рахується від періодних чисел', q1.map(x => x.avgCheck), [500, 100, 0]);
+  check('дохід за весь час зберігається окремо', q1.map(x => x.revenue), [1500, 300, 9000]);
+
+  check('когорта не звужується періодом', q1[0].cohortMonth, '2025-06');
+
+  check('неактивні відсіюються фільтром', applyFilters(q1, f()).map(x => x.id), ['1', '2']);
+  check('фільтр доходу застосовується до періодного', applyFilters(q1, f({ revenueMin: 400 })).map(x => x.id), ['1']);
+  check('розподіл рахує періодний дохід', computeDistribution(applyFilters(q1, f())).total, 800);
+  check('сортування за періодним доходом', sortClients(applyFilters(q1, f()), 'revenue', 'desc').map(x => x.id), ['1', '2']);
+
+  // Межі діапазону включні з обох боків
+  const edge = enrichClients([c('e', { '2026-01': [10, 1], '2026-06': [20, 1], '2026-07': [40, 1] })],
+    NOW, undefined, { from: '2026-01', to: '2026-06' });
+  check('межі включні', edge[0].periodRevenue, 30);
+
+  // Старий формат: сум немає, але активність визначити можна
+  const legacy = enrichClients([{
+    id: 'L', name: 'Старий', revenue: 700, agreementsCount: 4, tags: [],
+    purchaseMonths: ['2026-03'],
+  }], NOW, undefined, { from: '2026-01', to: '2026-06' });
+  check('старий формат: активність визначено', legacy[0].inPeriod, true);
+  check('старий формат: суми лишаються за весь час', legacy[0].periodRevenue, 700);
+
+  const legacyOut = enrichClients([{
+    id: 'L2', name: 'Старий', revenue: 700, agreementsCount: 4, tags: [],
+    purchaseMonths: ['2023-03'],
+  }], NOW, undefined, { from: '2026-01', to: '2026-06' });
+  check('старий формат: поза періодом відсіюється', legacyOut[0].inPeriod, false);
+}
+
+console.log('\nМісяці покупок');
+{
+  check('з monthlyStats', getPurchaseMonths({
+    id: '1', name: '', revenue: 0, agreementsCount: 0, tags: [],
+    monthlyStats: { '2026-05': { revenue: 1, deals: 1 }, '2026-01': { revenue: 1, deals: 1 } },
+  }), ['2026-01', '2026-05']);
+  check('зі старого purchaseMonths', getPurchaseMonths({
+    id: '1', name: '', revenue: 0, agreementsCount: 0, tags: [], purchaseMonths: ['2026-05', '2026-01'],
+  }), ['2026-01', '2026-05']);
+  check('порожньо', getPurchaseMonths({ id: '1', name: '', revenue: 0, agreementsCount: 0, tags: [] }), []);
+}
+
+console.log('\nРізання за розміром');
+{
+  const item = (n: number) => ({ pad: 'x'.repeat(n) });
+
+  check('порожній вхід', chunkBySize([], 100), []);
+  // Кожен елемент ~110 Б при бюджеті 250 Б → по 2 на частину
+  const r = chunkBySize([item(100), item(100), item(100), item(100), item(100)], 250);
+  check('ріже за бюджетом', r.map(c => c.length), [2, 2, 1]);
+  check('нічого не загублено', r.flat().length, 5);
+
+  // Елемент, більший за бюджет, не зникає і не тягне за собою сусідів
+  const huge = chunkBySize([item(10), item(5000), item(10)], 200);
+  check('завеликий елемент лишається окремо', huge.map(c => c.length), [1, 1, 1]);
+  check('нульовий бюджет відхиляється', (() => {
+    try { chunkBySize([item(1)], 0); return 'не кинуло'; } catch { return 'кинуло'; }
+  })(), 'кинуло');
 }
 
 console.log(failures === 0 ? '\n✅ Усі перевірки пройдено\n' : `\n❌ Провалено: ${failures}\n`);

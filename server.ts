@@ -16,7 +16,7 @@ import jwt from 'jsonwebtoken';
 import admin from 'firebase-admin';
 
 import { buildCohortLtv } from './src/lib/cohortLtv';
-import { chunkList } from './src/lib/clientAnalytics';
+import { chunkBySize } from './src/lib/clientAnalytics';
 
 
 // ── Firebase Init ─────────────────────────────────────────────────────────────
@@ -1018,13 +1018,13 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const LTV_CLIENTS_COLLECTION = 'crm_keepincrm_ltv_clients';
 
 /**
- * Скільки клієнтів в одному документі.
+ * Байтовий бюджет одного документа з клієнтами.
  *
- * Ліміт документа Firestore — 1 МіБ. Важкий клієнт (багато тегів і місяців
- * покупок) важить близько 512 Б, тож 1000 дає ~500 КіБ у найгіршому випадку —
- * удвічі менше за ліміт, із запасом на майбутні поля.
+ * Ліміт Firestore — 1 МіБ. Беремо 400 КіБ: із помісячними даними вага клієнта
+ * гуляє від ~290 Б до ~2.2 КБ залежно від кількості тегів і місяців покупок,
+ * тож ріжемо за розміром, а не за кількістю, і лишаємо запас на службові поля.
  */
-const LTV_CLIENTS_CHUNK_SIZE = 1000;
+const LTV_CHUNK_BUDGET_BYTES = 400 * 1024;
 
 /**
  * Записати клієнтів частинами і прибрати зайві документи з попереднього прогону.
@@ -1034,7 +1034,7 @@ const LTV_CLIENTS_CHUNK_SIZE = 1000;
  */
 async function writeLtvClientChunks(db: admin.firestore.Firestore, clients: any[]): Promise<void> {
   const col = db.collection(LTV_CLIENTS_COLLECTION);
-  const chunks = chunkList(clients, LTV_CLIENTS_CHUNK_SIZE);
+  const chunks = chunkBySize(clients, LTV_CHUNK_BUDGET_BYTES);
 
   for (let i = 0; i < chunks.length; i++) {
     await col.doc(String(i)).set({ index: i, clients: chunks[i] });
@@ -1112,11 +1112,13 @@ export async function syncKeepInCRMLTV(
             revenue: 0,
             agreementsCount: 0,
             tags: [],
-            purchaseMonths: [],
-            // Дохід по місяцях — потрібен для когортного LTV. Живе лише в пам'яті
-            // під час синхронізації; у знімок пишеться вже агрегована матриця когорт,
-            // інакше документ роздувся б на кожного клієнта.
-            monthlyRevenue: {} as Record<string, number>,
+            /**
+             * Дохід і кількість угод по місяцях. Зберігаються у знімку: без них
+             * аналітику за довільний період довелося б щоразу перетягувати з CRM.
+             * Перелік місяців покупок — це просто ключі цього об'єкта, тож
+             * окреме поле purchaseMonths більше не пишемо.
+             */
+            monthlyStats: {} as Record<string, { revenue: number; deals: number }>,
           };
           clientsMap.set(clientId, clientData);
         }
@@ -1133,10 +1135,9 @@ export async function syncKeepInCRMLTV(
           const d = new Date(dateStr);
           if (!isNaN(d.getTime())) {
             const yyyyMm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-            if (!clientData.purchaseMonths.includes(yyyyMm)) {
-              clientData.purchaseMonths.push(yyyyMm);
-            }
-            clientData.monthlyRevenue[yyyyMm] = (clientData.monthlyRevenue[yyyyMm] || 0) + amount;
+            const bucket = clientData.monthlyStats[yyyyMm] ?? (clientData.monthlyStats[yyyyMm] = { revenue: 0, deals: 0 });
+            bucket.revenue += amount;
+            bucket.deals += 1;
           }
         }
 
@@ -1182,12 +1183,18 @@ export async function syncKeepInCRMLTV(
 
     const allClientsSorted = Array.from(clientsMap.values()).sort((a, b) => b.revenue - a.revenue);
 
-    // Когорти рахуємо по ВСІХ клієнтах, а не лише по збережених у знімку.
-    const cohortLtv = buildCohortLtv(allClientsSorted, todayKyiv().slice(0, 7));
+    // Когорти рахуємо по ВСІХ клієнтах. buildCohortLtv оперує лише доходом,
+    // тож зводимо помісячну статистику до сум.
+    const cohortLtv = buildCohortLtv(
+      allClientsSorted.map(c => ({
+        monthlyRevenue: Object.fromEntries(
+          Object.entries(c.monthlyStats as Record<string, { revenue: number }>).map(([m, s]) => [m, s.revenue]),
+        ),
+      })),
+      todayKyiv().slice(0, 7),
+    );
 
-    // monthlyRevenue прибираємо перед записом: він потрібен був тільки для когорт,
-    // а в документі помітно роздував би кожного клієнта.
-    const clientsToStore = allClientsSorted.map(({ monthlyRevenue, ...rest }) => rest);
+    const clientsToStore = allClientsSorted;
 
     const stageStats = Array.from(stageStatsMap.entries()).map(([stage, data]) => ({
       stage,
@@ -1208,7 +1215,11 @@ export async function syncKeepInCRMLTV(
       scopedTo: from || to ? { from, to } : null,
       stageStats,
       clientsCount: clientsToStore.length,
-      chunkCount: chunkList(clientsToStore, LTV_CLIENTS_CHUNK_SIZE).length,
+      /** Найраніший і найпізніший місяць покупок — межі для вибору періоду в UI */
+      monthsCovered: (() => {
+        const all = allClientsSorted.flatMap(c => Object.keys(c.monthlyStats));
+        return all.length > 0 ? { from: all.reduce((a, b) => a < b ? a : b), to: all.reduce((a, b) => a > b ? a : b) } : null;
+      })(),
       lastSyncedAt: new Date().toISOString()
     };
 
