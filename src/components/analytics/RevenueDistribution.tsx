@@ -25,14 +25,20 @@ export default function RevenueDistribution({ dist }: { dist: Dist }) {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         {[
-          { label: 'Середнє (ARPU)', value: `${fmt(dist.mean)} ₴`, tone: 'text-purple-700' },
-          { label: 'Медіана', value: `${fmt(dist.median)} ₴`, tone: 'text-blue-700' },
-          { label: '90-й перцентиль', value: `${fmt(dist.p90)} ₴`, tone: 'text-emerald-700' },
-          { label: 'Топ-10 % дають', value: `${dist.top10Share}%`, tone: 'text-amber-700' },
+          { label: 'Середнє (ARPU)', value: `${fmt(dist.mean)} ₴`, tone: 'text-purple-700', note: `${fmt(dist.total)} ₴ ÷ ${fmt(dist.count)}` },
+          { label: 'Медіана', value: `${fmt(dist.median)} ₴`, tone: 'text-blue-700', note: 'половина клієнтів нижче' },
+          { label: '90-й перцентиль', value: `${fmt(dist.p90)} ₴`, tone: 'text-emerald-700', note: '90 % клієнтів нижче' },
+          {
+            label: 'Топ-10 % дають',
+            value: `${dist.top10Share}%`,
+            tone: 'text-amber-700',
+            note: `${fmt(dist.top10Count)} кл. · від ${fmt(dist.top10Threshold)} ₴`,
+          },
         ].map(m => (
           <div key={m.label} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{m.label}</p>
             <p className={`text-xl font-black mt-1 ${m.tone}`}>{m.value}</p>
+            <p className="text-[10px] text-gray-400 mt-0.5 truncate" title={m.note}>{m.note}</p>
           </div>
         ))}
       </div>
@@ -41,6 +47,17 @@ export default function RevenueDistribution({ dist }: { dist: Dist }) {
         <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-5">
           Середнє вище за медіану в {(dist.mean / dist.median).toFixed(1)}× — дохід сильно зміщений
           до кількох великих клієнтів. Медіана тут описує типового клієнта чесніше за ARPU.
+        </p>
+      )}
+
+      {/* Медіана 0 — це не «мало даних», а «більшість вибірки не принесла нічого».
+          Без цієї підказки три нулі поспіль читаються як зламаний розрахунок. */}
+      {dist.median === 0 && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-5">
+          Медіана 0 ₴ означає, що щонайменше половина клієнтів вибірки не принесла нічого за цей
+          період{dist.p90 === 0 && ' — і навіть 90-й перцентиль нульовий, тобто таких понад 90 %'}.
+          ARPU тут ділиться й на них теж, тому занижений. Щоб рахувати лише платників, поставте
+          у фільтрі «Дохід, ₴» значення «від» = 1.
         </p>
       )}
 

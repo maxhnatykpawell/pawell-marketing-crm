@@ -1,6 +1,6 @@
 import {
   enrichClients, applyFilters, sortClients, collectTags, collectCohortMonths,
-  computeDistribution, clientsToCsv, countActiveFilters, recencyBucket,
+  computeDistribution, assignTiers, clientsToCsv, countActiveFilters, recencyBucket,
   EMPTY_FILTERS, ClientRecord, ClientFilters, chunkList, chunkBySize, getPurchaseMonths,
 } from './clientAnalytics';
 
@@ -137,6 +137,60 @@ console.log('\nРозподіл доходу');
 
   const empty = computeDistribution([]);
   check('порожня вибірка не падає', [empty.count, empty.mean, empty.top10Share], [0, 0, 0]);
+
+  const ten = enrichClients(
+    [10, 20, 30, 40, 50, 60, 70, 80, 90, 1000].map((r, i) => client({ id: String(i), revenue: r })),
+    NOW,
+  );
+  const d3 = computeDistribution(ten);
+  check('топ-10 %: скільки клієнтів', d3.top10Count, 1);
+  check('топ-10 %: поріг входу', d3.top10Threshold, 1000);
+
+  const twenty = enrichClients(
+    Array.from({ length: 20 }, (_, i) => client({ id: String(i), revenue: (i + 1) * 100 })),
+    NOW,
+  );
+  const d4 = computeDistribution(twenty);
+  check('20 клієнтів → у топ-10 % двоє', d4.top10Count, 2);
+  check('поріг = дохід меншого з двох', d4.top10Threshold, 1900);
+}
+
+console.log('\nТіри');
+{
+  const mk = (revenues: number[]) =>
+    enrichClients(revenues.map((r, i) => client({ id: String(i), revenue: r })), NOW);
+
+  const t = assignTiers(mk(Array.from({ length: 10 }, (_, i) => (i + 1) * 100)));
+  check('10 платників: розміри тірів', t.stats.map(s => s.count), [1, 2, 3, 4]);
+  check('тіри за спаданням доходу', t.stats.map(s => s.tier), [1, 2, 3, 4]);
+  check('Tier 1 — найбільший клієнт', t.stats[0].maxRevenue, 1000);
+  check('поріг входу в Tier 1', t.stats[0].minRevenue, 1000);
+  check('частки доходу сумуються в 100', t.stats.reduce((s, x) => s + x.revenueShare, 0), 100);
+  check('усі платники ранжовані', t.rankedCount, 10);
+  check('без доходу нікого немає', t.zeroRevenueCount, 0);
+
+  const zeros = assignTiers(mk([0, 0, 0, 0, 0, 0, 0, 0, 0, 1000]));
+  check('нульові клієнти поза тірами', zeros.zeroRevenueCount, 9);
+  check('ранжується лише платник', zeros.rankedCount, 1);
+  check('єдиний платник — Tier 1', zeros.stats.map(s => [s.tier, s.count]), [[1, 1]]);
+  check(
+    'нульовим тір не присвоєно',
+    zeros.clients.filter(c => c.tier === null).length,
+    9,
+  );
+
+  const noEarners = assignTiers(mk([0, 0, 0]));
+  check('без платників тірів немає', [noEarners.stats.length, noEarners.rankedCount], [0, 0]);
+
+  // Однакові суми не можна розкладати в різні тіри: межа зсувається вниз
+  const ties = assignTiers(mk([500, 500, 500, 500, 500, 500, 500, 500, 500, 500]));
+  check('десять однакових сум — усі в Tier 1', ties.stats.map(s => [s.tier, s.count]), [[1, 10]]);
+
+  check('порядок вхідного списку збережено',
+    assignTiers(mk([100, 900, 500])).clients.map(c => c.periodRevenue), [100, 900, 500]);
+
+  check('порожній вхід не падає',
+    [assignTiers([]).rankedCount, assignTiers([]).stats.length], [0, 0]);
 }
 
 console.log('\nCSV');
@@ -148,9 +202,14 @@ console.log('\nCSV');
   const dataLine = csv.split('\r\n')[1];
 
   check('лапки й крапка з комою екрануються', dataLine.startsWith('"ТОВ ""Альфа""; філія"'), true);
-  check('роздільник — крапка з комою', csv.split('\r\n')[0].split(';')[1], 'Дохід за період');
-  check('є і періодні, і загальні числа', csv.split('\r\n')[0].split(';').slice(1, 6),
+  check('роздільник — крапка з комою', csv.split('\r\n')[0].split(';')[1], 'Tier');
+  check('є і періодні, і загальні числа', csv.split('\r\n')[0].split(';').slice(2, 7),
     ['Дохід за період', 'Угод за період', 'Середній чек', 'Дохід за весь час', 'Угод за весь час']);
+  // Окремий рядок без лапок і крапки з комою — щоб split(';') бив по колонках
+  const plain = enrichClients([client({ id: '2', name: 'Бета', revenue: 100 })], NOW);
+  check('без тіру колонка порожня', clientsToCsv(plain).split('\r\n')[1].split(';')[1], '');
+  check('тір потрапляє в CSV',
+    clientsToCsv(assignTiers(plain).clients).split('\r\n')[1].split(';')[1], 'Tier 1');
 }
 
 console.log('\nРозбиття на частини');

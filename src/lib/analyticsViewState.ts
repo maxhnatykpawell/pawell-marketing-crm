@@ -6,7 +6,7 @@
  * починається зі складання фільтрів наново.
  */
 
-import { ClientFilters, EMPTY_FILTERS, SortKey, SortDir } from './clientAnalytics';
+import { ClientFilters, EMPTY_FILTERS, SortKey, SortDir, TierId } from './clientAnalytics';
 
 const STORAGE_KEY = 'pawell_ltv_analytics_view';
 
@@ -18,6 +18,8 @@ export interface AnalyticsView {
   sortDir: SortDir;
   limit: number;
   tab: 'clients' | 'funnel' | 'cohorts';
+  /** Показувати лише цей тір; null = усі */
+  tierFocus: TierId | null;
 }
 
 export const DEFAULT_VIEW: AnalyticsView = {
@@ -27,10 +29,12 @@ export const DEFAULT_VIEW: AnalyticsView = {
   sortDir: 'desc',
   limit: 100,
   tab: 'clients',
+  tierFocus: null,
 };
 
 const SORT_KEYS: SortKey[] = ['revenue', 'deals', 'avgCheck', 'recency', 'name', 'cohort'];
 const TABS: AnalyticsView['tab'][] = ['clients', 'funnel', 'cohorts'];
+const TIER_IDS: TierId[] = [1, 2, 3, 4];
 
 const strArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
@@ -76,6 +80,7 @@ export function parseView(raw: unknown): AnalyticsView {
     sortDir: v.sortDir === 'asc' ? 'asc' : 'desc',
     limit: typeof v.limit === 'number' && v.limit > 0 ? v.limit : DEFAULT_VIEW.limit,
     tab: TABS.includes(v.tab) ? v.tab : DEFAULT_VIEW.tab,
+    tierFocus: TIER_IDS.includes(v.tierFocus) ? v.tierFocus : null,
   };
 }
 

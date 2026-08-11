@@ -4,11 +4,12 @@ import { getKeepInCRMLTVClients } from '../api';
 import { LTV_HORIZONS, CohortLtvRow, CohortLtvHorizon } from '../lib/cohortLtv';
 import ClientFilterBar from './analytics/ClientFilterBar';
 import RevenueDistributionCard from './analytics/RevenueDistribution';
+import ClientTiers from './analytics/ClientTiers';
 import {
-  ClientRecord as ClientLTV, EnrichedClient, ClientFilters, MonthRange,
-  SortKey, SortDir, SORT_LABELS, DEFAULT_RFM_THRESHOLDS,
+  ClientRecord as ClientLTV, TieredClient, ClientFilters, MonthRange,
+  SortKey, SortDir, SORT_LABELS, DEFAULT_RFM_THRESHOLDS, TierId, TIERS,
   enrichClients, applyFilters, sortClients, collectTags, collectCohortMonths,
-  computeDistribution, clientsToCsv, getPurchaseMonths,
+  computeDistribution, assignTiers, clientsToCsv, getPurchaseMonths,
 } from '../lib/clientAnalytics';
 import { loadView, saveView } from '../lib/analyticsViewState';
 import PeriodPicker, { PeriodKey, PeriodValue, describePeriod } from './PeriodPicker';
@@ -56,12 +57,15 @@ function SortableTh({
  * до сотень, кожен по десятку вузлів.
  */
 const ClientRow = React.memo(function ClientRow({
-  client, index, onTagClick,
+  client, index, onTagClick, onTierClick,
 }: {
-  client: EnrichedClient;
+  client: TieredClient;
   index: number;
   onTagClick: (tag: string) => void;
+  onTierClick: (tier: TierId) => void;
 }) {
+  const tierMeta = client.tier !== null ? TIERS.find(t => t.id === client.tier) : undefined;
+
   return (
     <tr className="hover:bg-gray-50/50 transition">
       <td className="py-3 px-4">
@@ -74,6 +78,19 @@ const ClientRow = React.memo(function ClientRow({
             </span>
           </div>
         </div>
+      </td>
+      <td className="py-3 px-4 whitespace-nowrap">
+        {tierMeta ? (
+          <button
+            onClick={() => onTierClick(tierMeta.id)}
+            title={`Показати лише ${tierMeta.label} — ${tierMeta.hint}`}
+            className={`text-[10px] font-bold px-2 py-0.5 rounded border transition hover:brightness-95 ${tierMeta.badge}`}
+          >
+            {tierMeta.label}
+          </button>
+        ) : (
+          <span className="text-xs text-gray-300" title="Немає доходу в періоді — поза тірами">—</span>
+        )}
       </td>
       <td className="py-3 px-4 text-right">
         <span className="text-sm font-bold text-gray-900 whitespace-nowrap">
@@ -200,6 +217,9 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
   const [period, setPeriod] = useState<PeriodValue>(saved.period as PeriodValue);
   const [sortKey, setSortKey] = useState<SortKey>(saved.sortKey);
   const [sortDir, setSortDir] = useState<SortDir>(saved.sortDir);
+  /** Показувати лише один тір; null = усі. Живе окремо від ClientFilters,
+      бо застосовується ПІСЛЯ ранжування, а не до нього. */
+  const [tierFocus, setTierFocus] = useState<TierId | null>(saved.tierFocus);
   /**
    * Ліміт РЯДКІВ у таблиці. Метрики й CSV рахуються по всій вибірці, а не по зрізу.
    *
@@ -211,8 +231,8 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
 
   // Зберігаємо вибір при кожній зміні
   useEffect(() => {
-    saveView({ filters, period, sortKey, sortDir, limit, tab: activeTab });
-  }, [filters, period, sortKey, sortDir, limit, activeTab]);
+    saveView({ filters, period, sortKey, sortDir, limit, tab: activeTab, tierFocus });
+  }, [filters, period, sortKey, sortDir, limit, activeTab, tierFocus]);
 
   /** Період у місяцях — саме така точність у помісячних даних */
   const monthRange = useMemo<MonthRange | null>(
@@ -269,16 +289,31 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
   const tagOptions = useMemo(() => collectTags(allClients), [allClients]);
   const cohortOptions = useMemo(() => collectCohortMonths(enriched), [enriched]);
 
-  /** Вибірка після фільтрів — саме на ній рахуються ВСІ метрики */
+  /** Вибірка після фільтрів — база, на якій ранжуються тіри */
   const filteredClients = useMemo(
     () => sortClients(applyFilters(enriched, filters), sortKey, sortDir),
     [enriched, filters, sortKey, sortDir],
   );
 
+  /**
+   * Тіри рахуються ДО фокуса на тірі, а не після.
+   *
+   * Інакше вийшло б коло: обмежили вибірку до Tier 1 — і всередині неї знову
+   * з'явився б свій Tier 1. Тому склад тірів залежить лише від фільтрів
+   * і періоду, а фокус лише ховає зайві рядки.
+   */
+  const tiered = useMemo(() => assignTiers(filteredClients), [filteredClients]);
+
+  /** Вибірка після фокуса — саме на ній рахуються метрики, CSV і таблиця */
+  const selectedClients = useMemo(
+    () => (tierFocus === null ? tiered.clients : tiered.clients.filter(c => c.tier === tierFocus)),
+    [tiered, tierFocus],
+  );
+
   /** Зріз лише для показу в таблиці */
   const visibleClients = useMemo(
-    () => filteredClients.slice(0, limit),
-    [filteredClients, limit],
+    () => selectedClients.slice(0, limit),
+    [selectedClients, limit],
   );
 
   /** Стабільне посилання, щоб мемоізовані рядки не перемальовувались даремно */
@@ -286,7 +321,11 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
     setFilters(f => (f.tagsInclude.includes(tag) ? f : { ...f, tagsInclude: [...f.tagsInclude, tag] }));
   }, []);
 
-  const distribution = useMemo(() => computeDistribution(filteredClients), [filteredClients]);
+  const focusTier = useCallback((tier: TierId) => {
+    setTierFocus(prev => (prev === tier ? null : tier));
+  }, []);
+
+  const distribution = useMemo(() => computeDistribution(selectedClients), [selectedClients]);
 
   const toggleSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -299,7 +338,7 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
   };
 
   const exportCsv = () => {
-    const blob = new Blob(['﻿' + clientsToCsv(filteredClients)], {
+    const blob = new Blob(['﻿' + clientsToCsv(selectedClients)], {
       type: 'text/csv;charset=utf-8;',
     });
     const url = URL.createObjectURL(blob);
@@ -313,8 +352,8 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
   // Когорти рахуємо лише коли їхня вкладка відкрита: це найдорожча операція
   // конвеєра (близько 85 % часу), а на інших вкладках її результат не видно.
   const cohortsData = useMemo(
-    () => (activeTab === 'cohorts' ? calculateCohorts(filteredClients) : {}),
-    [filteredClients, activeTab],
+    () => (activeTab === 'cohorts' ? calculateCohorts(selectedClients) : {}),
+    [selectedClients, activeTab],
   );
   const sortedCohortKeys = Object.keys(cohortsData).sort().reverse(); 
   const maxMonthOffset = Math.max(0, ...Object.values(cohortsData).flatMap((c: any) => Object.keys(c.retention).map(Number)));
@@ -421,7 +460,7 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
           tags={tagOptions}
           cohorts={cohortOptions}
           totalCount={allClients.length}
-          filteredCount={filteredClients.length}
+          filteredCount={selectedClients.length}
         />
 
         {clientsError && (
@@ -473,8 +512,9 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
                 ))}
               </div>
 
-              <div className="p-6">
+              <div className="p-6 space-y-6">
                 <RevenueDistributionCard dist={distribution} />
+                <ClientTiers breakdown={tiered} focus={tierFocus} onFocus={setTierFocus} />
               </div>
 
               {/* Таблиця */}
@@ -484,6 +524,7 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
               <thead>
                 <tr className="border-b border-gray-200 bg-white">
                   <SortableTh label="Клієнт / RFM" sortKey="name"     active={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Tier</th>
                   <SortableTh label="Дохід"        sortKey="revenue"  active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
                   <SortableTh label="Угод"         sortKey="deals"    active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
                   <SortableTh label="Середній чек" sortKey="avgCheck" active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
@@ -494,12 +535,20 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {visibleClients.map((client, index) => (
-                  <ClientRow key={client.id} client={client} index={index} onTagClick={addTagFilter} />
+                  <ClientRow
+                    key={client.id}
+                    client={client}
+                    index={index}
+                    onTagClick={addTagFilter}
+                    onTierClick={focusTier}
+                  />
                 ))}
-                {filteredClients.length === 0 && (
+                {selectedClients.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="py-12 text-center text-gray-400 text-sm">
-                      За цими фільтрами жодного клієнта не знайдено
+                    <td colSpan={8} className="py-12 text-center text-gray-400 text-sm">
+                      {tierFocus !== null
+                        ? `У Tier ${tierFocus} за цими фільтрами нікого немає`
+                        : 'За цими фільтрами жодного клієнта не знайдено'}
                     </td>
                   </tr>
                 )}
@@ -507,13 +556,13 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
             </table>
 
             {/* Ліміт показу — саме показу: метрики вище рахуються по всій вибірці */}
-            {filteredClients.length > 0 && (
+            {selectedClients.length > 0 && (
               <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 bg-gray-50/50">
                 <span className="text-xs text-gray-500">
-                  Показано {visibleClients.length.toLocaleString('uk-UA')} з {filteredClients.length.toLocaleString('uk-UA')}
+                  Показано {visibleClients.length.toLocaleString('uk-UA')} з {selectedClients.length.toLocaleString('uk-UA')}
                   <span className="text-gray-400">
                     {' · '}метрики й CSV — по всій вибірці
-                    {filteredClients.length > visibleClients.length && ', повний список — через CSV'}
+                    {selectedClients.length > visibleClients.length && ', повний список — через CSV'}
                   </span>
                 </span>
                 <div className="flex items-center gap-1">

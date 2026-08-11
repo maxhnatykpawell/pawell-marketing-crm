@@ -355,6 +355,10 @@ export interface RevenueDistribution {
   p90: number;
   /** Частка загального доходу, яку дають 10 % найбільших клієнтів (0–100) */
   top10Share: number;
+  /** Скільки саме клієнтів потрапило в ці 10 % — «10 %» від малої вибірки це одиниці */
+  top10Count: number;
+  /** Поріг входу в топ-10 %: дохід найменшого з них. Нижче цього — вже не топ */
+  top10Threshold: number;
   buckets: { from: number; to: number | null; count: number }[];
 }
 
@@ -377,7 +381,10 @@ function quantile(sorted: number[], q: number): number {
 export function computeDistribution(clients: EnrichedClient[], bucketCount = 6): RevenueDistribution {
   const count = clients.length;
   if (count === 0) {
-    return { count: 0, total: 0, mean: 0, median: 0, p90: 0, top10Share: 0, buckets: [] };
+    return {
+      count: 0, total: 0, mean: 0, median: 0, p90: 0,
+      top10Share: 0, top10Count: 0, top10Threshold: 0, buckets: [],
+    };
   }
 
   const sorted = clients.map(c => c.periodRevenue).sort((a, b) => a - b);
@@ -412,7 +419,133 @@ export function computeDistribution(clients: EnrichedClient[], bucketCount = 6):
     median: Math.round(quantile(sorted, 0.5)),
     p90: Math.round(p90),
     top10Share: total > 0 ? Math.round((topRevenue / total) * 1000) / 10 : 0,
+    top10Count: topCount,
+    top10Threshold: sorted[count - topCount],
     buckets,
+  };
+}
+
+// ── Тіри клієнтів ─────────────────────────────────────────────────────────────
+
+export type TierId = 1 | 2 | 3 | 4;
+
+export interface TierMeta {
+  id: TierId;
+  label: string;
+  /** Яку частку клієнтів-платників забирає тір */
+  sharePct: number;
+  hint: string;
+  /** Класи Tailwind для бейджа в таблиці */
+  badge: string;
+  /** Колір смужки в картці розподілу */
+  bar: string;
+}
+
+/**
+ * Межі тірів — за часткою КІЛЬКОСТІ платників, не за сумою.
+ *
+ * Так «Tier 1» лишається зрозумілим («десята частина клієнтів, найбільші»)
+ * незалежно від того, наскільки перекошений дохід. Поділ за накопиченою сумою
+ * (класичний ABC) при перекосі дає Tier 1 з одного клієнта, і тір перестає
+ * бути придатним для роботи — з ним нічого не сплануєш.
+ */
+export const TIERS: TierMeta[] = [
+  { id: 1, label: 'Tier 1', sharePct: 10, hint: 'топ-10 % за доходом',   badge: 'bg-amber-100 text-amber-800 border-amber-200',       bar: 'bg-amber-500' },
+  { id: 2, label: 'Tier 2', sharePct: 20, hint: 'наступні 20 %',          badge: 'bg-emerald-100 text-emerald-800 border-emerald-200', bar: 'bg-emerald-500' },
+  { id: 3, label: 'Tier 3', sharePct: 30, hint: 'наступні 30 %',          badge: 'bg-blue-100 text-blue-800 border-blue-200',          bar: 'bg-blue-500' },
+  { id: 4, label: 'Tier 4', sharePct: 40, hint: 'решта платників',        badge: 'bg-gray-100 text-gray-600 border-gray-200',          bar: 'bg-gray-400' },
+];
+
+/** Накопичені межі: Tier 1 — до 10 %, Tier 2 — до 30 %, Tier 3 — до 60 %, далі Tier 4 */
+const TIER_CUTS: { tier: TierId; upTo: number }[] = [
+  { tier: 1, upTo: 0.1 },
+  { tier: 2, upTo: 0.3 },
+  { tier: 3, upTo: 0.6 },
+];
+
+export interface TieredClient extends EnrichedClient {
+  /** null — клієнт без доходу в періоді, він поза тірами */
+  tier: TierId | null;
+}
+
+export interface TierStat {
+  tier: TierId;
+  count: number;
+  revenue: number;
+  /** Частка загального доходу вибірки, 0–100 */
+  revenueShare: number;
+  /** Поріг входу — дохід найменшого клієнта тіру */
+  minRevenue: number;
+  maxRevenue: number;
+  avgRevenue: number;
+}
+
+export interface TierBreakdown {
+  clients: TieredClient[];
+  stats: TierStat[];
+  /** Скільки платників розподілено по тірах */
+  rankedCount: number;
+  /** Клієнти з нульовим доходом у періоді — у тіри не потрапляють */
+  zeroRevenueCount: number;
+  /** Загальний дохід вибірки — база для revenueShare */
+  total: number;
+}
+
+/**
+ * Розкласти клієнтів на Tier 1–4 за доходом у періоді.
+ *
+ * Клієнти з нульовим доходом до тірів не входять узагалі. Інакше при
+ * перекошених даних три нижні тіри складались би з самих нулів і не
+ * розрізняли б нікого: «Tier 3: 0 ₴» нічого не каже про клієнта.
+ *
+ * Однакові суми не розриваються межею тіру — два клієнти з тим самим доходом
+ * в різних тірах виглядають як помилка, навіть коли межа проходить рівно між ними.
+ */
+export function assignTiers(clients: EnrichedClient[]): TierBreakdown {
+  const earners = clients
+    .filter(c => c.periodRevenue > 0)
+    .sort((a, b) => b.periodRevenue - a.periodRevenue);
+
+  const n = earners.length;
+  const tierOf = new Map<string, TierId>();
+
+  let start = 0;
+  for (const { tier, upTo } of TIER_CUTS) {
+    if (start >= n) break;
+    // Хоча б один клієнт на тір, поки платники не скінчились
+    let end = Math.min(n, Math.max(start + 1, Math.round(n * upTo)));
+    while (end < n && earners[end].periodRevenue === earners[end - 1].periodRevenue) end++;
+    for (let i = start; i < end; i++) tierOf.set(earners[i].id, tier);
+    start = end;
+  }
+  for (let i = start; i < n; i++) tierOf.set(earners[i].id, 4);
+
+  const total = earners.reduce((s, c) => s + c.periodRevenue, 0);
+
+  const stats: TierStat[] = [];
+  for (const { id } of TIERS) {
+    const members = earners.filter(c => tierOf.get(c.id) === id);
+    if (members.length === 0) continue;
+    const revenue = members.reduce((s, c) => s + c.periodRevenue, 0);
+    stats.push({
+      tier: id,
+      count: members.length,
+      revenue,
+      revenueShare: total > 0 ? Math.round((revenue / total) * 1000) / 10 : 0,
+      // members відсортовані за спаданням разом з earners
+      minRevenue: members[members.length - 1].periodRevenue,
+      maxRevenue: members[0].periodRevenue,
+      avgRevenue: Math.round(revenue / members.length),
+    });
+  }
+
+  return {
+    // Порядок вхідного списку зберігаємо: він заданий сортуванням таблиці
+    clients: clients.map(c => ({ ...c, tier: tierOf.get(c.id) ?? null })),
+    stats,
+    rankedCount: n,
+    zeroRevenueCount: clients.length - n,
+    total,
   };
 }
 
@@ -476,19 +609,20 @@ export function chunkBySize<T>(items: T[], maxBytes: number): T[][] {
  * CSV поточної вибірки. Роздільник — крапка з комою: українська локаль Excel
  * очікує саме його, інакше все злипається в одну колонку.
  */
-export function clientsToCsv(clients: EnrichedClient[]): string {
+export function clientsToCsv(clients: (EnrichedClient & { tier?: TierId | null })[]): string {
   const esc = (v: unknown) => {
     const s = String(v ?? '');
     return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
 
   const header = [
-    'Клієнт', 'Дохід за період', 'Угод за період', 'Середній чек',
+    'Клієнт', 'Tier', 'Дохід за період', 'Угод за період', 'Середній чек',
     'Дохід за весь час', 'Угод за весь час',
     'Остання покупка', 'Днів тому', 'Когорта', 'RFM', 'Теги',
   ];
   const rows = clients.map(c => [
     c.name,
+    c.tier ? `Tier ${c.tier}` : '',
     c.periodRevenue,
     c.periodDeals,
     c.avgCheck,
