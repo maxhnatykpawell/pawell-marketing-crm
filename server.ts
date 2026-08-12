@@ -1511,8 +1511,34 @@ async function startServer() {
 
   app.use(express.json({ limit: '50mb' }));
 
-  const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
+  /**
+   * Куди складати вкладення карток.
+   *
+   * Railway дає сервісу ефемерний диск: усе, записане поруч із кодом, зникає на
+   * кожному деплої. Записи карток при цьому лежать у Firestore і деплой
+   * переживають — тож посилання на вкладення лишаються, а самих файлів уже
+   * немає. Ззовні це виглядає як «картинки не відкриваються».
+   *
+   * Тому корінь береться з примонтованого тому: Railway підставляє
+   * RAILWAY_VOLUME_MOUNT_PATH у сервіс, до якого прикріплено Volume. Якщо тому
+   * немає — лишається DATA_DIR, і локально це саме те, що треба.
+   *
+   * DATA_DIR тут навмисно не переозначено: на ньому висять data.json і
+   * auth.json, і переносити автентифікацію заодно з картинками — не та ціна.
+   */
+  const UPLOADS_ROOT = process.env.UPLOADS_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || DATA_DIR;
+  const UPLOADS_DIR = path.join(UPLOADS_ROOT, 'uploads');
   if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+  // Шлях у лог — щоб «куди пишуться файли» не доводилось вгадувати з деплою
+  console.log(`📎 Вкладення: ${UPLOADS_DIR}`);
+  if (process.env.NODE_ENV === 'production' && UPLOADS_ROOT === DATA_DIR) {
+    console.warn(
+      '⚠️  Вкладення пишуться на ефемерний диск — том не примонтовано.\n' +
+      '    Кожен деплой зітре їх, а посилання в картках лишаться битими.\n' +
+      '    Прикріпіть Volume до сервісу або задайте UPLOADS_DIR вручну.',
+    );
+  }
   /**
    * Вкладення карток.
    *
