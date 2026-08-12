@@ -49,7 +49,7 @@ interface AppContextType {
   addUserGroup: (group: Omit<UserGroup, 'id'>) => void;
   updateUserGroup: (id: string, updates: Partial<UserGroup>) => void;
   deleteUserGroup: (id: string) => void;
-  updateSettings: (updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule' | 'expenseCategories' | 'expenseSources'>>) => void;
+  updateSettings: (updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule' | 'expenseCategories' | 'expenseSources' | 'rfmThresholds'>>) => void;
   addEvent: (item: Omit<EventItem, 'id'>) => void;
   updateEvent: (id: string, updates: Partial<EventItem>) => void;
   deleteEvent: (id: string) => void;
@@ -617,7 +617,7 @@ export default function App() {
     deleteEntity('userGroups', id).catch(console.error);
   }, [state]);
 
-  const updateSettings = useCallback((updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule'>>) => {
+  const updateSettings = useCallback((updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule' | 'expenseCategories' | 'expenseSources' | 'rfmThresholds'>>) => {
     if (!state) return;
     saveState({ ...state, ...updates });
   }, [state, saveState]);

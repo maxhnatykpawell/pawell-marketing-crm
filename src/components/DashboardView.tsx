@@ -19,7 +19,7 @@ import LtvSyncDialog from './LtvSyncDialog';
 const COHORT_MATURITY_DAYS = 14;
 
 export default function DashboardView() {
-  const { state, updateMetric, setActiveView, setActiveEventId, currentUser } = useAppContext();
+  const { state, updateMetric, setActiveView, setActiveEventId, currentUser, updateSettings, hasEditRights } = useAppContext();
   
   const [editingMetric, setEditingMetric] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<Metric>>({});
@@ -855,6 +855,9 @@ export default function DashboardView() {
         <LtvAnalyticsModal
           data={ltvData}
           onClose={() => setIsLtvModalOpen(false)}
+          rfmThresholds={state.rfmThresholds}
+          onSaveRfmThresholds={t => updateSettings({ rfmThresholds: t })}
+          canEditSettings={hasEditRights}
         />
       )}
 

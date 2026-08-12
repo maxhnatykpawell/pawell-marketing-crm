@@ -3,6 +3,7 @@ import {
   computeDistribution, assignTiers, clientsToCsv, countActiveFilters, recencyBucket,
   EMPTY_FILTERS, ClientRecord, ClientFilters, chunkList, chunkBySize, getPurchaseMonths,
   classifyCustomer, computeCustomerMix,
+  checkRfmThresholds, sanitizeRfmThresholds, countByRfm, DEFAULT_RFM_THRESHOLDS,
 } from './clientAnalytics';
 
 let failures = 0;
@@ -361,6 +362,47 @@ console.log('\nРозклад «нові / постійні»');
 {
   const empty = computeCustomerMix([], null);
   check('порожня вибірка не ділить на нуль', [empty.totalDeals, empty.new.dealsShare], [0, 0]);
+}
+
+console.log('\nПороги сегментації');
+{
+  // Пороги справді керують сегментом, а не лише його описом
+  const c = client({ id: 's', agreementsCount: 2, lastPurchaseDate: '2026-06-01' }); // 70 днів тому
+  const seg = (t: Partial<typeof DEFAULT_RFM_THRESHOLDS>) =>
+    enrichClients([c], NOW, { ...DEFAULT_RFM_THRESHOLDS, ...t })[0].rfm.label;
+
+  check('за замовчуванням — Лояльний', seg({}), 'Лояльний');
+  check('знизили поріг чемпіона за угодами', seg({ championDeals: 2 }), 'Чемпіон');
+  check('звузили вікно лояльного', seg({ loyalDays: 30, dormantDays: 30 }), 'Сплячий');
+
+  const counts = countByRfm(enrichClients([
+    client({ id: 'a', agreementsCount: 5, lastPurchaseDate: '2026-08-01' }),
+    client({ id: 'b', agreementsCount: 2, lastPurchaseDate: '2026-07-01' }),
+    client({ id: 'c', agreementsCount: 1, lastPurchaseDate: '2020-01-01' }),
+  ], NOW));
+  check('лічильник сегментів', [counts['Чемпіон'], counts['Лояльний'], counts['Зона ризику']], [1, 1, 1]);
+  check('порожні сегменти лишаються нулями', counts['Сплячий'], 0);
+}
+{
+  check('стандартні пороги не суперечать собі', checkRfmThresholds(DEFAULT_RFM_THRESHOLDS), []);
+
+  const inverted = checkRfmThresholds({ ...DEFAULT_RFM_THRESHOLDS, championDeals: 1 });
+  check('чемпіон з меншим порогом за угодами — попередження', inverted.length, 1);
+
+  const overlap = checkRfmThresholds({ ...DEFAULT_RFM_THRESHOLDS, dormantDays: 90 });
+  check('сплячий перекриває лояльного — попередження', overlap.length, 1);
+
+  check('нуль і від\'ємні відхиляються',
+    checkRfmThresholds({ ...DEFAULT_RFM_THRESHOLDS, newDays: 0 }).length > 0, true);
+}
+{
+  check('сміття зі спільного стану — стандартні пороги',
+    sanitizeRfmThresholds({ championDeals: 'багато', loyalDays: null }), DEFAULT_RFM_THRESHOLDS);
+  check('частковий об\'єкт доповнюється',
+    sanitizeRfmThresholds({ championDeals: 7 }), { ...DEFAULT_RFM_THRESHOLDS, championDeals: 7 });
+  check('нема налаштувань — стандартні', sanitizeRfmThresholds(undefined), DEFAULT_RFM_THRESHOLDS);
+  check('дробові округлюються',
+    sanitizeRfmThresholds({ loyalDays: 45.6 }).loyalDays, 46);
 }
 
 console.log('\nРізання за розміром');

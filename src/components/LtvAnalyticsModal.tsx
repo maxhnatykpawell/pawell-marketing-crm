@@ -6,12 +6,14 @@ import ClientFilterBar from './analytics/ClientFilterBar';
 import RevenueDistributionCard from './analytics/RevenueDistribution';
 import ClientTiers from './analytics/ClientTiers';
 import CustomerMixCard from './analytics/CustomerMix';
+import SegmentSettings from './analytics/SegmentSettings';
 import {
-  ClientRecord as ClientLTV, TieredClient, ClientFilters, MonthRange,
-  SortKey, SortDir, SORT_LABELS, DEFAULT_RFM_THRESHOLDS, TierId, TIERS,
+  ClientRecord as ClientLTV, TieredClient, ClientFilters, MonthRange, RfmThresholds,
+  SortKey, SortDir, SORT_LABELS, TierId, TIERS,
   CustomerKind, CUSTOMER_KIND_LABELS, CUSTOMER_KIND_STYLES,
   enrichClients, applyFilters, sortClients, collectTags, collectCohortMonths,
   computeDistribution, computeCustomerMix, assignTiers, clientsToCsv, getPurchaseMonths,
+  countByRfm, sanitizeRfmThresholds,
 } from '../lib/clientAnalytics';
 import { loadView, saveView } from '../lib/analyticsViewState';
 import PeriodPicker, { PeriodKey, PeriodValue, describePeriod } from './PeriodPicker';
@@ -207,6 +209,11 @@ const LTV_MAX_MONTHS = 24;
 
 interface LtvAnalyticsModalProps {
   onClose: () => void;
+  /** Спільні пороги сегментації; undefined = команда їх ще не міняла */
+  rfmThresholds?: RfmThresholds;
+  /** Зберегти пороги для всієї команди */
+  onSaveRfmThresholds: (t: RfmThresholds) => void;
+  canEditSettings: boolean;
   data: {
     totalLTVRevenue: number;
     uniqueClientsCount: number;
@@ -223,7 +230,9 @@ interface LtvAnalyticsModalProps {
   };
 }
 
-export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalProps) {
+export default function LtvAnalyticsModal({
+  onClose, data, rfmThresholds, onSaveRfmThresholds, canEditSettings,
+}: LtvAnalyticsModalProps) {
   // Вибір відновлюється з попереднього сеансу — фільтри й період це налаштування
   // робочого місця, а не разова дія.
   const saved = useMemo(() => loadView(), []);
@@ -240,6 +249,33 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
       фільтр: розклад «нові / постійні» має лишатись видимим повністю навіть
       тоді, коли в таблиці показано один бік. */
   const [kindFocus, setKindFocus] = useState<CustomerKind | null>(saved.kindFocus);
+
+  /**
+   * Збережений командний варіант порогів. Проходить перевірку навіть прийшовши
+   * зі спільного стану: його пишуть інші люди й інші версії застосунку.
+   */
+  const savedThresholds = useMemo(() => sanitizeRfmThresholds(rfmThresholds), [rfmThresholds]);
+
+  /**
+   * Чернетка порогів. Застосовується до вибірки одразу, а в спільний стан іде
+   * лише окремою дією — інакше кожне натискання стрілки в полі нав'язувало б
+   * команді проміжне число.
+   */
+  const [draftThresholds, setDraftThresholds] = useState<RfmThresholds>(savedThresholds);
+  const [savingThresholds, setSavingThresholds] = useState(false);
+
+  // Хтось із команди змінив пороги, поки модалка відкрита — підхоплюємо їх,
+  // але не затираємо незбережену чернетку, яку зараз крутить користувач.
+  useEffect(() => {
+    setDraftThresholds(prev => (savingThresholds ? savedThresholds : prev));
+    setSavingThresholds(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedThresholds]);
+
+  const saveThresholds = useCallback(() => {
+    setSavingThresholds(true);
+    onSaveRfmThresholds(draftThresholds);
+  }, [draftThresholds, onSaveRfmThresholds]);
   /**
    * Ліміт РЯДКІВ у таблиці. Метрики й CSV рахуються по всій вибірці, а не по зрізу.
    *
@@ -317,9 +353,18 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
 
   // Похідні поля рахуємо один раз, а не на кожен фільтр
   const enriched = useMemo(
-    () => enrichClients(allClients, new Date(), DEFAULT_RFM_THRESHOLDS, monthRange),
-    [allClients, monthRange],
+    () => enrichClients(allClients, new Date(), draftThresholds, monthRange),
+    [allClients, monthRange, draftThresholds],
   );
+
+  /**
+   * Розмір сегментів — по клієнтах у періоді, але БЕЗ решти фільтрів: пороги
+   * налаштовуються під усю базу, а не під той зріз, який зараз відкритий.
+   */
+  const rfmSizes = useMemo(() => {
+    const inPeriod = enriched.filter(c => c.inPeriod);
+    return { counts: countByRfm(inPeriod), total: inPeriod.length };
+  }, [enriched]);
 
   /** Чи є в даних помісячні суми — у знімках старого формату їх немає */
   const hasMonthlyStats = allClients.length === 0 || !!allClients[0].monthlyStats;
@@ -524,6 +569,22 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
             </span>
           )}
         </div>
+      </div>
+
+      {/* Пороги сегментації — над фільтрами: вони визначають, що взагалі
+          означають слова «Чемпіон» і «Сплячий» у фільтрі нижче. */}
+      <div className="flex-shrink-0">
+        <SegmentSettings
+          draft={draftThresholds}
+          onDraftChange={setDraftThresholds}
+          onSave={saveThresholds}
+          onReset={() => setDraftThresholds(savedThresholds)}
+          saved={savedThresholds}
+          saving={savingThresholds}
+          canEdit={canEditSettings}
+          counts={rfmSizes.counts}
+          totalClients={rfmSizes.total}
+        />
       </div>
 
       {/* Фільтри живуть над вкладками: вони впливають на вміст усіх трьох,

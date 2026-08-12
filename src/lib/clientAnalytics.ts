@@ -175,7 +175,129 @@ export const DEFAULT_RFM_THRESHOLDS: RfmThresholds = {
 
 export const RFM_LABELS = ['Чемпіон', 'Лояльний', 'Сплячий', 'Новий', 'Зона ризику', 'Звичайний'] as const;
 
-const RFM_STYLES: Record<string, RfmSegment> = {
+/**
+ * Пороги в тому порядку, в якому їх перевіряє getRfmSegment.
+ *
+ * Порядок тут не косметичний: перше правило, що спрацювало, забирає клієнта,
+ * тож «Чемпіон» завжди виграє в «Лояльного». Панель налаштувань показує рядки
+ * саме в цьому порядку — інакше неможливо зрозуміти, чому клієнт із трьома
+ * угодами не потрапив у сегмент, який ви щойно розширили.
+ */
+export const RFM_RULES: {
+  label: typeof RFM_LABELS[number];
+  /** Пороги, які впливають на це правило; пусто — для «Звичайного» */
+  fields: { key: keyof RfmThresholds; label: string; unit: string }[];
+  describe: (t: RfmThresholds) => string;
+}[] = [
+  {
+    label: 'Чемпіон',
+    fields: [
+      { key: 'championDeals', label: 'від угод', unit: 'угод' },
+      { key: 'championDays', label: 'купував не пізніше', unit: 'днів' },
+    ],
+    describe: t => `від ${t.championDeals} угод і покупка за останні ${t.championDays} днів`,
+  },
+  {
+    label: 'Лояльний',
+    fields: [
+      { key: 'loyalDeals', label: 'від угод', unit: 'угод' },
+      { key: 'loyalDays', label: 'купував не пізніше', unit: 'днів' },
+    ],
+    describe: t => `від ${t.loyalDeals} угод і покупка за останні ${t.loyalDays} днів`,
+  },
+  {
+    label: 'Сплячий',
+    fields: [{ key: 'dormantDays', label: 'не купував понад', unit: 'днів' }],
+    describe: t => `від ${t.loyalDeals} угод, але не купував понад ${t.dormantDays} днів`,
+  },
+  {
+    label: 'Зона ризику',
+    fields: [],
+    describe: t => `рівно 1 угода і не купував понад ${t.dormantDays} днів`,
+  },
+  {
+    label: 'Новий',
+    fields: [{ key: 'newDays', label: 'перша покупка за', unit: 'днів' }],
+    describe: t => `рівно 1 угода за останні ${t.newDays} днів`,
+  },
+  {
+    label: 'Звичайний',
+    fields: [],
+    describe: () => 'усі, хто не підійшов під жодне правило вище',
+  },
+];
+
+/**
+ * Суперечності в порогах, які зрозумілі лише як текст.
+ *
+ * Пороги перевіряються по черзі, тож «розширив сегмент, а він порожній» —
+ * найчастіша пастка при налаштуванні: правило вище просто забирає клієнтів
+ * раніше. Замість того щоб мовчки віддати порожній сегмент, називаємо причину.
+ */
+export function checkRfmThresholds(t: RfmThresholds): string[] {
+  const warnings: string[] = [];
+
+  for (const [key, value] of Object.entries(t)) {
+    if (!Number.isFinite(value) || value < 1) {
+      warnings.push(`«${key}» має бути додатним числом — зараз ${value}.`);
+    }
+  }
+
+  if (t.championDeals < t.loyalDeals) {
+    warnings.push(
+      `Чемпіону треба менше угод (${t.championDeals}), ніж Лояльному (${t.loyalDeals}) — ` +
+      'тоді Лояльний недосяжний, бо Чемпіон забирає всіх раніше.',
+    );
+  }
+  if (t.championDays > t.loyalDays) {
+    warnings.push(
+      `Чемпіон допускає давнішу покупку (${t.championDays} дн.), ніж Лояльний (${t.loyalDays} дн.) — ` +
+      'Лояльний лишиться майже порожнім.',
+    );
+  }
+  if (t.dormantDays < t.loyalDays) {
+    warnings.push(
+      `Сплячий починається раніше (${t.dormantDays} дн.), ніж закінчується Лояльний (${t.loyalDays} дн.) — ` +
+      'у проміжку клієнти дістаються Лояльному, і Сплячий звузиться.',
+    );
+  }
+  if (t.newDays > t.dormantDays) {
+    warnings.push(
+      `Новий тягнеться далі (${t.newDays} дн.), ніж поріг Сплячого (${t.dormantDays} дн.) — ` +
+      'клієнти з однією угодою підуть у Зону ризику замість Нового.',
+    );
+  }
+
+  return warnings;
+}
+
+/** Скільки клієнтів у кожному сегменті — щоб пороги налаштовувати по числах, а не наосліп */
+export function countByRfm(clients: EnrichedClient[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const label of RFM_LABELS) counts[label] = 0;
+  for (const c of clients) counts[c.rfm.label] = (counts[c.rfm.label] ?? 0) + 1;
+  return counts;
+}
+
+/**
+ * Пороги з довільного джерела — зі спільного стану, який пишуть інші люди
+ * й інші версії застосунку. Кожне поле або проходить перевірку, або
+ * замінюється значенням за замовчуванням; часткові об'єкти доповнюються.
+ */
+export function sanitizeRfmThresholds(raw: unknown): RfmThresholds {
+  if (!raw || typeof raw !== 'object') return DEFAULT_RFM_THRESHOLDS;
+  const v = raw as Record<string, unknown>;
+  const out = { ...DEFAULT_RFM_THRESHOLDS };
+  for (const key of Object.keys(DEFAULT_RFM_THRESHOLDS) as (keyof RfmThresholds)[]) {
+    const n = v[key];
+    if (typeof n === 'number' && Number.isFinite(n) && n >= 1) out[key] = Math.round(n);
+  }
+  return out;
+}
+
+/** Вигляд кожного сегмента — один опис на застосунок, щоб бейдж у таблиці
+    й бейдж у налаштуваннях не розійшлись кольорами */
+export const RFM_STYLES: Record<string, RfmSegment> = {
   'Чемпіон':      { label: 'Чемпіон',     color: 'bg-amber-100 text-amber-800 border-amber-200',       icon: '👑' },
   'Лояльний':     { label: 'Лояльний',    color: 'bg-emerald-100 text-emerald-800 border-emerald-200', icon: '🌟' },
   'Сплячий':      { label: 'Сплячий',     color: 'bg-blue-100 text-blue-800 border-blue-200',          icon: '💤' },

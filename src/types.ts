@@ -1,3 +1,7 @@
+import type { RfmThresholds } from './lib/clientAnalytics';
+
+export type { RfmThresholds };
+
 export interface ScheduledAnnouncement {
   id: string;
   label: string;
@@ -266,6 +270,15 @@ export interface AppState {
   keepincrm?: KeepInCRMSnapshot;
   payrolls?: PayrollDocument[];
   payrollSettings?: PayrollSettings;
+  /**
+   * Пороги сегментації клієнтів у розширеній аналітиці.
+   *
+   * Живуть у спільному стані, а не в localStorage: якщо кожен матиме свої
+   * пороги, на спільній зустрічі «у нас 40 чемпіонів» і «у нас 12» будуть
+   * однаково правдиві, і розмову про стратегію доведеться починати з того,
+   * чиї числа правильні.
+   */
+  rfmThresholds?: RfmThresholds;
 }
 
 // ── Payroll Integration Types ───────────────────────────────────────────────
