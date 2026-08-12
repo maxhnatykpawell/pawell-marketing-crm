@@ -5,17 +5,27 @@ import { LTV_HORIZONS, CohortLtvRow, CohortLtvHorizon } from '../lib/cohortLtv';
 import ClientFilterBar from './analytics/ClientFilterBar';
 import RevenueDistributionCard from './analytics/RevenueDistribution';
 import ClientTiers from './analytics/ClientTiers';
+import CustomerMixCard from './analytics/CustomerMix';
 import {
   ClientRecord as ClientLTV, TieredClient, ClientFilters, MonthRange,
   SortKey, SortDir, SORT_LABELS, DEFAULT_RFM_THRESHOLDS, TierId, TIERS,
+  CustomerKind, CUSTOMER_KIND_LABELS, CUSTOMER_KIND_STYLES,
   enrichClients, applyFilters, sortClients, collectTags, collectCohortMonths,
-  computeDistribution, assignTiers, clientsToCsv, getPurchaseMonths,
+  computeDistribution, computeCustomerMix, assignTiers, clientsToCsv, getPurchaseMonths,
 } from '../lib/clientAnalytics';
 import { loadView, saveView } from '../lib/analyticsViewState';
 import PeriodPicker, { PeriodKey, PeriodValue, describePeriod } from './PeriodPicker';
 
 /** Пресети періоду аналітики — усі місячної точності */
 const ANALYTICS_PRESETS: PeriodKey[] = ['all', 'month', 'ytd', 'year', 'custom'];
+
+type TabKey = 'clients' | 'funnel' | 'cohorts';
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: 'clients', label: 'Клієнти · ARPU і тіри' },
+  { key: 'funnel',  label: 'Швидкість воронки' },
+  { key: 'cohorts', label: 'Утримання і когорти' },
+];
 
 /** Заголовок колонки, що керує сортуванням; напрямок показано стрілкою */
 function SortableTh({
@@ -121,8 +131,14 @@ const ClientRow = React.memo(function ClientRow({
           ? <span className="text-xs text-gray-500">{client.recencyDays} дн.</span>
           : <span className="text-xs text-gray-300">—</span>}
       </td>
-      <td className="py-3 px-4 text-xs text-gray-500 whitespace-nowrap">
-        {client.cohortMonth ?? '—'}
+      <td className="py-3 px-4 whitespace-nowrap">
+        <span className="text-xs text-gray-500">{client.cohortMonth ?? '—'}</span>
+        <span
+          className={`block w-fit mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${CUSTOMER_KIND_STYLES[client.customerKind].badge}`}
+          title="Постійний — купував ще до початку періоду"
+        >
+          {CUSTOMER_KIND_LABELS[client.customerKind]}
+        </span>
       </td>
       <td className="py-3 px-4">
         <div className="flex flex-wrap gap-1">
@@ -220,6 +236,10 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
   /** Показувати лише один тір; null = усі. Живе окремо від ClientFilters,
       бо застосовується ПІСЛЯ ранжування, а не до нього. */
   const [tierFocus, setTierFocus] = useState<TierId | null>(saved.tierFocus);
+  /** Показувати лише нових або лише постійних; null = усі. Теж фокус, а не
+      фільтр: розклад «нові / постійні» має лишатись видимим повністю навіть
+      тоді, коли в таблиці показано один бік. */
+  const [kindFocus, setKindFocus] = useState<CustomerKind | null>(saved.kindFocus);
   /**
    * Ліміт РЯДКІВ у таблиці. Метрики й CSV рахуються по всій вибірці, а не по зрізу.
    *
@@ -229,10 +249,28 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
    */
   const [limit, setLimit] = useState<number>(saved.limit);
 
+  /**
+   * Esc закриває, а сторінка під нами не прокручується.
+   *
+   * У вікні це було не критично — воно й так не займало весь екран. На повний
+   * екран вихід мусить бути завжди під рукою, інакше єдиний шлях назад — це
+   * поцілити мишею в хрестик у кутку.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose]);
+
   // Зберігаємо вибір при кожній зміні
   useEffect(() => {
-    saveView({ filters, period, sortKey, sortDir, limit, tab: activeTab, tierFocus });
-  }, [filters, period, sortKey, sortDir, limit, activeTab, tierFocus]);
+    saveView({ filters, period, sortKey, sortDir, limit, tab: activeTab, tierFocus, kindFocus });
+  }, [filters, period, sortKey, sortDir, limit, activeTab, tierFocus, kindFocus]);
 
   /** Період у місяцях — саме така точність у помісячних даних */
   const monthRange = useMemo<MonthRange | null>(
@@ -304,10 +342,22 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
    */
   const tiered = useMemo(() => assignTiers(filteredClients), [filteredClients]);
 
-  /** Вибірка після фокуса — саме на ній рахуються метрики, CSV і таблиця */
-  const selectedClients = useMemo(
+  /**
+   * Вибірка після фокуса на тірі, але ДО фокуса на типі клієнта.
+   *
+   * Саме на ній рахується розклад «нові / постійні»: якби він рахувався після
+   * власного фокуса, то натиснувши «постійні» ви побачили б 100 % — картка
+   * стирала б те число, заради якого в неї клікнули.
+   */
+  const tierFocused = useMemo(
     () => (tierFocus === null ? tiered.clients : tiered.clients.filter(c => c.tier === tierFocus)),
     [tiered, tierFocus],
+  );
+
+  /** Вибірка після обох фокусів — на ній рахуються метрики, CSV і таблиця */
+  const selectedClients = useMemo(
+    () => (kindFocus === null ? tierFocused : tierFocused.filter(c => c.customerKind === kindFocus)),
+    [tierFocused, kindFocus],
   );
 
   /** Зріз лише для показу в таблиці */
@@ -326,6 +376,11 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
   }, []);
 
   const distribution = useMemo(() => computeDistribution(selectedClients), [selectedClients]);
+
+  const customerMix = useMemo(
+    () => computeCustomerMix(tierFocused, monthRange),
+    [tierFocused, monthRange],
+  );
 
   const toggleSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -380,59 +435,77 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
   const totalOpenCount = openStages.reduce((sum, s) => sum + s.count, 0);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
-        
-        {/* Header */}
-        <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <h2 className="text-xl font-black text-gray-800 flex items-center gap-2">
-              <Gem className="w-6 h-6 text-purple-600" />
-              Розширена Аналітика
-            </h2>
-            <div className="flex bg-gray-100 rounded-lg p-1">
-              <button 
-                onClick={() => setActiveTab('clients')}
-                className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${activeTab === 'clients' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+    <div className="fixed inset-0 z-[100] flex flex-col bg-gray-50 animate-in fade-in duration-150">
+
+      {/* Шапка. На весь екран вона єдиний орієнтир — тому тримає і назву,
+          і вкладки, і дії, і лишається на місці при прокрутці. */}
+      <header className="flex-shrink-0 bg-white border-b border-gray-200 shadow-sm">
+        <div className="mx-auto w-full max-w-[1600px] px-6">
+          <div className="flex items-center justify-between gap-4 pt-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center flex-shrink-0 shadow-sm shadow-purple-200">
+                <Gem className="w-5 h-5 text-white" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-lg font-black text-gray-900 leading-tight truncate">Розширена аналітика</h2>
+                <p className="text-xs text-gray-500 truncate">
+                  {clientsLoading
+                    ? 'Завантаження клієнтів…'
+                    : <>
+                        {selectedClients.length.toLocaleString('uk-UA')} клієнтів у вибірці
+                        {' · '}
+                        {monthRange ? describePeriod(period) : 'за весь час'}
+                      </>}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={exportCsv}
+                disabled={selectedClients.length === 0}
+                title="Вивантажити поточну вибірку в CSV"
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-gray-600 border border-gray-200 rounded-lg hover:border-purple-300 hover:text-purple-700 hover:bg-purple-50/50 transition disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Клієнти (ARPU & RFM)
-              </button>
-              <button 
-                onClick={() => setActiveTab('funnel')}
-                className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${activeTab === 'funnel' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-              >
-                Швидкість Воронки
+                <Download className="w-4 h-4" />
+                <span className="hidden sm:inline">CSV</span>
               </button>
               <button
-                onClick={() => setActiveTab('cohorts')}
-                className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${activeTab === 'cohorts' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                onClick={onClose}
+                title="Закрити (Esc)"
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-gray-500 rounded-lg hover:bg-gray-100 hover:text-gray-700 transition"
               >
-                Утримання (Когорти)
+                <X className="w-4 h-4" />
+                <span className="hidden sm:inline">Закрити</span>
+                <kbd className="hidden md:inline text-[10px] font-sans font-bold text-gray-400 border border-gray-200 rounded px-1 py-0.5 ml-0.5">Esc</kbd>
               </button>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={exportCsv}
-              disabled={filteredClients.length === 0}
-              title="Вивантажити поточну вибірку в CSV"
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:border-purple-300 hover:text-purple-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Download className="w-4 h-4" />
-              CSV
-            </button>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
 
-        {/* Період аналітики */}
-        <div className="flex flex-wrap items-center gap-3 px-6 py-3 border-b border-gray-100 bg-gray-50/60 flex-shrink-0">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Період</span>
+          {/* Вкладки підкресленням, а не «пігулками»: на всю ширину екрана
+              пігулки в сірій коробці виглядають як загублений віджет. */}
+          <nav className="flex items-center gap-1 -mb-px mt-3">
+            {TABS.map(t => (
+              <button
+                key={t.key}
+                onClick={() => setActiveTab(t.key)}
+                className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition ${
+                  activeTab === t.key
+                    ? 'border-purple-600 text-purple-700'
+                    : 'border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-300'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </nav>
+        </div>
+      </header>
+
+      {/* Період аналітики */}
+      <div className="flex-shrink-0 border-b border-gray-200 bg-white">
+        <div className="mx-auto w-full max-w-[1600px] px-6 py-3 flex flex-wrap items-center gap-3">
+          <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Період</span>
           <PeriodPicker
             value={period}
             onChange={setPeriod}
@@ -451,144 +524,168 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
             </span>
           )}
         </div>
+      </div>
 
-        {/* Фільтри живуть над вкладками: вони впливають на вміст усіх трьох,
-            тож ховати їх на двох із них означало б приховати активний стан. */}
-        <ClientFilterBar
-          filters={filters}
-          onChange={setFilters}
-          tags={tagOptions}
-          cohorts={cohortOptions}
-          totalCount={allClients.length}
-          filteredCount={selectedClients.length}
-        />
+      {/* Фільтри живуть над вкладками: вони впливають на вміст усіх трьох,
+          тож ховати їх на двох із них означало б приховати активний стан. */}
+      <div className="flex-shrink-0 bg-white border-b border-gray-200">
+        <div className="mx-auto w-full max-w-[1600px]">
+          <ClientFilterBar
+            filters={filters}
+            onChange={setFilters}
+            tags={tagOptions}
+            cohorts={cohortOptions}
+            totalCount={allClients.length}
+            filteredCount={selectedClients.length}
+          />
+        </div>
+      </div>
 
-        {clientsError && (
-          <div className="flex items-center gap-2 px-6 py-2 text-xs text-red-700 bg-red-50 border-b border-red-100 flex-shrink-0">
+      {clientsError && (
+        <div className="flex-shrink-0 bg-red-50 border-b border-red-100">
+          <div className="mx-auto w-full max-w-[1600px] px-6 py-2 flex items-center gap-2 text-xs text-red-700">
             <AlertTriangle className="w-4 h-4 flex-shrink-0" />
             {clientsError}
           </div>
-        )}
+        </div>
+      )}
 
-        {data.lastSyncError && (
-          <div className="flex items-center gap-2 px-6 py-2 text-xs text-red-700 bg-red-50 border-b border-red-100 flex-shrink-0">
+      {data.lastSyncError && (
+        <div className="flex-shrink-0 bg-red-50 border-b border-red-100">
+          <div className="mx-auto w-full max-w-[1600px] px-6 py-2 flex items-center gap-2 text-xs text-red-700">
             <AlertTriangle className="w-4 h-4 flex-shrink-0" />
             Остання синхронізація впала: {data.lastSyncError}. Дані нижче застарілі.
           </div>
-        )}
+        </div>
+      )}
 
-        {activeTab === 'clients' && (
-          <>
-            {clientsLoading && (
-              <div className="flex items-center justify-center gap-2 px-6 py-3 text-sm text-gray-500 bg-gray-50 border-b border-gray-100">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Завантаження списку клієнтів...
-              </div>
-            )}
-
-            {!clientsLoading && !clientsError && allClients.length === 0 && (
-              <div className="px-6 py-3 text-sm text-orange-600 bg-orange-50 border-b border-orange-100">
-                Список клієнтів порожній — можливо, синхронізація ще не збирала ці дані.
-              </div>
-            )}
-
-            <div className="flex-1 overflow-auto bg-gray-50/50">
-              {/* Метрики вибірки */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-6 pb-0">
-                {[
-                  { label: 'Дохід на клієнта (ARPU)', value: `${distribution.mean.toLocaleString('uk-UA')} ₴`, tone: 'text-purple-600', bg: 'bg-purple-50', icon: <Gem className="w-6 h-6 text-purple-500" /> },
-                  { label: 'Загальний дохід вибірки', value: `${distribution.total.toLocaleString('uk-UA')} ₴`, tone: 'text-emerald-600', bg: 'bg-emerald-50', icon: <DollarSign className="w-6 h-6 text-emerald-500" /> },
-                  { label: 'Клієнтів у вибірці', value: distribution.count.toLocaleString('uk-UA'), tone: 'text-blue-600', bg: 'bg-blue-50', icon: <Users className="w-6 h-6 text-blue-500" /> },
-                ].map(m => (
-                  <div key={m.label} className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between">
-                    <div className="min-w-0">
-                      <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">{m.label}</p>
-                      <p className={`text-3xl font-black ${m.tone} truncate`}>{m.value}</p>
-                    </div>
-                    <div className={`w-12 h-12 ${m.bg} rounded-full flex items-center justify-center flex-shrink-0 ml-3`}>
-                      {m.icon}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="p-6 space-y-6">
-                <RevenueDistributionCard dist={distribution} />
-                <ClientTiers breakdown={tiered} focus={tierFocus} onFocus={setTierFocus} />
-              </div>
-
-              {/* Таблиця */}
-              <div className="px-6 pb-6">
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-gray-200 bg-white">
-                  <SortableTh label="Клієнт / RFM" sortKey="name"     active={sortKey} dir={sortDir} onSort={toggleSort} />
-                  <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Tier</th>
-                  <SortableTh label="Дохід"        sortKey="revenue"  active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
-                  <SortableTh label="Угод"         sortKey="deals"    active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
-                  <SortableTh label="Середній чек" sortKey="avgCheck" active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
-                  <SortableTh label="Остання"      sortKey="recency"  active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
-                  <SortableTh label="Когорта"      sortKey="cohort"   active={sortKey} dir={sortDir} onSort={toggleSort} />
-                  <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Теги</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {visibleClients.map((client, index) => (
-                  <ClientRow
-                    key={client.id}
-                    client={client}
-                    index={index}
-                    onTagClick={addTagFilter}
-                    onTierClick={focusTier}
-                  />
-                ))}
-                {selectedClients.length === 0 && (
-                  <tr>
-                    <td colSpan={8} className="py-12 text-center text-gray-400 text-sm">
-                      {tierFocus !== null
-                        ? `У Tier ${tierFocus} за цими фільтрами нікого немає`
-                        : 'За цими фільтрами жодного клієнта не знайдено'}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-
-            {/* Ліміт показу — саме показу: метрики вище рахуються по всій вибірці */}
-            {selectedClients.length > 0 && (
-              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 bg-gray-50/50">
-                <span className="text-xs text-gray-500">
-                  Показано {visibleClients.length.toLocaleString('uk-UA')} з {selectedClients.length.toLocaleString('uk-UA')}
-                  <span className="text-gray-400">
-                    {' · '}метрики й CSV — по всій вибірці
-                    {selectedClients.length > visibleClients.length && ', повний список — через CSV'}
-                  </span>
-                </span>
-                <div className="flex items-center gap-1">
-                  {[50, 100, 500, 1000].map(n => (
-                    <button
-                      key={n}
-                      onClick={() => setLimit(n)}
-                      className={`px-2.5 py-1 text-xs font-medium rounded-md transition ${
-                        limit === n ? 'bg-purple-600 text-white' : 'text-gray-500 hover:bg-gray-200'
-                      }`}
-                    >
-                      {n}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-              </div>
+      {activeTab === 'clients' && (
+        <div className="flex-1 overflow-auto">
+          {clientsLoading && (
+            <div className="flex items-center justify-center gap-2 px-6 py-3 text-sm text-gray-500 bg-white border-b border-gray-100">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Завантаження списку клієнтів...
             </div>
-          </>
-        )}
+          )}
 
-        {activeTab === 'funnel' && (
-          <div className="flex-1 overflow-auto bg-gray-50 p-6 flex flex-col gap-6">
-            
+          {!clientsLoading && !clientsError && allClients.length === 0 && (
+            <div className="px-6 py-3 text-sm text-orange-600 bg-orange-50 border-b border-orange-100">
+              Список клієнтів порожній — можливо, синхронізація ще не збирала ці дані.
+            </div>
+          )}
+
+          <div className="mx-auto w-full max-w-[1600px] p-6 space-y-6">
+            {/* Метрики вибірки */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {[
+                { label: 'Дохід на клієнта (ARPU)', value: `${distribution.mean.toLocaleString('uk-UA')} ₴`, tone: 'text-purple-600', bg: 'bg-purple-50', icon: <Gem className="w-6 h-6 text-purple-500" /> },
+                { label: 'Загальний дохід вибірки', value: `${distribution.total.toLocaleString('uk-UA')} ₴`, tone: 'text-emerald-600', bg: 'bg-emerald-50', icon: <DollarSign className="w-6 h-6 text-emerald-500" /> },
+                { label: 'Клієнтів у вибірці', value: distribution.count.toLocaleString('uk-UA'), tone: 'text-blue-600', bg: 'bg-blue-50', icon: <Users className="w-6 h-6 text-blue-500" /> },
+              ].map(m => (
+                <div key={m.label} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between hover:shadow-md transition-shadow">
+                  <div className="min-w-0">
+                    <p className="text-[11px] text-gray-400 font-bold uppercase tracking-wider mb-1">{m.label}</p>
+                    <p className={`text-3xl font-black ${m.tone} truncate`}>{m.value}</p>
+                  </div>
+                  <div className={`w-12 h-12 ${m.bg} rounded-xl flex items-center justify-center flex-shrink-0 ml-3`}>
+                    {m.icon}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Хто приносить замовлення — окремим блоком на всю ширину:
+                це відповідь на «ми ростемо чи утримуємо», і вона не має
+                ділити рядок із розподілом доходу. */}
+            <CustomerMixCard
+              mix={customerMix}
+              focus={kindFocus}
+              onFocus={setKindFocus}
+              periodLabel={monthRange ? describePeriod(period) : null}
+            />
+
+            {/* Розподіл і тіри поруч: на широкому екрані вони читаються як одна
+                відповідь — «наскільки перекошено» і «хто саме зверху». */}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+              <RevenueDistributionCard dist={distribution} />
+              <ClientTiers breakdown={tiered} focus={tierFocus} onFocus={setTierFocus} />
+            </div>
+
+            {/* Таблиця */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-gray-200 bg-white">
+                      <SortableTh label="Клієнт / RFM" sortKey="name"     active={sortKey} dir={sortDir} onSort={toggleSort} />
+                      <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Tier</th>
+                      <SortableTh label="Дохід"        sortKey="revenue"  active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
+                      <SortableTh label="Угод"         sortKey="deals"    active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
+                      <SortableTh label="Середній чек" sortKey="avgCheck" active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
+                      <SortableTh label="Остання"      sortKey="recency"  active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
+                      <SortableTh label="Когорта"      sortKey="cohort"   active={sortKey} dir={sortDir} onSort={toggleSort} />
+                      <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Теги</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {visibleClients.map((client, index) => (
+                      <ClientRow
+                        key={client.id}
+                        client={client}
+                        index={index}
+                        onTagClick={addTagFilter}
+                        onTierClick={focusTier}
+                      />
+                    ))}
+                    {selectedClients.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="py-12 text-center text-gray-400 text-sm">
+                          {tierFocus !== null
+                            ? `У Tier ${tierFocus} за цими фільтрами нікого немає`
+                            : kindFocus !== null
+                              ? `${CUSTOMER_KIND_STYLES[kindFocus].title} за цими фільтрами відсутні`
+                              : 'За цими фільтрами жодного клієнта не знайдено'}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Ліміт показу — саме показу: метрики вище рахуються по всій вибірці */}
+              {selectedClients.length > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 bg-gray-50/50">
+                  <span className="text-xs text-gray-500">
+                    Показано {visibleClients.length.toLocaleString('uk-UA')} з {selectedClients.length.toLocaleString('uk-UA')}
+                    <span className="text-gray-400">
+                      {' · '}метрики й CSV — по всій вибірці
+                      {selectedClients.length > visibleClients.length && ', повний список — через CSV'}
+                    </span>
+                  </span>
+                  <div className="flex items-center gap-1">
+                    {[50, 100, 500, 1000].map(n => (
+                      <button
+                        key={n}
+                        onClick={() => setLimit(n)}
+                        className={`px-2.5 py-1 text-xs font-medium rounded-md transition ${
+                          limit === n ? 'bg-purple-600 text-white' : 'text-gray-500 hover:bg-gray-200'
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'funnel' && (
+        <div className="flex-1 overflow-auto">
+          <div className="mx-auto w-full max-w-[1600px] p-6 flex flex-col gap-6">
+
             {/* Configuration Panel */}
             <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 flex flex-col gap-3">
               <div className="flex items-center gap-2 text-purple-800 font-bold text-sm">
@@ -687,10 +784,12 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
             </div>
 
           </div>
-        )}
+        </div>
+      )}
 
-        {activeTab === 'cohorts' && (
-          <div className="flex-1 overflow-auto bg-gray-50 p-6 flex flex-col gap-6">
+      {activeTab === 'cohorts' && (
+        <div className="flex-1 overflow-auto">
+          <div className="mx-auto w-full max-w-[1600px] p-6 flex flex-col gap-6">
             <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col">
               <h3 className="text-base font-black text-gray-800 mb-2">Когортний Аналіз (Утримання)</h3>
               <p className="text-sm text-gray-500 mb-6">Відсоток клієнтів, які повернулися за покупками в наступні місяці (застосовано поточні фільтри).</p>
@@ -856,9 +955,9 @@ export default function LtvAnalyticsModal({ onClose, data }: LtvAnalyticsModalPr
               )}
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-      </div>
     </div>
   );
 }

@@ -6,7 +6,9 @@
  * починається зі складання фільтрів наново.
  */
 
-import { ClientFilters, EMPTY_FILTERS, SortKey, SortDir, TierId } from './clientAnalytics';
+import {
+  ClientFilters, EMPTY_FILTERS, SortKey, SortDir, TierId, CustomerKind, CUSTOMER_KINDS,
+} from './clientAnalytics';
 
 const STORAGE_KEY = 'pawell_ltv_analytics_view';
 
@@ -20,6 +22,8 @@ export interface AnalyticsView {
   tab: 'clients' | 'funnel' | 'cohorts';
   /** Показувати лише цей тір; null = усі */
   tierFocus: TierId | null;
+  /** Показувати лише нових або лише постійних; null = усі */
+  kindFocus: CustomerKind | null;
 }
 
 export const DEFAULT_VIEW: AnalyticsView = {
@@ -30,6 +34,7 @@ export const DEFAULT_VIEW: AnalyticsView = {
   limit: 100,
   tab: 'clients',
   tierFocus: null,
+  kindFocus: null,
 };
 
 const SORT_KEYS: SortKey[] = ['revenue', 'deals', 'avgCheck', 'recency', 'name', 'cohort'];
@@ -81,6 +86,7 @@ export function parseView(raw: unknown): AnalyticsView {
     limit: typeof v.limit === 'number' && v.limit > 0 ? v.limit : DEFAULT_VIEW.limit,
     tab: TABS.includes(v.tab) ? v.tab : DEFAULT_VIEW.tab,
     tierFocus: TIER_IDS.includes(v.tierFocus) ? v.tierFocus : null,
+    kindFocus: CUSTOMER_KINDS.includes(v.kindFocus) ? v.kindFocus : null,
   };
 }
 

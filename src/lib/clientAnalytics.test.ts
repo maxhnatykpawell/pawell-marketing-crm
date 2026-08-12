@@ -2,6 +2,7 @@ import {
   enrichClients, applyFilters, sortClients, collectTags, collectCohortMonths,
   computeDistribution, assignTiers, clientsToCsv, countActiveFilters, recencyBucket,
   EMPTY_FILTERS, ClientRecord, ClientFilters, chunkList, chunkBySize, getPurchaseMonths,
+  classifyCustomer, computeCustomerMix,
 } from './clientAnalytics';
 
 let failures = 0;
@@ -298,6 +299,68 @@ console.log('\nМісяці покупок');
     id: '1', name: '', revenue: 0, agreementsCount: 0, tags: [], purchaseMonths: ['2026-05', '2026-01'],
   }), ['2026-01', '2026-05']);
   check('порожньо', getPurchaseMonths({ id: '1', name: '', revenue: 0, agreementsCount: 0, tags: [] }), []);
+}
+
+console.log('\nНовий чи постійний');
+{
+  const P = { from: '2026-01', to: '2026-06' };
+
+  check('перша покупка до періоду = постійний', classifyCustomer(['2025-11', '2026-02'], 2, P), 'returning');
+  check('перша покупка в періоді = новий',      classifyCustomer(['2026-02', '2026-03'], 2, P), 'new');
+  // Межа періоду належить самому періоду: хто прийшов у січні, той у січні новий
+  check('перша покупка рівно на межі = новий',  classifyCustomer(['2026-01'], 1, P), 'new');
+  check('без місяців — не вгадуємо',            classifyCustomer([], 3, P), 'unknown');
+
+  check('весь час: одна покупка = новий',          classifyCustomer(['2026-02'], 1, null), 'new');
+  check('весь час: два місяці = постійний',        classifyCustomer(['2026-02', '2026-05'], 2, null), 'returning');
+  check('весь час: дві угоди в місяці = постійний', classifyCustomer(['2026-02'], 2, null), 'returning');
+}
+
+console.log('\nРозклад «нові / постійні»');
+{
+  const m = (o: Record<string, number>) =>
+    Object.fromEntries(Object.entries(o).map(([k, deals]) => [k, { revenue: deals * 1000, deals }]));
+
+  const data = [
+    // Прийшов торік → у періоді постійний, 3 угоди на 3000 ₴
+    client({ id: 'old', revenue: 9000, agreementsCount: 9, monthlyStats: m({ '2025-05': 6, '2026-02': 3 }) }),
+    // Перша покупка в періоді → новий, 1 угода на 1000 ₴
+    client({ id: 'new', revenue: 1000, agreementsCount: 1, monthlyStats: m({ '2026-03': 1 }) }),
+  ];
+
+  const period = { from: '2026-01', to: '2026-06' };
+  const mix = computeCustomerMix(enrichClients(data, NOW, undefined, period), period);
+
+  check('замовлення постійних', mix.returning.deals, 3);
+  check('замовлення нових',     mix.new.deals, 1);
+  check('% замовлень постійними', mix.returning.dealsShare, 75);
+  check('% замовлень новими',     mix.new.dealsShare, 25);
+  // У періоді враховані лише угоди періоду, а не 9000 ₴ за весь час
+  check('дохід постійних — лише за період', mix.returning.revenue, 3000);
+  check('% доходу постійних', mix.returning.revenueShare, 75);
+  check('середній чек боку', mix.returning.avgCheck, 1000);
+  check('клієнтів у кожному боці', [mix.returning.clients, mix.new.clients], [1, 1]);
+  check('база — період', mix.basis, 'period');
+
+  // Без періоду межа інша: 'old' купував двічі, 'new' — один раз
+  const allTime = computeCustomerMix(enrichClients(data, NOW), null);
+  check('весь час: замовлення постійних', allTime.returning.deals, 9);
+  check('весь час: замовлення нових',     allTime.new.deals, 1);
+  check('весь час: % постійних',          allTime.returning.dealsShare, 90);
+  check('весь час: база',                 allTime.basis, 'lifetime');
+}
+{
+  // Клієнти без дат покупок не приписуються ні до нових, ні до постійних
+  const mix = computeCustomerMix(
+    enrichClients([client({ id: 'ghost', revenue: 500, agreementsCount: 2 })], NOW),
+    null,
+  );
+  check('без історії — окремо', [mix.unknown.deals, mix.new.deals, mix.returning.deals], [2, 0, 0]);
+  check('без історії дає 100 %', mix.unknown.dealsShare, 100);
+}
+{
+  const empty = computeCustomerMix([], null);
+  check('порожня вибірка не ділить на нуль', [empty.totalDeals, empty.new.dealsShare], [0, 0]);
 }
 
 console.log('\nРізання за розміром');

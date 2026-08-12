@@ -139,7 +139,9 @@ export default function ClientFilterBar({ filters, onChange, tags, cohorts, tota
   );
 
   return (
-    <div className="border-b border-gray-100 bg-white flex-shrink-0">
+    // Тло й нижню межу малює обгортка в модалці: на широкому екрані вони мають
+    // тягнутись на всю ширину вікна, а вміст — лишатись у центральній колонці.
+    <div className="flex-shrink-0">
       {/* Верхній рядок: пошук, лічильник, керування */}
       <div className="flex flex-wrap items-center gap-3 px-6 py-3">
         <div className="relative flex-1 min-w-[200px]">

@@ -46,6 +46,82 @@ export interface RfmSegment {
   icon: string;
 }
 
+// ── Новий чи постійний ────────────────────────────────────────────────────────
+
+/**
+ * Хто зробив замовлення: клієнт, якого щойно залучили, чи той, що повернувся.
+ *
+ * 'unknown' — не «щось середнє», а «даних не вистачає»: у клієнта немає жодного
+ * місяця покупки, тож сказати, коли він з'явився, неможливо. Такі рядки
+ * рахуються окремо, щоб не роздувати ні один із двох осмислених боків.
+ */
+export type CustomerKind = 'new' | 'returning' | 'unknown';
+
+export const CUSTOMER_KINDS: CustomerKind[] = ['new', 'returning', 'unknown'];
+
+export const CUSTOMER_KIND_LABELS: Record<CustomerKind, string> = {
+  new:       'Новий',
+  returning: 'Постійний',
+  unknown:   'Без історії',
+};
+
+export interface CustomerKindStyle {
+  /** Заголовок боку в картці — множина, бо там мова про групу */
+  title: string;
+  /** Класи Tailwind для бейджа в таблиці */
+  badge: string;
+  /** Колір великого числа в картці */
+  text: string;
+  /** Колір сегмента смужки */
+  bar: string;
+  /** Тло вибраного боку */
+  soft: string;
+  border: string;
+}
+
+export const CUSTOMER_KIND_STYLES: Record<CustomerKind, CustomerKindStyle> = {
+  returning: {
+    title: 'Постійні клієнти',
+    badge: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    text: 'text-emerald-700', bar: 'bg-emerald-500', soft: 'bg-emerald-50/70', border: 'border-emerald-100',
+  },
+  new: {
+    title: 'Нові клієнти',
+    badge: 'bg-purple-50 text-purple-700 border-purple-200',
+    text: 'text-purple-700', bar: 'bg-purple-500', soft: 'bg-purple-50/70', border: 'border-purple-100',
+  },
+  unknown: {
+    title: 'Без історії',
+    badge: 'bg-gray-50 text-gray-500 border-gray-200',
+    text: 'text-gray-500', bar: 'bg-gray-300', soft: 'bg-gray-50', border: 'border-gray-100',
+  },
+};
+
+/**
+ * Новий чи постійний — відносно ПОЧАТКУ вибраного періоду.
+ *
+ * Правило одне: клієнт постійний, якщо він уже купував до того, як почалось
+ * те, на що ви зараз дивитесь.
+ *
+ *  - є період: постійний = перша покупка сталась ДО period.from. Тобто в періоді
+ *    він приходить уже не вперше, і будь-яке його замовлення тут — повторне.
+ *  - весь час: «до» не існує, тож межею стає сама перша покупка — постійний
+ *    той, хто купував більше одного разу.
+ *
+ * Обидві гілки відповідають на одне питання й тому дають узгоджені числа:
+ * «новий» ніколи не означає «купував і раніше».
+ */
+export function classifyCustomer(
+  months: string[],
+  totalDeals: number,
+  period: MonthRange | null,
+): CustomerKind {
+  if (months.length === 0) return 'unknown';
+  if (period) return months[0] < period.from ? 'returning' : 'new';
+  // Дві покупки в одному місяці — теж повернення, тому дивимось і на угоди
+  return Math.max(totalDeals, months.length) > 1 ? 'returning' : 'new';
+}
+
 /** Клієнт із похідними полями, порахованими один раз */
 export interface EnrichedClient extends ClientRecord {
   /** Дохід у вибраному періоді (без періоду — за весь час) */
@@ -68,6 +144,8 @@ export interface EnrichedClient extends ClientRecord {
   cohortMonth: string | null;
   /** Чи була у клієнта хоч одна угода у вибраному періоді */
   inPeriod: boolean;
+  /** Новий чи постійний — відносно початку періоду; див. classifyCustomer */
+  customerKind: CustomerKind;
   rfm: RfmSegment;
 }
 
@@ -175,6 +253,7 @@ export function enrichClients(
       recencyDays,
       cohortMonth: months.length > 0 ? months[0] : null,
       inPeriod,
+      customerKind: classifyCustomer(months, c.agreementsCount, period),
       rfm: getRfmSegment(c, recencyDays, thresholds),
     };
   });
@@ -425,6 +504,93 @@ export function computeDistribution(clients: EnrichedClient[], bucketCount = 6):
   };
 }
 
+// ── Нові й постійні клієнти ───────────────────────────────────────────────────
+
+export interface CustomerMixBucket {
+  kind: CustomerKind;
+  clients: number;
+  deals: number;
+  revenue: number;
+  /** Частки від усієї вибірки, 0–100 з одним знаком */
+  clientsShare: number;
+  dealsShare: number;
+  revenueShare: number;
+  /** Середній чек боку: revenue ÷ deals */
+  avgCheck: number;
+}
+
+export interface CustomerMix {
+  new: CustomerMixBucket;
+  returning: CustomerMixBucket;
+  unknown: CustomerMixBucket;
+  totalClients: number;
+  totalDeals: number;
+  totalRevenue: number;
+  /**
+   * Відносно чого рахувалась новизна:
+   *  'period'   — перша покупка до початку вибраного періоду;
+   *  'lifetime' — періоду немає, тож межа це друга покупка за весь час.
+   */
+  basis: 'period' | 'lifetime';
+}
+
+const share = (part: number, whole: number) =>
+  whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0;
+
+/**
+ * Скільки замовлень і доходу дають нові клієнти, а скільки — постійні.
+ *
+ * Рахується по замовленнях у періоді, а мітка береться з classifyCustomer —
+ * тому «85 % замовлень від постійних» і «постійних клієнтів у списку 40» завжди
+ * про одних і тих самих людей, а не про два різні визначення.
+ *
+ * Клієнти без жодного місяця покупки не діляться навпіл і не приписуються до
+ * нових: вони йдуть у unknown і видимі окремо, інакше частки тихо брехали б.
+ */
+export function computeCustomerMix(
+  clients: EnrichedClient[],
+  period: MonthRange | null,
+): CustomerMix {
+  const acc: Record<CustomerKind, { clients: number; deals: number; revenue: number }> = {
+    new:       { clients: 0, deals: 0, revenue: 0 },
+    returning: { clients: 0, deals: 0, revenue: 0 },
+    unknown:   { clients: 0, deals: 0, revenue: 0 },
+  };
+
+  for (const c of clients) {
+    const b = acc[c.customerKind];
+    b.clients += 1;
+    b.deals += c.periodDeals;
+    b.revenue += c.periodRevenue;
+  }
+
+  const totalClients = clients.length;
+  const totalDeals = acc.new.deals + acc.returning.deals + acc.unknown.deals;
+  const totalRevenue = acc.new.revenue + acc.returning.revenue + acc.unknown.revenue;
+
+  const bucket = (kind: CustomerKind): CustomerMixBucket => {
+    const b = acc[kind];
+    return {
+      kind,
+      ...b,
+      clientsShare: share(b.clients, totalClients),
+      dealsShare: share(b.deals, totalDeals),
+      revenueShare: share(b.revenue, totalRevenue),
+      avgCheck: b.deals > 0 ? Math.round(b.revenue / b.deals) : 0,
+    };
+  };
+
+  return {
+    new: bucket('new'),
+    returning: bucket('returning'),
+    unknown: bucket('unknown'),
+    totalClients,
+    totalDeals,
+    totalRevenue,
+    basis: period ? 'period' : 'lifetime',
+  };
+}
+
 // ── Тіри клієнтів ─────────────────────────────────────────────────────────────
 
 export type TierId = 1 | 2 | 3 | 4;
@@ -618,7 +784,7 @@ export function clientsToCsv(clients: (EnrichedClient & { tier?: TierId | null }
   const header = [
     'Клієнт', 'Tier', 'Дохід за період', 'Угод за період', 'Середній чек',
     'Дохід за весь час', 'Угод за весь час',
-    'Остання покупка', 'Днів тому', 'Когорта', 'RFM', 'Теги',
+    'Остання покупка', 'Днів тому', 'Когорта', 'Тип клієнта', 'RFM', 'Теги',
   ];
   const rows = clients.map(c => [
     c.name,
@@ -631,6 +797,7 @@ export function clientsToCsv(clients: (EnrichedClient & { tier?: TierId | null }
     c.lastPurchaseDate ? c.lastPurchaseDate.slice(0, 10) : '',
     c.recencyDays ?? '',
     c.cohortMonth ?? '',
+    CUSTOMER_KIND_LABELS[c.customerKind],
     c.rfm.label,
     c.tags.join(', '),
   ]);
