@@ -1,7 +1,8 @@
 import React from 'react';
 import { Repeat, X } from 'lucide-react';
 import {
-  CustomerMix as Mix, CustomerMixBucket, CustomerKind, CUSTOMER_KIND_STYLES as STYLES,
+  CustomerMix as Mix, CustomerMixBucket, CustomerKind, MonthRange,
+  CUSTOMER_KIND_STYLES as STYLES,
 } from '../../lib/clientAnalytics';
 
 const fmt = (n: number) => n.toLocaleString('uk-UA');
@@ -72,14 +73,20 @@ function Half({
  * списком у таблиці нижче.
  */
 export default function CustomerMixCard({
-  mix, focus, onFocus, periodLabel,
+  mix, focus, onFocus, range,
 }: {
   mix: Mix;
   /** Показувати у вибірці лише цей бік; null = обидва */
   focus: CustomerKind | null;
   onFocus: (kind: CustomerKind | null) => void;
-  /** Опис вибраного періоду для пояснення; null = за весь час */
-  periodLabel: string | null;
+  /**
+   * Межі періоду в місяцях; null = за весь час.
+   *
+   * Тут потрібен саме діапазон, а не його опис: пояснення спирається на межу
+   * відсікання (`from`), і показувати замість неї весь період — значить
+   * стверджувати, ніби постійні купували «до 2026-01 — 2026-12».
+   */
+  range: MonthRange | null;
 }) {
   const toggle = (kind: CustomerKind) => onFocus(focus === kind ? null : kind);
 
@@ -113,11 +120,12 @@ export default function CustomerMixCard({
       </div>
 
       <p className="text-sm text-gray-500 mb-5">
-        {mix.basis === 'period' ? (
+        {mix.basis === 'period' && range ? (
           <>
-            Постійний — той, хто вперше купив <strong className="text-gray-700">до початку періоду</strong>
-            {periodLabel && <> ({periodLabel})</>}, тож тут приходить уже не вперше. Новий — той, чия
-            перша покупка за весь час припала на цей період.
+            Постійний — той, чия перша покупка за весь час сталась{' '}
+            <strong className="text-gray-700">раніше за {range.from}</strong>, тобто ще до початку
+            періоду: тут він приходить уже не вперше. Новий — той, хто вперше купив у{' '}
+            <strong className="text-gray-700">{range.from} — {range.to}</strong>.
           </>
         ) : (
           <>

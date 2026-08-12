@@ -1,12 +1,12 @@
 import React, { useState, useRef } from 'react';
-import { Card, Subtask, Comment } from '../types';
+import { Card, Subtask, Comment, Attachment } from '../types';
 import { useAppContext } from '../App';
 import { uploadFile, reviewPlanWithAI } from '../api';
 import {
   X, Calendar, AlignLeft, CheckSquare, Paperclip, Trash2,
   FolderKanban, Clock, Sparkles, Plus, Tag, Users, MessageSquare,
   Image, Eye, MoreHorizontal, Circle, CheckCircle2, ChevronDown,
-  User as UserIcon, Check
+  User as UserIcon, Check, AlertTriangle
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
@@ -30,6 +30,69 @@ function AvatarFallback({ name, color }: { name: string; color?: string }) {
     </div>
   );
 }
+
+/**
+ * Рядок вкладення.
+ *
+ * Тримає власний стан «файл не завантажився», бо мініатюра — єдине місце, де
+ * зникле вкладення видно без кліку. Порожня іконка браузера тут гірша за ніщо:
+ * вона виглядає як тимчасовий збій, тож люди перезавантажують сторінку замість
+ * того щоб перезалити файл.
+ */
+const AttachmentRow = React.memo(function AttachmentRow({
+  att, canEdit, onRemove,
+}: {
+  att: Attachment;
+  canEdit: boolean;
+  onRemove: () => void;
+}) {
+  const [broken, setBroken] = useState(false);
+  const isImage = /\.(jpeg|jpg|gif|png|webp|svg)$/i.test(att.name);
+
+  return (
+    <div className="flex items-center gap-3 p-2 rounded-xl border border-gray-200 hover:border-gray-300 bg-gray-50 hover:bg-white transition group">
+      {isImage && !broken ? (
+        <img
+          src={att.url}
+          alt={att.name}
+          onError={() => setBroken(true)}
+          className="w-12 h-12 object-cover rounded-lg border border-gray-200"
+        />
+      ) : (
+        <div
+          className={`w-12 h-12 rounded-lg flex items-center justify-center text-[10px] font-bold ${
+            broken ? 'bg-red-50 border border-red-200 text-red-500' : 'bg-gray-200 text-gray-500'
+          }`}
+        >
+          {broken ? <AlertTriangle className="w-5 h-5" /> : 'FILE'}
+        </div>
+      )}
+
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-gray-800 truncate" title={att.name}>{att.name}</p>
+        {broken ? (
+          <p className="text-xs text-red-600 mt-1">
+            Файл недоступний — його немає у сховищі сервера. Перезалийте вкладення.
+          </p>
+        ) : (
+          <div className="flex gap-2 mt-1">
+            <a href={att.url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Відкрити</a>
+            <a href={att.url} download={att.name} className="text-xs text-green-600 hover:underline">Завантажити</a>
+          </div>
+        )}
+      </div>
+
+      {canEdit && (
+        <button
+          onClick={onRemove}
+          className="opacity-0 group-hover:opacity-100 transition text-gray-300 hover:text-red-500 p-1"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+      )}
+    </div>
+  );
+});
 
 export default function CardModal({ card, onClose }: Props) {
   const { state, updateCard, deleteCard, confirmAction, currentUser, hasEditRights } = useAppContext();
@@ -642,31 +705,14 @@ export default function CardModal({ card, onClose }: Props) {
                   <p className="text-sm font-semibold text-gray-700">Вкладення</p>
                 </div>
                 <div className="space-y-2">
-                  {card.attachments.map(att => {
-                    const isImage = att.name.match(/\.(jpeg|jpg|gif|png|webp|svg)$/i);
-                    return (
-                      <div key={att.id} className="flex items-center gap-3 p-2 rounded-xl border border-gray-200 hover:border-gray-300 bg-gray-50 hover:bg-white transition group">
-                        {isImage
-                          ? <img src={att.url} alt={att.name} className="w-12 h-12 object-cover rounded-lg border border-gray-200" />
-                          : <div className="w-12 h-12 bg-gray-200 rounded-lg flex items-center justify-center text-[10px] font-bold text-gray-500">FILE</div>}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-800 truncate">{att.name}</p>
-                          <div className="flex gap-2 mt-1">
-                            <a href={att.url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Відкрити</a>
-                            <a href={att.url} download={att.name} className="text-xs text-green-600 hover:underline">Завантажити</a>
-                          </div>
-                        </div>
-                        {hasEditRights && (
-                          <button
-                            onClick={() => handleUpdate({ attachments: card.attachments!.filter(a => a.id !== att.id) })}
-                            className="opacity-0 group-hover:opacity-100 transition text-gray-300 hover:text-red-500 p-1"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
+                  {card.attachments.map(att => (
+                    <AttachmentRow
+                      key={att.id}
+                      att={att}
+                      canEdit={hasEditRights}
+                      onRemove={() => handleUpdate({ attachments: card.attachments!.filter(a => a.id !== att.id) })}
+                    />
+                  ))}
                 </div>
               </div>
             )}

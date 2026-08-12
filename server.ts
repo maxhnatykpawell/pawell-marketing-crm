@@ -1513,7 +1513,21 @@ async function startServer() {
 
   const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
   if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-  app.use('/uploads', express.static(UPLOADS_DIR));
+  /**
+   * Вкладення карток.
+   *
+   * Термінальний обробник тут обов'язковий. express.static на ненайдений файл
+   * викликає next(), і в production запит провалюється до SPA-фолбека, який
+   * віддає index.html з кодом 200. Для браузера це означає: картинка «бита»
+   * без пояснення, «Відкрити» показує сам застосунок у новій вкладці, а
+   * «Завантажити» зберігає HTML-сторінку під іменем файлу.
+   *
+   * Чесний 404 нічого не лагодить, але відрізняє «файл зник зі сховища» від
+   * «застосунок зламався» — без цього причину неможливо побачити з браузера.
+   */
+  app.use('/uploads', express.static(UPLOADS_DIR), (req, res) => {
+    res.status(404).json({ error: 'Файл не знайдено у сховищі', path: req.path });
+  });
 
   // Init Firebase & bootstrap
   initFirebase();

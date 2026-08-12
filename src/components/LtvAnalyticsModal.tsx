@@ -662,7 +662,7 @@ export default function LtvAnalyticsModal({
               mix={customerMix}
               focus={kindFocus}
               onFocus={setKindFocus}
-              periodLabel={monthRange ? describePeriod(period) : null}
+              range={monthRange}
             />
 
             {/* Розподіл і тіри поруч: на широкому екрані вони читаються як одна
