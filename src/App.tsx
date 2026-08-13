@@ -18,6 +18,8 @@ import ProcessTreeView from './components/ProcessTreeView';
 import ExpensesView from './components/ExpensesView';
 import ExpenseModal from './components/ExpenseModal';
 import { PayrollView } from './components/Payroll/PayrollView';
+import Celebration from './components/Celebration';
+import { celebrate } from './lib/celebrate';
 import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet } from 'lucide-react';
 
 type ActiveView = 'dashboard' | 'projects' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile' | 'expenses' | 'payroll';
@@ -393,7 +395,13 @@ export default function App() {
     setState(prev => {
       if (!prev) return prev;
       const prevCard = prev.cards.find(c => c.id === cardId);
-      
+
+      // Свято лише на перехід «не виконано → виконано»: зняття галочки нічого
+      // не святкує, а повторне збереження вже закритої картки — тим більше.
+      if (updates.isCompleted === true && prevCard && !prevCard.isCompleted) {
+        celebrate();
+      }
+
       // Trigger in-app notification if assignee changed
       if (updates.assigneeId && updates.assigneeId !== prevCard?.assigneeId) {
         const cu = currentUserRef.current;
@@ -877,6 +885,9 @@ export default function App() {
       addExpense, updateExpense, deleteExpense,
       addPayroll, updatePayroll, deletePayroll, updatePayrollSettings
     }}>
+      {/* Полотно для конфеті — поверх усього, але кліки крізь себе пропускає */}
+      <Celebration />
+
       <div className="min-h-screen bg-blue-50/50 flex flex-col font-sans text-gray-900">
         {/* Header */}
         <header className="bg-white border-b border-gray-200 px-4 py-2.5 flex items-center justify-between sticky top-0 z-10 w-full print:hidden">

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card } from '../types';
 import { useAppContext } from '../App';
 import { Calendar, AlignLeft, CheckSquare, MessageSquare, Paperclip, Clock, Sparkles, Check } from 'lucide-react';
@@ -18,6 +18,27 @@ interface Props {
 export default function BoardCard({ card, selectionMode, isSelected, onToggleSelect, index }: Props) {
   const { state, updateCard, hasEditRights } = useAppContext();
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  /**
+   * Коротка зелена підсвітка на момент закриття таска.
+   *
+   * Перехід ловимо тут, а не в місці кліку, бо закрити картку можна і з модалки,
+   * і масовою дією — а isCompleted у всіх трьох випадках приходить сюди зі
+   * спільного стану. Порівняння з попереднім значенням у ref, а не в стані:
+   * зайвий рендер на кожну чужу картку тут нікому не потрібен.
+   */
+  const [justCompleted, setJustCompleted] = useState(false);
+  const wasCompleted = useRef(card.isCompleted);
+
+  useEffect(() => {
+    if (card.isCompleted && !wasCompleted.current) {
+      setJustCompleted(true);
+      const t = setTimeout(() => setJustCompleted(false), 1200);
+      wasCompleted.current = card.isCompleted;
+      return () => clearTimeout(t);
+    }
+    wasCompleted.current = card.isCompleted;
+  }, [card.isCompleted]);
 
   const assignee = card.assigneeId ? state.users.find(u => u.id === card.assigneeId) : null;
   
@@ -61,7 +82,8 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
             className={cn(
               "rounded-lg shadow-sm hover:shadow-md border border-b-gray-300 cursor-pointer overflow-hidden group hover:ring-1 hover:ring-blue-500/50 transition-all flex flex-col relative mb-3",
               isSelected ? "border-blue-500 ring-2 ring-blue-500 bg-blue-50/50" : "border-gray-200 bg-white",
-              snapshot.isDragging && "shadow-xl border-blue-500 ring-2 ring-blue-500 rotate-2 opacity-90 scale-105 z-50 bg-white"
+              snapshot.isDragging && "shadow-xl border-blue-500 ring-2 ring-blue-500 rotate-2 opacity-90 scale-105 z-50 bg-white",
+              justCompleted && "card-completed-flash"
             )}
           >
         {selectionMode && (
