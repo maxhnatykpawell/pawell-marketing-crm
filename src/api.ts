@@ -468,3 +468,47 @@ export const triggerKeepInCRMSyncLTV = async (
   }
   return res.json();
 };
+
+// ── Асистент ──────────────────────────────────────────────────────────────────
+
+export interface AssistantMessage {
+  role: 'user' | 'model';
+  text: string;
+  at?: string;
+}
+
+/** Дія, яку асистент пропонує — застосовується лише після підтвердження людиною */
+export interface AssistantAction {
+  tool: 'propose_create_card' | 'propose_update_card';
+  payload: Record<string, any>;
+  summary: string;
+}
+
+export interface AssistantReply {
+  reply: string;
+  action: AssistantAction | null;
+  usedTools: string[];
+}
+
+export const askAssistant = async (message: string): Promise<AssistantReply> => {
+  const res = await fetch('/api/assistant/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ message }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || 'Асистент не відповів');
+  }
+  return res.json();
+};
+
+export const getAssistantHistory = async (): Promise<AssistantMessage[]> => {
+  const res = await fetch('/api/assistant/history', { headers: authHeaders() });
+  if (!res.ok) return [];
+  return (await res.json()).messages || [];
+};
+
+export const clearAssistantHistory = async (): Promise<void> => {
+  await fetch('/api/assistant/history', { method: 'DELETE', headers: authHeaders() });
+};

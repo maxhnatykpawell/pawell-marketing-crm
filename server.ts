@@ -10,13 +10,17 @@ import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 
 import cron from 'node-cron';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import admin from 'firebase-admin';
 
 import { buildCohortLtv } from './src/lib/cohortLtv';
 import { chunkBySize } from './src/lib/clientAnalytics';
+import {
+  resolveRights, availableTools, runReadTool, prepareAction, isWriteTool,
+  AssistantUser, ToolContext,
+} from './src/lib/assistantTools';
 
 
 // ── Firebase Init ─────────────────────────────────────────────────────────────
@@ -2254,6 +2258,216 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
       await sendDailyPersonalDigests(state);
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Асистент ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Скільки разів поспіль модель може викликати інструменти в межах одного
+   * запитання. Ліміт не про безпеку, а про глухі кути: якщо модель зациклилась
+   * на пошуку, краще віддати те, що є, ніж молотити доти, доки не впреться в
+   * таймаут запиту.
+   */
+  const ASSISTANT_MAX_STEPS = 6;
+
+  /** JSON Schema → типи Gemini. Різниця лише в регістрі назв типів */
+  const GEMINI_TYPES: Record<string, Type> = {
+    object: Type.OBJECT, string: Type.STRING, number: Type.NUMBER,
+    integer: Type.INTEGER, boolean: Type.BOOLEAN, array: Type.ARRAY,
+  };
+
+  function toGeminiSchema(schema: any): any {
+    if (!schema || typeof schema !== 'object') return schema;
+    const out: any = { ...schema };
+    if (typeof schema.type === 'string') out.type = GEMINI_TYPES[schema.type] ?? Type.STRING;
+    if (schema.properties) {
+      out.properties = Object.fromEntries(
+        Object.entries(schema.properties).map(([k, v]) => [k, toGeminiSchema(v)]),
+      );
+    }
+    if (schema.items) out.items = toGeminiSchema(schema.items);
+    return out;
+  }
+
+  /** Скільки повідомлень тримати в історії — далі старі просто відрізаються */
+  const ASSISTANT_HISTORY_LIMIT = 100;
+
+  const assistantDocId = (userId: string) => `assistant_chat_${userId}`;
+
+  async function loadAssistantHistory(userId: string): Promise<any[]> {
+    const db = initFirebase();
+    if (!db) return [];
+    const snap = await db.collection(CRM_COLLECTION).doc(assistantDocId(userId)).get();
+    return snap.exists ? ((snap.data() as any).messages || []) : [];
+  }
+
+  async function saveAssistantHistory(userId: string, messages: any[]): Promise<void> {
+    const db = initFirebase();
+    if (!db) return;
+    await db.collection(CRM_COLLECTION).doc(assistantDocId(userId)).set({
+      messages: messages.slice(-ASSISTANT_HISTORY_LIMIT),
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  app.get('/api/assistant/history', requireAuth, async (req, res) => {
+    const user = (req as any).user as JWTPayload;
+    try {
+      res.json({ messages: await loadAssistantHistory(user.userId) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete('/api/assistant/history', requireAuth, async (req, res) => {
+    const user = (req as any).user as JWTPayload;
+    try {
+      await saveAssistantHistory(user.userId, []);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * Діалог з асистентом.
+   *
+   * Ключове рішення: інструменти, які змінюють дані, тут НЕ виконуються. Модель
+   * може лише запропонувати дію — сервер розв'язує імена в ідентифікатори,
+   * складає опис людською мовою і повертає його на підтвердження. Застосовує
+   * зміну потім сам застосунок тими ж методами, що й людина руками, тож права,
+   * оптимістичне оновлення і синхронізація працюють однаково.
+   */
+  app.post('/api/assistant/chat', requireAuth, async (req, res) => {
+    const jwtUser = (req as any).user as JWTPayload;
+    const geminiApiKey = process.env.GEMINI_API_KEY;
+    if (!geminiApiKey) {
+      res.status(503).json({ error: 'Асистент не налаштований: немає GEMINI_API_KEY' });
+      return;
+    }
+
+    const question = String(req.body?.message ?? '').trim();
+    if (!question) { res.status(400).json({ error: 'Порожнє запитання' }); return; }
+
+    try {
+      const state = await getDb();
+      // Ім'я в токені не зберігається — беремо зі стану, щоб асистент звертався
+      // до людини так само, як її бачить решта команди
+      const user: AssistantUser = {
+        userId: jwtUser.userId,
+        name: state.users?.find((u: any) => u.id === jwtUser.userId)?.name || 'Колега',
+        role: jwtUser.role === 'admin' ? 'admin' : 'member',
+      };
+      const rights = resolveRights(state, user);
+      const tools = availableTools(rights, user);
+
+      // Агрегати LTV лежать окремим документом — читаємо раз і кладемо в контекст
+      let ltv: any = null;
+      try {
+        const db = initFirebase();
+        if (db) {
+          const snap = await db.collection(CRM_COLLECTION).doc('keepincrm_ltv_snapshot').get();
+          if (snap.exists) { const { clients, ...rest } = snap.data() as any; ltv = rest; }
+        }
+      } catch { /* без LTV асистент просто не назве цю цифру */ }
+
+      const ctx: ToolContext = { state, ltv, now: new Date(), user, rights };
+
+      const history = await loadAssistantHistory(user.userId);
+      const contents: any[] = [
+        ...history.map((m: any) => ({ role: m.role, parts: [{ text: m.text }] })),
+        { role: 'user', parts: [{ text: question }] },
+      ];
+
+      const systemInstruction = [
+        `Ти — асистент маркетингової команди PAWELL. Розмовляєш українською, коротко й по суті.`,
+        `Сьогодні ${new Date().toISOString().slice(0, 10)}. Тебе питає ${user.name}.`,
+        ``,
+        `Правила:`,
+        `1. Будь-який факт, число, назву чи ім'я бери ВИКЛЮЧНО з інструментів. Ніколи не вигадуй і не згадуй з пам'яті — навіть якщо здається, що знаєш.`,
+        `2. Якщо інструмент повернув помилку або порожньо — так і скажи. Не заповнюй прогалину здогадкою.`,
+        `3. Інструменти propose_* НІЧОГО не виконують. Вони лише готують пропозицію, яку підтверджує людина. Ніколи не кажи «створив» або «переніс» — кажи «пропоную».`,
+        `4. Не згадуй назв інструментів у відповіді. Людині цікавий результат, а не як ти його дістав.`,
+        `5. Якщо даних немає через права доступу — скажи, що не маєш доступу, і не вгадуй, що там могло бути.`,
+      ].join('\n');
+
+      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+      const declarations = tools.map(t => ({
+        name: t.name,
+        description: t.description,
+        // Схема в бібліотеці — звичайний JSON Schema з малими літерами, бо вона
+        // навмисно нічого не знає про Gemini. Переклад у типи SDK робиться тут,
+        // на межі: зміниш модель — переписуєш лише цей рядок.
+        parameters: toGeminiSchema(t.parameters),
+      }));
+
+      const usedTools: string[] = [];
+      let action: any = null;
+      let reply = '';
+
+      for (let step = 0; step < ASSISTANT_MAX_STEPS; step++) {
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents,
+          config: {
+            systemInstruction,
+            tools: declarations.length ? [{ functionDeclarations: declarations }] : undefined,
+          },
+        });
+
+        const calls = response.functionCalls;
+        if (!calls || calls.length === 0) {
+          reply = response.text || '';
+          break;
+        }
+
+        contents.push({ role: 'model', parts: calls.map(c => ({ functionCall: c })) });
+
+        const responses: any[] = [];
+        for (const call of calls) {
+          const name = call.name || '';
+          const args = (call.args || {}) as Record<string, any>;
+          usedTools.push(name);
+
+          if (isWriteTool(name)) {
+            // Дія не виконується — готуємо пропозицію й виходимо з циклу
+            const prepared = prepareAction(name, args, ctx);
+            if ('error' in prepared) {
+              responses.push({ functionResponse: { name, response: { error: prepared.error } } });
+              continue;
+            }
+            action = prepared;
+            responses.push({
+              functionResponse: {
+                name,
+                response: { status: 'очікує підтвердження людини', summary: prepared.summary },
+              },
+            });
+            continue;
+          }
+
+          responses.push({
+            functionResponse: { name, response: { result: runReadTool(name, args, ctx) } },
+          });
+        }
+
+        contents.push({ role: 'user', parts: responses });
+      }
+
+      if (!reply && action) reply = `Пропоную: ${action.summary}`;
+      if (!reply) reply = 'Не вдалось зібрати відповідь. Спробуйте перепитати конкретніше.';
+
+      await saveAssistantHistory(user.userId, [
+        ...history,
+        { role: 'user', text: question, at: new Date().toISOString() },
+        { role: 'model', text: reply, at: new Date().toISOString() },
+      ]);
+
+      res.json({ reply, action, usedTools: [...new Set(usedTools)] });
+    } catch (e: any) {
+      console.error('Асистент:', e);
+      res.status(500).json({ error: e.message || 'Помилка асистента' });
+    }
   });
 
   // ── Vite / Static ────────────────────────────────────────────────────────────

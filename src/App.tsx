@@ -20,6 +20,8 @@ import ExpenseModal from './components/ExpenseModal';
 import { PayrollView } from './components/Payroll/PayrollView';
 import Celebration from './components/Celebration';
 import { celebrate } from './lib/celebrate';
+import AssistantPanel from './components/AssistantPanel';
+import type { AssistantAction } from './api';
 import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet } from 'lucide-react';
 
 type ActiveView = 'dashboard' | 'projects' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile' | 'expenses' | 'payroll';
@@ -357,12 +359,14 @@ export default function App() {
     updateEntity('cards', cardId, updates).catch(console.error);
   }, []);
 
-  const addCard = useCallback((listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[] }) => {
+  const addCard = useCallback((listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[]; description?: string; deadline?: string | null }) => {
     if (!state) return;
     const listCards = state.cards.filter(c => c.listId === listId);
     const minOrder = listCards.length > 0 ? Math.min(...listCards.map(c => c.order)) : 0;
     const newCard: Card = {
-      id: uuidv4(), listId, title, description: '', deadline: null,
+      id: uuidv4(), listId, title,
+      description: initialValues?.description ?? '',
+      deadline: initialValues?.deadline ?? null,
       assigneeId: initialValues?.assigneeId ?? null,
       tagIds: initialValues?.tagIds ?? [],
       subtasks: [], comments: [], attachments: [],
@@ -887,6 +891,30 @@ export default function App() {
     }}>
       {/* Полотно для конфеті — поверх усього, але кліки крізь себе пропускає */}
       <Celebration />
+
+      {/*
+        Асистент. Дію, яку він запропонував, застосовуємо тут — тими самими
+        addCard/updateCard, якими користується інтерфейс. Окремого шляху запису
+        не існує навмисно: усе, що вміє асистент, обмежене тим, що вміє людина.
+      */}
+      <AssistantPanel
+        onApplyAction={(action: AssistantAction) => {
+          if (!hasEditRights) return 'Дію не застосовано: немає прав на редагування.';
+
+          if (action.tool === 'propose_create_card') {
+            const { title, listId, description, assigneeId, deadline } = action.payload;
+            addCard(listId, title, { assigneeId: assigneeId ?? null, description, deadline });
+            return `Готово: створено «${title}».`;
+          }
+
+          if (action.tool === 'propose_update_card') {
+            updateCard(action.payload.cardId, action.payload.updates);
+            return 'Готово: зміни застосовано.';
+          }
+
+          return 'Невідома дія — нічого не змінено.';
+        }}
+      />
 
       <div className="min-h-screen bg-blue-50/50 flex flex-col font-sans text-gray-900">
         {/* Header */}
