@@ -180,7 +180,8 @@ async function getDb(): Promise<any> {
         contentPlanColumns: legacyData.contentPlanColumns || INITIAL_APP_STATE.contentPlanColumns,
         aiReportSchedule: legacyData.aiReportSchedule || '0 8 * * *',
         announcements: legacyData.announcements || [],
-        payrollSettings: legacyData.payrollSettings || DEFAULT_PAYROLL_SETTINGS
+        payrollSettings: legacyData.payrollSettings || DEFAULT_PAYROLL_SETTINGS,
+        personalNotifications: legacyData.personalNotifications || DEFAULT_PERSONAL_NOTIFICATIONS
       };
       await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).set(settings);
       
@@ -212,6 +213,9 @@ async function getDb(): Promise<any> {
       if (!state.payrollSettings) {
         state.payrollSettings = DEFAULT_PAYROLL_SETTINGS;
       }
+      if (!state.personalNotifications) {
+        state.personalNotifications = DEFAULT_PERSONAL_NOTIFICATIONS;
+      }
     } else {
       Object.assign(state, {
         contentPlanChannels: INITIAL_APP_STATE.contentPlanChannels,
@@ -219,7 +223,8 @@ async function getDb(): Promise<any> {
         contentPlanColumns: INITIAL_APP_STATE.contentPlanColumns,
         aiReportSchedule: '0 8 * * *',
         announcements: [],
-        payrollSettings: DEFAULT_PAYROLL_SETTINGS
+        payrollSettings: DEFAULT_PAYROLL_SETTINGS,
+        personalNotifications: DEFAULT_PERSONAL_NOTIFICATIONS
       });
     }
     
@@ -251,7 +256,8 @@ async function saveDb(data: any): Promise<void> {
       contentPlanColumns: data.contentPlanColumns || [],
       aiReportSchedule: data.aiReportSchedule || '0 8 * * *',
       announcements: data.announcements || [],
-      payrollSettings: data.payrollSettings || DEFAULT_PAYROLL_SETTINGS
+      payrollSettings: data.payrollSettings || DEFAULT_PAYROLL_SETTINGS,
+      personalNotifications: data.personalNotifications || DEFAULT_PERSONAL_NOTIFICATIONS
     };
     await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).set(settings);
     
@@ -550,15 +556,29 @@ function fillTemplate(template: string, vars: Record<string, string>): string {
 
 async function sendPersonalTelegramMessage(chatId: string, text: string): Promise<{ success: boolean; error?: string }> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token || !chatId) return { success: false, error: 'missing_credentials' };
+  if (!token) { console.error('Telegram personal message skipped: TELEGRAM_BOT_TOKEN is not set'); return { success: false, error: 'missing_credentials' }; }
+  if (!chatId) return { success: false, error: 'missing_credentials' };
+
+  const post = (payload: any) => fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
   try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' })
-    });
+    let res = await post({ chat_id: chatId, text, parse_mode: 'Markdown' });
     if (!res.ok) {
       const errText = await res.text();
+      // Заголовки задач часто містять _ * [ ` — Telegram відхиляє таке як зламану розмітку.
+      // У цьому разі шлемо те саме повідомлення без parse_mode, щоб сповіщення не зникало мовчки.
+      if (/can't parse entities/i.test(errText)) {
+        console.warn(`Telegram Markdown parse failed (chatId: ${chatId}), retrying as plain text:`, errText);
+        res = await post({ chat_id: chatId, text });
+        if (res.ok) return { success: true };
+        const retryErr = await res.text();
+        console.error(`Telegram personal message error (chatId: ${chatId}):`, retryErr);
+        return { success: false, error: retryErr };
+      }
       console.error(`Telegram personal message error (chatId: ${chatId}):`, errText);
       return { success: false, error: errText };
     }
@@ -570,11 +590,16 @@ async function sendPersonalTelegramMessage(chatId: string, text: string): Promis
 
 async function notifyCardAssigned(state: any, cardId: string, assigneeId: string): Promise<void> {
   const settings = state.personalNotifications || DEFAULT_PERSONAL_NOTIFICATIONS;
-  if (!settings.enabled || !settings.notifyOnAssign) return;
+  if (!settings.enabled || !settings.notifyOnAssign) {
+    console.log(`📨 Assign notification skipped: disabled in settings (cardId: ${cardId})`);
+    return;
+  }
 
   const card = (state.cards || []).find((c: any) => c.id === cardId);
   const assignee = (state.users || []).find((u: any) => u.id === assigneeId);
-  if (!card || !assignee?.telegramChatId) return;
+  if (!card) { console.log(`📨 Assign notification skipped: card ${cardId} not found`); return; }
+  if (!assignee) { console.log(`📨 Assign notification skipped: user ${assigneeId} not found`); return; }
+  if (!assignee.telegramChatId) { console.log(`📨 Assign notification skipped: ${assignee.name} has no telegramChatId`); return; }
 
   const project = card.projectId ? (state.projects || []).find((p: any) => p.id === card.projectId) : null;
   const deadline = card.deadline ? new Date(card.deadline).toLocaleDateString('uk-UA') : 'не вказано';

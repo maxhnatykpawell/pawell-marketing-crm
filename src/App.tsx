@@ -374,7 +374,8 @@ export default function App() {
       projectId: activeProjectId
     };
     setState(prev => prev ? { ...prev, cards: [...prev.cards, newCard] } : prev);
-    createEntity('cards', newCard).catch(console.error);
+    const cardSaved = createEntity('cards', newCard);
+    cardSaved.catch(console.error);
 
     // Auto-estimate time using AI
     estimateTaskTime(title, '').then(estimatedMinutes => {
@@ -383,19 +384,29 @@ export default function App() {
 
     // Notify assignee if assigned on creation
     if (newCard.assigneeId && newCard.assigneeId !== currentUser?.userId) {
+      const assigneeId = newCard.assigneeId;
       createNotification({
         id: uuidv4(),
-        userId: newCard.assigneeId,
+        userId: assigneeId,
         title: 'Нове завдання',
         message: `Вам призначено завдання: "${newCard.title}"`,
         cardId: newCard.id,
         read: false,
         createdAt: new Date().toISOString()
       });
+      // Telegram — тільки після того, як картка реально збережена на сервері:
+      // notifyCardAssigned читає її з БД, щоб узяти дедлайн і проєкт.
+      cardSaved
+        .then(() => sendCardAssignedNotification(newCard.id, assigneeId))
+        .catch(() => { /* помилку збереження вже залоговано вище */ });
     }
   }, [state, activeProjectId, updateCardAsync, currentUser, createNotification]);
 
   const updateCard = useCallback((cardId: string, updates: Partial<Card>) => {
+    // Присвоюється нижче, одразу після setState. Telegram-сповіщення чекає на цю
+    // обіцянку, бо сервер читає картку з БД — інакше візьме застарілі дані.
+    let cardSaved: Promise<void> = Promise.resolve();
+
     setState(prev => {
       if (!prev) return prev;
       const prevCard = prev.cards.find(c => c.id === cardId);
@@ -410,9 +421,10 @@ export default function App() {
       if (updates.assigneeId && updates.assigneeId !== prevCard?.assigneeId) {
         const cu = currentUserRef.current;
         if (updates.assigneeId !== cu?.userId) {
+          const assigneeId = updates.assigneeId;
           const notif: NotificationItem = {
             id: uuidv4(),
-            userId: updates.assigneeId,
+            userId: assigneeId,
             title: 'Нове завдання',
             message: `Вам призначено завдання: "${updates.title || prevCard?.title || 'Без назви'}"`,
             cardId,
@@ -423,10 +435,12 @@ export default function App() {
           setTimeout(() => {
             setState(p => p ? { ...p, notifications: [...(p.notifications || []), notif] } : p);
             createEntity('notifications', notif).catch(console.error);
+            // Telegram — після збереження картки, щоб сервер прочитав свіжий дедлайн
+            cardSaved
+              .then(() => sendCardAssignedNotification(cardId, assigneeId))
+              .catch(() => { /* помилку збереження вже залоговано нижче */ });
           }, 0);
         }
-        // Telegram notification
-        sendCardAssignedNotification(cardId, updates.assigneeId);
       }
 
       // Subtask assignee changes
@@ -454,7 +468,8 @@ export default function App() {
 
       return { ...prev, cards: prev.cards.map(c => c.id === cardId ? { ...c, ...updates } : c) };
     });
-    updateEntity('cards', cardId, updates).catch(console.error);
+    cardSaved = updateEntity('cards', cardId, updates);
+    cardSaved.catch(console.error);
   }, []); // stable — reads state via setState functional form, user via ref
 
   const deleteCard = useCallback((cardId: string) => {
