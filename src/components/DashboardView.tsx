@@ -6,10 +6,15 @@ import { TrendingUp, TrendingDown, Target, Edit2, Check, Calendar as CalendarIco
 import { Metric, KeepInCRMHistoryResponse, KeepInCRMSourceStat, KeepInCRMAgreementStat } from '../types';
 import { getKeepInCRMHistory, triggerKeepInCRMSync, triggerKeepInCRMHistorySync, getKeepInCRMSyncStatus, getKeepInCRMLTV, triggerKeepInCRMSyncLTV } from '../api';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { DollarSign, Gem, ExternalLink } from 'lucide-react';
+import { DollarSign, Gem, ExternalLink, Wallet } from 'lucide-react';
 import LtvAnalyticsModal from './LtvAnalyticsModal';
 import PeriodPicker, { PeriodKey, PeriodValue, makePeriod, describePeriod } from './PeriodPicker';
 import LtvSyncDialog from './LtvSyncDialog';
+import {
+  sumSpend, computeCac, cacBySource, previousRange,
+  DEFAULT_CURRENCY_RATES, AD_SPEND_CATEGORY,
+  CacScope, CacResult, SourceCacResult, SpendBreakdown,
+} from '../lib/cac';
 
 /**
  * Скільки днів когорта «дозріває», перш ніж її конверсію можна вважати усталеною.
@@ -17,6 +22,17 @@ import LtvSyncDialog from './LtvSyncDialog';
  * занижують конверсію. Підберіть під реальний цикл угоди у вашому відділі.
  */
 const COHORT_MATURITY_DAYS = 14;
+
+/** Що кладемо в чисельник CAC — вибір зберігається між сеансами */
+const CAC_SCOPE_KEY = 'pawell_cac_scope';
+
+function loadCacScope(): CacScope {
+  try {
+    return localStorage.getItem(CAC_SCOPE_KEY) === 'all' ? 'all' : 'ads';
+  } catch {
+    return 'ads';
+  }
+}
 
 export default function DashboardView() {
   const { state, updateMetric, setActiveView, setActiveEventId, currentUser, updateSettings, hasEditRights } = useAppContext();
@@ -43,6 +59,13 @@ export default function DashboardView() {
   const [ltvError, setLtvError]     = useState<string | null>(null);
   const [isLtvModalOpen, setIsLtvModalOpen] = useState(false);
   const [isLtvSyncOpen, setIsLtvSyncOpen]   = useState(false);
+
+  // ── CAC ──────────────────────────────────────────────────────────────────────
+  const [cacScope, setCacScope] = useState<CacScope>(loadCacScope);
+  const changeCacScope = (s: CacScope) => {
+    setCacScope(s);
+    try { localStorage.setItem(CAC_SCOPE_KEY, s); } catch { /* приватний режим */ }
+  };
 
   // ── History sync progress (polling) ──────────────────────────────────────────
   const [hSyncRunning, setHSyncRunning] = useState(false);
@@ -183,6 +206,49 @@ export default function DashboardView() {
     const cutoff = format(subDays(new Date(), COHORT_MATURITY_DAYS), 'yyyy-MM-dd');
     return kData.entries.map(e => e.date).filter(d => d > cutoff).sort();
   }, [kData]);
+
+  /**
+   * CAC за обраний період.
+   *
+   * Чисельник — витрати з розділу «Витрати» за ті самі дати, знаменник —
+   * когортні клієнти з KeepInCRM. Обидва числа вже є в системі, лишалось звести
+   * їх в одному періоді й в одній валюті.
+   */
+  const cacData = React.useMemo(() => {
+    if (!kData) return null;
+    const { from, to } = kData.period;
+    if (!from || !to) return null;
+
+    const expenses = state.expenses || [];
+    const rates = state.currencyRates ?? DEFAULT_CURRENCY_RATES;
+    const prev = previousRange(from, to);
+
+    const spend     = sumSpend(expenses, from, to, cacScope, rates);
+    const prevSpend = sumSpend(expenses, prev.from, prev.to, cacScope, rates);
+
+    // LTV на горизонті 12 міс, поки він є; інакше ARPU — це те саме число, що
+    // показує картка LTV поруч, тож співвідношення не суперечитиме сусідній плитці.
+    const ltv = ltv12?.ltv ?? ltvData?.ltv ?? null;
+
+    const result = computeCac({
+      spend: spend.total,
+      newClients: kData.aggregated.totalClients,
+      acquired: kData.aggregated.totalAcquired,
+      prevSpend: prevSpend.total,
+      prevClients: kData.comparison?.totalClients ?? 0,
+      ltv,
+    });
+
+    return {
+      result,
+      spend,
+      bySource: cacBySource(spend.bySource, kData.aggregated.clientsBySource || []),
+      ltvBasis: ltv12 ? 'LTV 12 міс' : 'ARPU',
+      hasComparison: kData.comparison !== null,
+      /** Курси ніхто не вводив, а валютні витрати є — сума приблизна */
+      ratesUnset: spend.hasForeign && !state.currencyRates,
+    };
+  }, [kData, state.expenses, state.currencyRates, cacScope, ltv12, ltvData]);
 
   /**
    * Дані для графіків. Знімки, зняті до переходу на когортну модель, не мають
@@ -602,6 +668,24 @@ export default function DashboardView() {
             </div>
           )}
 
+          {/* ── Юніт-економіка: CAC ──────────────────────────────────────── */}
+          {/* Суми бюджету бачать лише адміни — так само, як розділ «Витрати» */}
+          {kData && cacData && currentUser?.role === 'admin' && (
+            <CacSection
+              scope={cacScope}
+              onScopeChange={changeCacScope}
+              result={cacData.result}
+              spend={cacData.spend}
+              bySource={cacData.bySource}
+              ltvBasis={cacData.ltvBasis}
+              hasComparison={cacData.hasComparison}
+              ratesUnset={cacData.ratesUnset}
+              immatureDays={immatureDates.length}
+              periodDays={kData.entries.length}
+              onOpenExpenses={() => setActiveView('expenses')}
+            />
+          )}
+
           {/* ── Sales Funnel ─────────────────────────────────────────────── */}
           {kData && (
             <SalesFunnel
@@ -869,6 +953,275 @@ export default function DashboardView() {
           onClose={() => { setIsLtvSyncOpen(false); setLtvError(null); }}
           onConfirm={handleLTVSync}
         />
+      )}
+    </div>
+  );
+}
+
+// ── CAC / юніт-економіка ──────────────────────────────────────────────────────
+
+const uah = (n: number) => `${Math.round(n).toLocaleString('uk-UA')} ₴`;
+
+interface CacSectionProps {
+  scope: CacScope;
+  onScopeChange: (s: CacScope) => void;
+  result: CacResult;
+  spend: SpendBreakdown;
+  bySource: SourceCacResult;
+  ltvBasis: string;
+  hasComparison: boolean;
+  ratesUnset: boolean;
+  /** Скільки днів періоду ще не дозріли — стільки ж клієнтів ще не дорахувалось */
+  immatureDays: number;
+  periodDays: number;
+  onOpenExpenses: () => void;
+}
+
+function CacSection({
+  scope, onScopeChange, result, spend, bySource, ltvBasis,
+  hasComparison, ratesUnset, immatureDays, periodDays, onOpenExpenses,
+}: CacSectionProps) {
+  const { cac, cpl, prevCac, cacChange, cacImproved, ltvToCac, newClients } = result;
+
+  const scopeLabel = scope === 'ads' ? `Категорія «${AD_SPEND_CATEGORY}»` : 'Усі витрати відділу';
+  const maxSourceCac = Math.max(...bySource.matched.map(s => s.cac ?? 0), 1);
+
+  return (
+    <div className="mt-8 pt-6 border-t border-gray-100">
+      {/* Header + перемикач бази витрат */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-bold text-gray-800">Юніт-економіка</h3>
+          <span className="text-[11px] text-gray-400">за той самий період</span>
+        </div>
+        <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+          {(['ads', 'all'] as CacScope[]).map(s => (
+            <button
+              key={s}
+              onClick={() => onScopeChange(s)}
+              className={`px-3 py-1 text-xs font-semibold rounded-md transition ${
+                scope === s ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+              title={s === 'ads'
+                ? `Тільки рекламний бюджет (категорія «${AD_SPEND_CATEGORY}») — paid CAC`
+                : 'Усі витрати відділу — blended CAC, повна собівартість клієнта'}
+            >
+              {s === 'ads' ? 'Реклама' : 'Усі витрати'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+
+        {/* CAC */}
+        <div className="bg-gradient-to-br from-sky-50 to-cyan-50 rounded-xl border border-sky-100 p-4 flex flex-col">
+          <div className="flex items-start justify-between">
+            <p
+              className="text-[11px] font-semibold text-sky-700 uppercase tracking-wider"
+              title="Витрати періоду ÷ клієнти, залучені в цьому ж періоді"
+            >
+              CAC · вартість клієнта
+            </p>
+            <div className="w-7 h-7 rounded-lg bg-sky-100 text-sky-600 flex items-center justify-center flex-shrink-0">
+              <Wallet className="w-4 h-4" />
+            </div>
+          </div>
+
+          {cac === null ? (
+            <>
+              <span className="text-2xl font-black text-gray-300 mt-3 leading-none">—</span>
+              <p className="text-[11px] text-gray-400 mt-2 leading-snug">
+                За період немає клієнтів — ділити нема на що
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="mt-2 flex items-baseline gap-2 flex-wrap">
+                <span className="text-3xl font-black text-sky-800 leading-none">
+                  {cac.toLocaleString('uk-UA')}
+                </span>
+                <span className="text-xs font-bold text-sky-400">₴</span>
+                {cacChange !== null && (
+                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full flex items-center gap-0.5 ${
+                    cacImproved ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                  }`}
+                    title={`Попередній період: ${uah(prevCac ?? 0)} за клієнта. Для CAC зниження — це добре.`}
+                  >
+                    {cacChange <= 0 ? <TrendingDown className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
+                    {cacChange > 0 ? '+' : ''}{cacChange}%
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-sky-600/80 mt-2 leading-snug">
+                {uah(spend.total)} ÷ {newClients.toLocaleString('uk-UA')} клієнт(ів)
+              </p>
+              {!hasComparison && (
+                <p className="text-[10px] text-gray-400 mt-1">Немає з чим порівняти</p>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* CPL */}
+        <div className="bg-gradient-to-br from-indigo-50 to-blue-50 rounded-xl border border-indigo-100 p-4 flex flex-col">
+          <div className="flex items-start justify-between">
+            <p
+              className="text-[11px] font-semibold text-indigo-700 uppercase tracking-wider"
+              title="Витрати періоду ÷ усі залучені записи (ліди + клієнти)"
+            >
+              Вартість ліда
+            </p>
+            <div className="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center flex-shrink-0">
+              <Users className="w-4 h-4" />
+            </div>
+          </div>
+          {cpl === null ? (
+            <>
+              <span className="text-2xl font-black text-gray-300 mt-3 leading-none">—</span>
+              <p className="text-[11px] text-gray-400 mt-2">За період нікого не залучено</p>
+            </>
+          ) : (
+            <>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-3xl font-black text-indigo-800 leading-none">
+                  {cpl.toLocaleString('uk-UA')}
+                </span>
+                <span className="text-xs font-bold text-indigo-400">₴</span>
+              </div>
+              <p className="text-[11px] text-indigo-600/80 mt-2 leading-snug">
+                Скільки коштує один залучений запис
+              </p>
+            </>
+          )}
+        </div>
+
+        {/* LTV : CAC */}
+        <div className="bg-gradient-to-br from-purple-50 to-fuchsia-50 rounded-xl border border-purple-100 p-4 flex flex-col">
+          <div className="flex items-start justify-between">
+            <p
+              className="text-[11px] font-semibold text-purple-700 uppercase tracking-wider"
+              title="Скільки грошей приносить клієнт на кожну гривню залучення"
+            >
+              LTV : CAC
+            </p>
+            <div className="w-7 h-7 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center flex-shrink-0">
+              <Gem className="w-4 h-4" />
+            </div>
+          </div>
+          {ltvToCac === null ? (
+            <>
+              <span className="text-2xl font-black text-gray-300 mt-3 leading-none">—</span>
+              <p className="text-[11px] text-gray-400 mt-2 leading-snug">
+                Потрібні і CAC, і порахований LTV
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className={`text-3xl font-black leading-none ${
+                  ltvToCac >= 3 ? 'text-emerald-700' : ltvToCac >= 1 ? 'text-amber-600' : 'text-red-600'
+                }`}>
+                  {ltvToCac.toLocaleString('uk-UA')}×
+                </span>
+              </div>
+              <p className="text-[11px] text-purple-600/80 mt-2 leading-snug">
+                {ltvToCac >= 3
+                  ? 'Здорова економіка (бенчмарк ≥ 3×)'
+                  : ltvToCac >= 1
+                    ? 'Окупається, але запасу мало (норма ≥ 3×)'
+                    : 'Клієнт коштує дорожче, ніж приносить'}
+              </p>
+              <p className="text-[10px] text-gray-400 mt-1">База: {ltvBasis}</p>
+            </>
+          )}
+        </div>
+
+        {/* Витрати періоду */}
+        <div className="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-100 p-4 flex flex-col">
+          <div className="flex items-start justify-between">
+            <p className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wider">
+              Витрати періоду
+            </p>
+            <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center flex-shrink-0">
+              <DollarSign className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-3xl font-black text-emerald-800 leading-none">
+              {spend.total.toLocaleString('uk-UA')}
+            </span>
+            <span className="text-xs font-bold text-emerald-400">₴</span>
+          </div>
+          <p className="text-[11px] text-emerald-600/80 mt-2 leading-snug">
+            {scopeLabel} · {spend.count} запис(ів)
+          </p>
+          <button
+            onClick={onOpenExpenses}
+            className="mt-auto pt-2 text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 transition self-start"
+          >
+            Відкрити витрати <ExternalLink className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+
+      {/* Застереження — краще пояснити перекос, ніж дати повірити в рівне число */}
+      <div className="mt-3 space-y-1.5">
+        {spend.count === 0 && (
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 leading-snug">
+            За цей період витрат не заведено{scope === 'ads' ? ` в категорії «${AD_SPEND_CATEGORY}»` : ''} — CAC рахується від нуля.
+            Додайте витрати в розділі «Витрати», щоб число стало реальним.
+          </p>
+        )}
+        {ratesUnset && (
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 leading-snug">
+            У періоді є витрати не в гривні, а курс не задано — використано типовий.
+            Задайте курс у «Витрати → Налаштування».
+          </p>
+        )}
+        {immatureDays > 0 && cac !== null && (
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 leading-snug">
+            ⏳ {immatureDays === periodDays ? 'Весь період' : `Останні ${immatureDays} дн.`} ще дозрівають:
+            частина залучених не встигла стати клієнтами, тож CAC поки завищений.
+          </p>
+        )}
+      </div>
+
+      {/* CAC по джерелах */}
+      {bySource.matched.length > 0 && (
+        <div className="mt-5">
+          <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-3">
+            CAC по джерелах
+          </p>
+          <div className="space-y-2.5">
+            {bySource.matched.map(s => (
+              <div key={s.source} className="flex items-center gap-3">
+                <span className="w-28 text-xs text-gray-600 truncate shrink-0" title={s.source}>{s.source}</span>
+                <div className="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-sky-400 to-cyan-500 transition-all duration-500"
+                    style={{ width: `${Math.max(((s.cac ?? 0) / maxSourceCac) * 100, 4)}%` }}
+                  />
+                </div>
+                <span className="text-xs font-bold text-gray-800 tabular-nums w-24 text-right shrink-0">
+                  {s.cac === null ? '—' : uah(s.cac)}
+                </span>
+                <span className="text-[10px] text-gray-400 w-28 text-right shrink-0 hidden sm:block">
+                  {uah(s.spend)} / {s.clients} кл.
+                </span>
+              </div>
+            ))}
+          </div>
+          {(bySource.unmatchedSpend > 0 || bySource.unmatchedClients > 0) && (
+            <p className="text-[10px] text-gray-400 mt-2.5 leading-snug">
+              Поза розбивкою:
+              {bySource.unmatchedSpend > 0 && ` ${uah(bySource.unmatchedSpend)} витрат на джерела, яких немає в CRM`}
+              {bySource.unmatchedSpend > 0 && bySource.unmatchedClients > 0 && ' ·'}
+              {bySource.unmatchedClients > 0 && ` ${bySource.unmatchedClients} клієнт(ів) із джерел без витрат`}
+              . Назви джерел у витратах і в CRM мають збігатись.
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

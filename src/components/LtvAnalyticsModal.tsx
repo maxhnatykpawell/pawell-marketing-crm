@@ -420,6 +420,26 @@ export default function LtvAnalyticsModal({
     setTierFocus(prev => (prev === tier ? null : tier));
   }, []);
 
+  const resetFocus = useCallback(() => { setTierFocus(null); setKindFocus(null); }, []);
+
+  /**
+   * Фокуси в тому ж вигляді, що й фільтри.
+   *
+   * Вони відновлюються з минулого сеансу разом з рештою вибору, але, на відміну
+   * від фільтрів, не мають власного відображення в панелі. Через це «Сплячий» із
+   * увімкненим фокусом «Нові» давав порожню таблицю при непорожньому бейджі
+   * сегмента — і причини цього ніде не було видно. Тепер фокус — такий самий
+   * знімний чіп.
+   */
+  const focusChips = useMemo(() => {
+    const out: { label: string; clear: () => void }[] = [];
+    if (tierFocus !== null) out.push({ label: `лише Tier ${tierFocus}`, clear: () => setTierFocus(null) });
+    if (kindFocus !== null) {
+      out.push({ label: `лише ${CUSTOMER_KIND_LABELS[kindFocus].toLowerCase()}`, clear: () => setKindFocus(null) });
+    }
+    return out;
+  }, [tierFocus, kindFocus]);
+
   const distribution = useMemo(() => computeDistribution(selectedClients), [selectedClients]);
 
   const customerMix = useMemo(
@@ -598,6 +618,8 @@ export default function LtvAnalyticsModal({
             cohorts={cohortOptions}
             totalCount={allClients.length}
             filteredCount={selectedClients.length}
+            focusChips={focusChips}
+            onResetFocus={resetFocus}
           />
         </div>
       </div>

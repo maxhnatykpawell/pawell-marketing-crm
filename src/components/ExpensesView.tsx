@@ -6,6 +6,7 @@ import {
   BarChart2, Download, Settings, X, Zap,
 } from 'lucide-react';
 import ExpenseModal from './ExpenseModal';
+import { DEFAULT_CURRENCY_RATES } from '../lib/cac';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -81,9 +82,16 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
   const { state, updateSettings } = useAppContext();
   const cats = state.expenseCategories?.length ? state.expenseCategories : DEFAULT_CATEGORIES;
   const srcs = state.expenseSources?.length ? state.expenseSources : DEFAULT_SOURCES;
+  const rates = state.currencyRates ?? DEFAULT_CURRENCY_RATES;
 
   const [newCat, setNewCat] = useState('');
   const [newSrc, setNewSrc] = useState('');
+
+  const setRate = (cur: 'USD' | 'EUR', raw: string) => {
+    const v = parseFloat(raw.replace(',', '.'));
+    if (!isFinite(v) || v <= 0) return;
+    updateSettings({ currencyRates: { ...rates, [cur]: v } });
+  };
 
   const addCat = () => {
     const v = newCat.trim();
@@ -159,6 +167,32 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
                 className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
               />
               <button onClick={addSrc} className="px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 transition">Додати</button>
+            </div>
+          </div>
+
+          {/* Курси валют — CAC на головній зводить усі витрати до гривні */}
+          <div>
+            <p className="text-sm font-semibold text-gray-700 mb-1">Курси валют</p>
+            <p className="text-xs text-gray-500 mb-3">
+              Скільки гривень коштує одна одиниця. За цим курсом витрати зводяться до гривні
+              в розрахунку CAC на головній сторінці.
+            </p>
+            <div className="flex gap-3">
+              {(['USD', 'EUR'] as const).map(cur => (
+                <label key={cur} className="flex-1">
+                  <span className="block text-xs text-gray-500 mb-1">
+                    1 {CURRENCY_SYMBOL[cur]} = ₴
+                  </span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    defaultValue={rates[cur]}
+                    onBlur={e => setRate(cur, e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                  />
+                </label>
+              ))}
             </div>
           </div>
         </div>

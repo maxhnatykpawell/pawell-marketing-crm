@@ -21,6 +21,7 @@ import {
   resolveRights, availableTools, runReadTool, prepareAction, isWriteTool,
   AssistantUser, ToolContext,
 } from './src/lib/assistantTools';
+import { registerChatRoutes, chatStreamStats } from './chat-server';
 
 
 // ── Firebase Init ─────────────────────────────────────────────────────────────
@@ -115,6 +116,12 @@ const INITIAL_APP_STATE = {
 const ATOMIC_COLLECTIONS = ['users', 'userGroups', 'lists', 'cards', 'tags', 'contentPlans', 'events', 'projects', 'metrics', 'boards', 'processes', 'notifications', 'expenses', 'payrolls'];
 const SETTINGS_DOC = 'settings';
 
+/**
+ * Налаштування, які з'явились пізніше і можуть бути відсутні у клієнта.
+ * Раніше вони не потрапляли в білий список saveDb і мовчки не зберігались.
+ */
+const OPTIONAL_SETTINGS_KEYS = ['expenseCategories', 'expenseSources', 'rfmThresholds', 'currencyRates'];
+
 const DEFAULT_PAYROLL_SETTINGS = {
   labels: {
     baseSalary: 'Ставка',
@@ -183,6 +190,9 @@ async function getDb(): Promise<any> {
         payrollSettings: legacyData.payrollSettings || DEFAULT_PAYROLL_SETTINGS,
         personalNotifications: legacyData.personalNotifications || DEFAULT_PERSONAL_NOTIFICATIONS
       };
+      for (const key of OPTIONAL_SETTINGS_KEYS) {
+        if (legacyData[key] !== undefined) (settings as any)[key] = legacyData[key];
+      }
       await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).set(settings);
       
       for (const colName of ATOMIC_COLLECTIONS) {
@@ -250,7 +260,10 @@ async function saveDb(data: any): Promise<void> {
   const db = initFirebase();
   if (db) {
     // With atomic updates, saveDb is rarely called for full state, but we can implement it as a fallback sync
-    const settings = {
+    // Білий список: усе, що тут не перелічене, з налаштувань зникає. Ключі, які
+    // клієнт може не надіслати, додаємо лише коли вони справді прийшли —
+    // Firestore не приймає undefined, а merge зберігає раніше збережене.
+    const settings: Record<string, any> = {
       contentPlanChannels: data.contentPlanChannels || [],
       contentPlanStatuses: data.contentPlanStatuses || [],
       contentPlanColumns: data.contentPlanColumns || [],
@@ -259,7 +272,10 @@ async function saveDb(data: any): Promise<void> {
       payrollSettings: data.payrollSettings || DEFAULT_PAYROLL_SETTINGS,
       personalNotifications: data.personalNotifications || DEFAULT_PERSONAL_NOTIFICATIONS
     };
-    await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).set(settings);
+    for (const key of OPTIONAL_SETTINGS_KEYS) {
+      if (data[key] !== undefined) settings[key] = data[key];
+    }
+    await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).set(settings, { merge: true });
     
     for (const colName of ATOMIC_COLLECTIONS) {
       const items = data[colName] || [];
@@ -2183,6 +2199,44 @@ Reply ONLY with a number representing the estimated minutes. Do not include any 
       await updateLastModified();
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Чат ──────────────────────────────────────────────────────────────────────
+  /**
+   * Чат свідомо не проходить ні через getDb/saveDb, ні через updateLastModified:
+   * інакше кожне повідомлення змушувало б усі відкриті вкладки перетягувати весь
+   * стан застосунку. Він має власні колекції і власний канал доставки (SSE).
+   */
+  registerChatRoutes(app, {
+    requireAuth,
+    getFirestore: initFirebase,
+    getUsers: async () => {
+      const state = await getDb();
+      return (state.users || []).map((u: any) => ({
+        id: u.id,
+        name: u.name,
+        telegramChatId: u.telegramChatId ?? null,
+      }));
+    },
+    sendTelegram: sendPersonalTelegramMessage,
+    saveNotification: async (item) => {
+      const db = initFirebase();
+      if (db) {
+        await db.collection('crm_notifications').doc(item.id).set(item);
+        // Дзвіночок живе в загальному стані — його оновлення клієнт побачить
+        // звичайним шляхом, і саме тут це доречно
+        await updateLastModified();
+        return;
+      }
+      const state = await getDb();
+      state.notifications = [...(state.notifications || []), item];
+      await saveDb(state);
+    },
+    localDir: DATA_DIR,
+  });
+
+  app.get('/api/chat/stats', requireAuth, requireAdmin, (_req, res) => {
+    res.json(chatStreamStats());
   });
 
   app.post('/api/review-plan', requireAuth, async (req, res) => {

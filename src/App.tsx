@@ -21,10 +21,12 @@ import { PayrollView } from './components/Payroll/PayrollView';
 import Celebration from './components/Celebration';
 import { celebrate } from './lib/celebrate';
 import AssistantPanel from './components/AssistantPanel';
+import ChatView from './components/ChatView';
+import { useChat } from './hooks/useChat';
 import type { AssistantAction } from './api';
-import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet } from 'lucide-react';
+import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet, MessageSquare } from 'lucide-react';
 
-type ActiveView = 'dashboard' | 'projects' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile' | 'expenses' | 'payroll';
+type ActiveView = 'dashboard' | 'projects' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile' | 'expenses' | 'payroll' | 'chat';
 
 interface AppContextType {
   state: AppState;
@@ -53,7 +55,7 @@ interface AppContextType {
   addUserGroup: (group: Omit<UserGroup, 'id'>) => void;
   updateUserGroup: (id: string, updates: Partial<UserGroup>) => void;
   deleteUserGroup: (id: string) => void;
-  updateSettings: (updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule' | 'expenseCategories' | 'expenseSources' | 'rfmThresholds'>>) => void;
+  updateSettings: (updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule' | 'expenseCategories' | 'expenseSources' | 'rfmThresholds' | 'currencyRates'>>) => void;
   addEvent: (item: Omit<EventItem, 'id'>) => void;
   updateEvent: (id: string, updates: Partial<EventItem>) => void;
   deleteEvent: (id: string) => void;
@@ -190,7 +192,10 @@ export default function App() {
     const isAdminOnly = adminOnlyViews.includes(activeView);
     const isAllowed = isAdminOnly
       ? currentUser.role === 'admin'
-      : currentRights.allowedViews.includes(activeView) || activeView === 'profile' || (activeView === 'event-details' && currentRights.allowedViews.includes('events'));
+      // Чат доступний усім так само, як власний профіль: це засіб зв'язку, а не
+      // ще один розділ даних. Інакше кожну наявну групу довелось би
+      // переналаштовувати вручну, щоб команда просто могла листуватись.
+      : currentRights.allowedViews.includes(activeView) || activeView === 'profile' || activeView === 'chat' || (activeView === 'event-details' && currentRights.allowedViews.includes('events'));
 
     if (!isAllowed) {
       if (currentRights.allowedViews.length > 0) {
@@ -644,7 +649,7 @@ export default function App() {
     deleteEntity('userGroups', id).catch(console.error);
   }, [state]);
 
-  const updateSettings = useCallback((updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule' | 'expenseCategories' | 'expenseSources' | 'rfmThresholds'>>) => {
+  const updateSettings = useCallback((updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule' | 'expenseCategories' | 'expenseSources' | 'rfmThresholds' | 'currencyRates'>>) => {
     if (!state) return;
     saveState({ ...state, ...updates });
   }, [state, saveState]);
@@ -838,6 +843,14 @@ export default function App() {
     } catch (e) { console.error(e); alert('Помилка імпорту. Перевірте формат JSON.'); }
   }, [state, saveState]);
 
+  /**
+   * Чат тримає власне живе з'єднання із сервером — окремо від 30-секундного
+   * опитування стану. Хук стоїть тут, до перших return-ів: правила хуків не
+   * дозволяють викликати його за умовою, а сам він нічого не робить, поки
+   * currentUser порожній.
+   */
+  const chat = useChat(currentUser?.userId ?? null);
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   if (!authChecked || loading) return <LoadingScreen />;
@@ -857,9 +870,9 @@ export default function App() {
   const userRecord = state.users.find(u => u.id === currentUser.userId);
   const userGroup = state.userGroups?.find(g => g.id === userRecord?.groupId);
   
-  const defaultRights: AccessRights = { 
-    canEdit: true, 
-    allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations', 'profile', 'payroll'] 
+  const defaultRights: AccessRights = {
+    canEdit: true,
+    allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations', 'profile', 'payroll', 'chat']
   };
   
   const currentRights: AccessRights = currentUser.role === 'admin' 
@@ -879,10 +892,12 @@ export default function App() {
     { view: 'regulations', label: 'Регламенти', Icon: BookOpen },
     { view: 'expenses', label: 'Витрати', Icon: Receipt, adminOnly: true },
     { view: 'payroll', label: 'Зарплати', Icon: Wallet },
+    { view: 'chat', label: 'Чат', Icon: MessageSquare },
   ];
 
   const navItems = allNavItems.filter(item => {
     if (item.adminOnly) return currentUser.role === 'admin';
+    if (item.view === 'chat') return true; // доступний усім, як і профіль
     return currentRights.allowedViews.includes(item.view);
   });
 
@@ -958,6 +973,13 @@ export default function App() {
                     }`}
                   >
                     <Icon className="w-4 h-4 shrink-0" />
+                    {/* Непрочитані в чаті видно з будь-якої вкладки — інакше про
+                        повідомлення дізнаєшся, лише зайшовши в чат */}
+                    {view === 'chat' && chat.totalUnread > 0 && (
+                      <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white">
+                        {chat.totalUnread > 99 ? '99+' : chat.totalUnread}
+                      </span>
+                    )}
                     {/* Label: always visible on active; revealed on hover for others */}
                     <span className={`text-xs whitespace-nowrap transition-all duration-150 overflow-hidden ${
                       isActive ? 'max-w-[80px] opacity-100' : 'max-w-0 opacity-0 group-hover:max-w-[80px] group-hover:opacity-100'
@@ -1085,7 +1107,7 @@ export default function App() {
         </header>
 
         {/* Main */}
-        <main className={`flex-1 p-6 h-[calc(100vh-73px)] print:h-auto print:overflow-visible print:p-0 flex flex-col ${['board', 'processes'].includes(activeView) ? 'overflow-hidden' : 'overflow-auto hidden-scrollbar'}`}>
+        <main className={`flex-1 p-6 h-[calc(100vh-73px)] print:h-auto print:overflow-visible print:p-0 flex flex-col ${['board', 'processes', 'chat'].includes(activeView) ? 'overflow-hidden' : 'overflow-auto hidden-scrollbar'}`}>
           {activeView === 'dashboard' && <DashboardView />}
           {activeView === 'projects' && <ProjectsView />}
           {activeView === 'processes' && <ProcessTreeView />}
@@ -1098,6 +1120,7 @@ export default function App() {
           {activeView === 'profile' && <MyProfileView />}
           {activeView === 'expenses' && currentUser.role === 'admin' && <ExpensesView />}
           {activeView === 'payroll' && <PayrollView />}
+          {activeView === 'chat' && <ChatView chat={chat} />}
         </main>
 
         {/* Modals */}

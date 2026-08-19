@@ -21,6 +21,15 @@ interface Props {
   cohorts: { month: string; count: number }[];
   totalCount: number;
   filteredCount: number;
+  /**
+   * Фокуси на тірі й типі клієнта живуть у модалці, а не в ClientFilters, бо
+   * застосовуються після ранжування. Але звужують вибірку вони так само, тож
+   * мають бути видимі тут: інакше фокус, відновлений з минулого сеансу, тихо
+   * лишає таблицю порожньою, і зі складу фільтрів цього ніяк не видно.
+   */
+  focusChips?: Chip[];
+  /** Скинути фокуси — «Скинути все» має прибирати і їх */
+  onResetFocus?: () => void;
 }
 
 /** Один активний фільтр у вигляді знімного чіпа */
@@ -37,9 +46,14 @@ const num = (v: string): number | null => {
 
 const fmt = (n: number) => n.toLocaleString('uk-UA');
 
-export default function ClientFilterBar({ filters, onChange, tags, cohorts, totalCount, filteredCount }: Props) {
+export default function ClientFilterBar({
+  filters, onChange, tags, cohorts, totalCount, filteredCount,
+  focusChips = [], onResetFocus,
+}: Props) {
   const [open, setOpen] = useState(false);
-  const activeCount = countActiveFilters(filters);
+  // Фокуси рахуємо разом з фільтрами: для користувача це одне й те саме —
+  // причина, чому в таблиці менше рядків, ніж у базі.
+  const activeCount = countActiveFilters(filters) + focusChips.length;
 
   const patch = (p: Partial<ClientFilters>) => onChange(f => ({ ...f, ...p }));
 
@@ -63,7 +77,9 @@ export default function ClientFilterBar({ filters, onChange, tags, cohorts, tota
     list.includes(value) ? list.filter(v => v !== value) : [...list, value];
 
   // ── Чіпи активних фільтрів ─────────────────────────────────────────────────
-  const chips: Chip[] = [];
+  // Фокуси йдуть першими: вони звужують найсильніше, тож мають впадати в око
+  // раніше за решту.
+  const chips: Chip[] = [...focusChips];
 
   if (filters.search.trim()) {
     chips.push({ label: `Назва: «${filters.search.trim()}»`, clear: () => patch({ search: '' }) });
@@ -180,7 +196,7 @@ export default function ClientFilterBar({ filters, onChange, tags, cohorts, tota
 
         {activeCount > 0 && (
           <button
-            onClick={() => onChange(EMPTY_FILTERS)}
+            onClick={() => { onChange(EMPTY_FILTERS); onResetFocus?.(); }}
             className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-gray-500 hover:text-red-600 transition"
           >
             <RotateCcw className="w-3.5 h-3.5" />

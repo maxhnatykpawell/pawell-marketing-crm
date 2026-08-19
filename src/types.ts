@@ -12,6 +12,53 @@ export interface ScheduledAnnouncement {
   createdAt: string;
 }
 
+// ── Чат ───────────────────────────────────────────────────────────────────────
+
+/**
+ * Канал і особисте листування — одна й та сама сутність, різна лише видимість.
+ * Завдяки цьому вся логіка (надсилання, непрочитане, згадки) написана один раз.
+ */
+export type ChatConversationKind = 'channel' | 'dm';
+
+export interface ChatConversation {
+  id: string;
+  kind: ChatConversationKind;
+  /** Назва каналу. Для особистих порожня — показуємо ім'я співрозмовника */
+  title: string;
+  /** null = канал відкритий усій команді; для особистих — рівно два id */
+  memberIds: string[] | null;
+  createdBy: string;
+  createdAt: string;
+  archived?: boolean;
+  /** Оновлюються при кожному повідомленні — з них будується список розмов */
+  lastMessageAt?: string;
+  lastMessagePreview?: string;
+  lastMessageAuthorId?: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  conversationId: string;
+  authorId: string;
+  text: string;
+  createdAt: string;
+  editedAt?: string;
+  /**
+   * Видалене повідомлення лишається рядком-заглушкою: прибрати його зовсім
+   * означало б розірвати нитку розмови там, де на нього відповідали.
+   */
+  deletedAt?: string;
+  /** id користувачів, згаданих через @ — за ними йдуть сповіщення */
+  mentions?: string[];
+}
+
+/** Розмова в тому вигляді, в якому її віддає сервер конкретній людині */
+export interface ChatConversationView extends ChatConversation {
+  unread: number;
+  /** Для особистих — з ким саме розмова */
+  peerId?: string | null;
+}
+
 export interface NotificationItem {
   id: string;
   userId: string;
@@ -266,6 +313,11 @@ export interface AppState {
   expenses?: Expense[];
   expenseCategories?: string[];
   expenseSources?: string[];
+  /**
+   * Курси валют для зведення витрат до гривні (скільки грн за 1 одиницю).
+   * Потрібні CAC на головній: без них витрата в $100 і в 100 ₴ важили б однаково.
+   */
+  currencyRates?: { USD: number; EUR: number };
   lastModified?: string;
   keepincrm?: KeepInCRMSnapshot;
   payrolls?: PayrollDocument[];

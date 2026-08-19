@@ -1,4 +1,7 @@
-import { AppState, Attachment, AuthUser, KeepInCRMSnapshot, KeepInCRMHistoryResponse } from './types';
+import {
+  AppState, Attachment, AuthUser, KeepInCRMSnapshot, KeepInCRMHistoryResponse,
+  ChatConversation, ChatConversationView, ChatMessage,
+} from './types';
 import { v4 as uuidv4 } from 'uuid';
 
 const getToken = () => localStorage.getItem('auth_token');
@@ -511,4 +514,109 @@ export const getAssistantHistory = async (): Promise<AssistantMessage[]> => {
 
 export const clearAssistantHistory = async (): Promise<void> => {
   await fetch('/api/assistant/history', { method: 'DELETE', headers: authHeaders() });
+};
+
+// ── Чат ───────────────────────────────────────────────────────────────────────
+
+export const getChatConversations = async (): Promise<ChatConversationView[]> => {
+  const res = await fetch('/api/chat/conversations', { headers: authHeaders() });
+  if (!res.ok) throw new Error('Не вдалось завантажити розмови');
+  return (await res.json()).conversations || [];
+};
+
+export const createChatChannel = async (
+  title: string,
+  memberIds?: string[] | null,
+): Promise<ChatConversation> => {
+  const res = await fetch('/api/chat/conversations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ kind: 'channel', title, memberIds }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Не вдалось створити канал');
+  }
+  return (await res.json()).conversation;
+};
+
+export const openChatDm = async (peerId: string): Promise<ChatConversation> => {
+  const res = await fetch('/api/chat/conversations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ kind: 'dm', peerId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Не вдалось відкрити листування');
+  }
+  return (await res.json()).conversation;
+};
+
+export const getChatMessages = async (
+  conversationId: string,
+  before?: string,
+): Promise<{ messages: ChatMessage[]; hasMore: boolean }> => {
+  const params = new URLSearchParams({ conversationId });
+  if (before) params.set('before', before);
+  const res = await fetch(`/api/chat/messages?${params}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error('Не вдалось завантажити повідомлення');
+  return res.json();
+};
+
+export const sendChatMessage = async (conversationId: string, text: string): Promise<ChatMessage> => {
+  const res = await fetch('/api/chat/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ conversationId, text }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Повідомлення не надіслано');
+  }
+  return (await res.json()).message;
+};
+
+export const editChatMessage = async (
+  conversationId: string,
+  id: string,
+  text: string,
+): Promise<ChatMessage> => {
+  const res = await fetch(`/api/chat/messages/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ conversationId, text }),
+  });
+  if (!res.ok) throw new Error('Не вдалось змінити повідомлення');
+  return (await res.json()).message;
+};
+
+export const deleteChatMessage = async (conversationId: string, id: string): Promise<void> => {
+  const params = new URLSearchParams({ conversationId });
+  const res = await fetch(`/api/chat/messages/${id}?${params}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error('Не вдалось видалити повідомлення');
+};
+
+export const markChatRead = async (conversationId: string, at?: string): Promise<void> => {
+  await fetch('/api/chat/read', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ conversationId, at: at ?? new Date().toISOString() }),
+  }).catch(() => { /* позначка прочитання не варта помилки в інтерфейсі */ });
+};
+
+/**
+ * Квиток на підключення до потоку.
+ *
+ * EventSource не вміє надсилати заголовок Authorization, а класти постійний
+ * токен у URL не можна — він осідає в логах. Тому обмінюємо його на одноразовий
+ * квиток із коротким строком життя.
+ */
+export const getChatStreamTicket = async (): Promise<string> => {
+  const res = await fetch('/api/chat/ticket', { method: 'POST', headers: authHeaders() });
+  if (!res.ok) throw new Error('Не вдалось підключитись до чату');
+  return (await res.json()).ticket;
 };
