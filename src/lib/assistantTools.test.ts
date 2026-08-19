@@ -70,6 +70,41 @@ console.log('\nПрава');
   check('адмін має дії', adminTools.filter(isWriteTool), ['propose_create_card', 'propose_update_card']);
 }
 
+console.log('\nВидане право на витрати діє і в асистента');
+{
+  // Витрати перестали бути суто адмінськими: якщо адмін відкрив розділ людині,
+  // асистент має поводитись так само, як інтерфейс — інакше він або ховає
+  // дозволене, або (гірше) лишається лазівкою після відкликання права
+  const granted: AssistantUser = { userId: 'u9', name: 'Ніна', role: 'member' };
+  const stateWithGrant = {
+    ...state,
+    users: [...(state.users as any[]), {
+      id: 'u9', name: 'Ніна', avatar: '',
+      customRights: { canEdit: false, allowedViews: ['dashboard', 'expenses', 'profile'] },
+    }],
+  } as typeof state;
+
+  const rights = resolveRights(stateWithGrant, granted);
+  check('право видно в правах', rights.allowedViews.includes('expenses'), true);
+
+  const tools = availableTools(rights, granted).map(t => t.name);
+  check('інструмент витрат став доступним', tools.includes('get_expenses_summary'), true);
+
+  const res = runReadTool('get_expenses_summary', {}, {
+    state: stateWithGrant, now: NOW, user: granted, rights, ltv: { ltv: 0 },
+  }) as any;
+  check('і справді повертає дані', res.total, 6200);
+
+  // Відкликали право — доступ зникає тим самим шляхом
+  const revoked = resolveRights({
+    ...stateWithGrant,
+    users: (stateWithGrant.users as any[]).map(u =>
+      u.id === 'u9' ? { ...u, customRights: { canEdit: false, allowedViews: ['dashboard'] } } : u),
+  } as typeof state, granted);
+  check('після відкликання інструмент зникає',
+    availableTools(revoked, granted).map(t => t.name).includes('get_expenses_summary'), false);
+}
+
 console.log('\nПрава застосовуються і при виклику');
 {
   // Модель може назвати інструмент, якого їй не давали — це не має спрацювати

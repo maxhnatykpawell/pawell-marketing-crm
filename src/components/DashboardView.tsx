@@ -35,7 +35,7 @@ function loadCacScope(): CacScope {
 }
 
 export default function DashboardView() {
-  const { state, updateMetric, setActiveView, setActiveEventId, currentUser, updateSettings, hasEditRights } = useAppContext();
+  const { state, updateMetric, setActiveView, setActiveEventId, currentUser, updateSettings, hasEditRights, canView } = useAppContext();
   
   const [editingMetric, setEditingMetric] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<Metric>>({});
@@ -669,8 +669,9 @@ export default function DashboardView() {
           )}
 
           {/* ── Юніт-економіка: CAC ──────────────────────────────────────── */}
-          {/* Суми бюджету бачать лише адміни — так само, як розділ «Витрати» */}
-          {kData && cacData && currentUser?.role === 'admin' && (
+          {/* Прив'язано до права на «Витрати», а не до ролі: CAC — це той самий
+              бюджет, лише поділений на клієнтів */}
+          {kData && cacData && canView('expenses') && (
             <CacSection
               scope={cacScope}
               onScopeChange={changeCacScope}

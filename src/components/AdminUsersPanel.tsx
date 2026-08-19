@@ -8,20 +8,10 @@ import {
   ShieldCheck, ShieldOff, Sliders
 } from 'lucide-react';
 import { AccessRights } from '../types';
+import { DEFAULT_ALLOWED_VIEWS } from '../lib/views';
+import AccessViewsPicker from './AccessViewsPicker';
 
 interface AuthEntry { userId: string; email: string; role: string; }
-
-const viewsList = [
-  { id: 'dashboard', label: 'Головна' },
-  { id: 'projects', label: 'Проєкти' },
-  { id: 'processes', label: 'Процеси' },
-  { id: 'board', label: 'Дошка' },
-  { id: 'content', label: 'Контент-план' },
-  { id: 'events', label: 'Події' },
-  { id: 'calendar', label: 'Календар' },
-  { id: 'regulations', label: 'Регламенти' },
-  { id: 'payroll', label: 'Зарплати' },
-];
 
 export default function AdminUsersPanel() {
   const { state, currentUser, updateUser } = useAppContext();
@@ -137,10 +127,7 @@ export default function AdminUsersPanel() {
   const openRights = (userId: string) => {
     const user = state.users.find(u => u.id === userId);
     const group = state.userGroups?.find(g => g.id === user?.groupId);
-    const defaultRights: AccessRights = {
-      canEdit: true,
-      allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations', 'payroll'],
-    };
+    const defaultRights: AccessRights = { canEdit: true, allowedViews: [...DEFAULT_ALLOWED_VIEWS] };
     const hasCustom = !!user?.customRights;
     setRightsUserId(userId);
     setRightsForm({
@@ -160,18 +147,6 @@ export default function AdminUsersPanel() {
     }
     setRightsUserId(null);
     setRightsForm(null);
-  };
-
-  const toggleRightsView = (viewId: string) => {
-    if (!rightsForm) return;
-    const views = rightsForm.rights.allowedViews;
-    setRightsForm({
-      ...rightsForm,
-      rights: {
-        ...rightsForm.rights,
-        allowedViews: views.includes(viewId) ? views.filter(v => v !== viewId) : [...views, viewId],
-      },
-    });
   };
 
   const handleSaveTelegramId = async (userId: string) => {
@@ -442,22 +417,10 @@ export default function AdminUsersPanel() {
                               Дозволити редагування (створювати/видаляти/змінювати)
                             </label>
 
-                            <div>
-                              <label className="block text-xs font-semibold text-gray-600 mb-2">Доступні розділи</label>
-                              <div className="grid grid-cols-2 gap-2">
-                                {viewsList.map(v => (
-                                  <label key={v.id} className="flex items-center gap-2 text-xs text-gray-700 bg-white px-2.5 py-2 rounded-lg border border-violet-100 hover:border-violet-300 cursor-pointer transition">
-                                    <input
-                                      type="checkbox"
-                                      checked={rightsForm.rights.allowedViews.includes(v.id)}
-                                      onChange={() => toggleRightsView(v.id)}
-                                      className="rounded text-violet-600 focus:ring-violet-500"
-                                    />
-                                    {v.label}
-                                  </label>
-                                ))}
-                              </div>
-                            </div>
+                            <AccessViewsPicker
+                              allowedViews={rightsForm.rights.allowedViews}
+                              onChange={views => setRightsForm({ ...rightsForm, rights: { ...rightsForm.rights, allowedViews: views } })}
+                            />
                           </div>
                         )}
 

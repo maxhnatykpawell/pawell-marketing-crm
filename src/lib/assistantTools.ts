@@ -11,6 +11,11 @@
  */
 
 import type { AppState, AccessRights, Card } from '../types';
+import {
+  canViewSection,
+  ALL_VIEW_IDS as ALL_VIEWS,
+  DEFAULT_ALLOWED_VIEWS as DEFAULTS,
+} from './views';
 
 export interface AssistantUser {
   userId: string;
@@ -19,29 +24,23 @@ export interface AssistantUser {
 }
 
 /**
- * Типові права. Свідомо збігаються з тими, що в App.tsx: якщо асистент рахуватиме
- * доступ інакше за інтерфейс, він стане обхідним каналом до чужих даних.
+ * Права беруться з того самого переліку розділів, що й інтерфейс: якщо асистент
+ * рахуватиме доступ інакше за меню, він стане обхідним каналом до чужих даних.
  */
-export const DEFAULT_ALLOWED_VIEWS = [
-  'dashboard', 'projects', 'processes', 'board', 'content',
-  'events', 'calendar', 'regulations', 'profile', 'payroll',
-];
-
-/** Вкладки, закриті для всіх, крім адмінів, незалежно від allowedViews */
-export const ADMIN_ONLY_VIEWS = ['expenses'];
+export { DEFAULT_ALLOWED_VIEWS, ALL_VIEW_IDS } from './views';
 
 export function resolveRights(state: AppState, user: AssistantUser): AccessRights {
-  const defaults: AccessRights = { canEdit: true, allowedViews: [...DEFAULT_ALLOWED_VIEWS] };
-  if (user.role === 'admin') return defaults;
+  // Адмін має всі розділи, а не «типові»: інакше видані правами вкладки
+  // (наприклад витрати) були б доступні учаснику і закриті адміністратору
+  if (user.role === 'admin') return { canEdit: true, allowedViews: [...ALL_VIEWS] };
 
   const record = state.users?.find(u => u.id === user.userId);
   const group = state.userGroups?.find(g => g.id === record?.groupId);
-  return record?.customRights || group?.rights || defaults;
+  return record?.customRights || group?.rights || { canEdit: true, allowedViews: [...DEFAULTS] };
 }
 
 export function canUseView(rights: AccessRights, user: AssistantUser, view: string): boolean {
-  if (ADMIN_ONLY_VIEWS.includes(view)) return user.role === 'admin';
-  return rights.allowedViews.includes(view);
+  return canViewSection(view, rights.allowedViews, user.role);
 }
 
 // ── Опис інструментів ─────────────────────────────────────────────────────────

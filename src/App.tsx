@@ -24,6 +24,7 @@ import AssistantPanel from './components/AssistantPanel';
 import ChatView from './components/ChatView';
 import { useChat } from './hooks/useChat';
 import type { AssistantAction } from './api';
+import { canViewSection, ALL_VIEW_IDS, DEFAULT_ALLOWED_VIEWS } from './lib/views';
 import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet, MessageSquare } from 'lucide-react';
 
 type ActiveView = 'dashboard' | 'projects' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile' | 'expenses' | 'payroll' | 'chat';
@@ -32,6 +33,8 @@ interface AppContextType {
   state: AppState;
   currentUser: AuthUser | null;
   hasEditRights: boolean;
+  /** Чи доступний розділ поточному користувачу (враховує роль і видані права) */
+  canView: (view: string) => boolean;
   logout: () => void;
   moveCard: (cardId: string, toListId: string, targetCardId?: string) => void;
   addCard: (listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[] }) => void;
@@ -180,22 +183,11 @@ export default function App() {
     const userRecord = state.users.find(u => u.id === currentUser.userId);
     const userGroup = state.userGroups?.find(g => g.id === userRecord?.groupId);
     
-    const defaultRights = { 
-      allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations', 'profile', 'payroll'] 
-    };
-    
-    const currentRights = currentUser.role === 'admin' 
-      ? defaultRights 
-      : (userRecord?.customRights || userGroup?.rights || defaultRights);
+    const currentRights = currentUser.role === 'admin'
+      ? { allowedViews: [...ALL_VIEW_IDS] }
+      : (userRecord?.customRights || userGroup?.rights || { allowedViews: [...DEFAULT_ALLOWED_VIEWS] });
 
-    const adminOnlyViews = ['expenses'];
-    const isAdminOnly = adminOnlyViews.includes(activeView);
-    const isAllowed = isAdminOnly
-      ? currentUser.role === 'admin'
-      // Чат доступний усім так само, як власний профіль: це засіб зв'язку, а не
-      // ще один розділ даних. Інакше кожну наявну групу довелось би
-      // переналаштовувати вручну, щоб команда просто могла листуватись.
-      : currentRights.allowedViews.includes(activeView) || activeView === 'profile' || activeView === 'chat' || (activeView === 'event-details' && currentRights.allowedViews.includes('events'));
+    const isAllowed = canViewSection(activeView, currentRights.allowedViews, currentUser.role);
 
     if (!isAllowed) {
       if (currentRights.allowedViews.length > 0) {
@@ -870,18 +862,16 @@ export default function App() {
   const userRecord = state.users.find(u => u.id === currentUser.userId);
   const userGroup = state.userGroups?.find(g => g.id === userRecord?.groupId);
   
-  const defaultRights: AccessRights = {
-    canEdit: true,
-    allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations', 'profile', 'payroll', 'chat']
-  };
-  
-  const currentRights: AccessRights = currentUser.role === 'admin' 
-    ? defaultRights 
-    : (userRecord?.customRights || userGroup?.rights || defaultRights);
+  const currentRights: AccessRights = currentUser.role === 'admin'
+    ? { canEdit: true, allowedViews: [...ALL_VIEW_IDS] }
+    : (userRecord?.customRights || userGroup?.rights || { canEdit: true, allowedViews: [...DEFAULT_ALLOWED_VIEWS] });
 
   const hasEditRights = currentRights.canEdit;
 
-  let allNavItems: { view: ActiveView; label: string; Icon: any; adminOnly?: boolean }[] = [
+  /** Чи доступний розділ цій людині — те саме правило, що й у меню, і в асистента */
+  const canView = (view: string) => canViewSection(view, currentRights.allowedViews, currentUser.role);
+
+  let allNavItems: { view: ActiveView; label: string; Icon: any }[] = [
     { view: 'dashboard', label: 'Головна', Icon: BarChart },
     { view: 'projects', label: 'Проєкти', Icon: FolderKanban },
     { view: 'processes', label: 'Процеси', Icon: GitMerge },
@@ -890,23 +880,19 @@ export default function App() {
     { view: 'events', label: 'Події', Icon: CalendarDays },
     { view: 'calendar', label: 'Календар', Icon: LayoutGrid },
     { view: 'regulations', label: 'Регламенти', Icon: BookOpen },
-    { view: 'expenses', label: 'Витрати', Icon: Receipt, adminOnly: true },
+    { view: 'expenses', label: 'Витрати', Icon: Receipt },
     { view: 'payroll', label: 'Зарплати', Icon: Wallet },
     { view: 'chat', label: 'Чат', Icon: MessageSquare },
   ];
 
-  const navItems = allNavItems.filter(item => {
-    if (item.adminOnly) return currentUser.role === 'admin';
-    if (item.view === 'chat') return true; // доступний усім, як і профіль
-    return currentRights.allowedViews.includes(item.view);
-  });
+  const navItems = allNavItems.filter(item => canView(item.view));
 
   const myNotifications = (state.notifications || []).filter(n => n.userId === currentUser.userId).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const unreadCount = myNotifications.filter(n => !n.read).length;
 
   return (
     <AppContext.Provider value={{
-      state, currentUser, hasEditRights, logout,
+      state, currentUser, hasEditRights, canView, logout,
       moveCard, addCard, updateCard, deleteCard, clearList, addList, deleteList, updateList, moveList,
       addTag, deleteTag, updateTag, addUser, updateUser, deleteUser,
       addContentPlan, updateContentPlan, deleteContentPlan, importContentPlans, 
@@ -1118,7 +1104,7 @@ export default function App() {
           {activeView === 'event-details' && <EventPageView />}
           {activeView === 'regulations' && <TeamRegulationsView />}
           {activeView === 'profile' && <MyProfileView />}
-          {activeView === 'expenses' && currentUser.role === 'admin' && <ExpensesView />}
+          {activeView === 'expenses' && canView('expenses') && <ExpensesView />}
           {activeView === 'payroll' && <PayrollView />}
           {activeView === 'chat' && <ChatView chat={chat} />}
         </main>

@@ -339,7 +339,7 @@ export default function ExpensesView() {
             </div>
             <div>
               <h2 className="text-lg font-semibold text-gray-800">Витрати відділу</h2>
-              <p className="text-xs text-gray-500">Тільки адміни бачать цю сторінку</p>
+              <p className="text-xs text-gray-500">Розділ видно тим, кому відкрито доступ до витрат</p>
             </div>
           </div>
           <div className="flex items-center gap-2">

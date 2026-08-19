@@ -2,30 +2,20 @@ import React, { useState } from 'react';
 import { useAppContext } from '../App';
 import { Shield, Plus, X, Edit3, Trash2, Check, AlertCircle } from 'lucide-react';
 import { AccessRights, UserGroup } from '../types';
+import { DEFAULT_ALLOWED_VIEWS } from '../lib/views';
+import AccessViewsPicker from './AccessViewsPicker';
 
 export default function AdminGroupsPanel() {
   const { state, currentUser, addUserGroup, updateUserGroup, deleteUserGroup, confirmAction } = useAppContext();
   const [expanded, setExpanded] = useState(false);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
-  
+
   const defaultRights: AccessRights = {
     canEdit: true,
-    allowedViews: ['dashboard', 'projects', 'processes', 'board', 'content', 'events', 'calendar', 'regulations', 'payroll']
+    allowedViews: [...DEFAULT_ALLOWED_VIEWS],
   };
 
   const [form, setForm] = useState<{ name: string; rights: AccessRights } | null>(null);
-
-  const viewsList = [
-    { id: 'dashboard', label: 'Головна' },
-    { id: 'projects', label: 'Проєкти' },
-    { id: 'processes', label: 'Процеси' },
-    { id: 'board', label: 'Дошка' },
-    { id: 'content', label: 'Контент-план' },
-    { id: 'events', label: 'Події' },
-    { id: 'calendar', label: 'Календар' },
-    { id: 'regulations', label: 'Регламенти' },
-    { id: 'payroll', label: 'Зарплати' },
-  ];
 
   if (currentUser?.role !== 'admin') return null;
 
@@ -49,13 +39,6 @@ export default function AdminGroupsPanel() {
     }
     setForm(null);
     setEditingGroupId(null);
-  };
-
-  const toggleView = (viewId: string) => {
-    if (!form) return;
-    const views = form.rights.allowedViews;
-    const newViews = views.includes(viewId) ? views.filter(v => v !== viewId) : [...views, viewId];
-    setForm({ ...form, rights: { ...form.rights, allowedViews: newViews } });
   };
 
   return (
@@ -107,22 +90,10 @@ export default function AdminGroupsPanel() {
                       <p className="text-[10px] text-gray-500 ml-6 mt-0.5">Якщо вимкнено, користувачі цієї групи зможуть лише переглядати інформацію.</p>
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-2">Доступні розділи</label>
-                      <div className="grid grid-cols-2 gap-2">
-                        {viewsList.map(v => (
-                          <label key={v.id} className="flex items-center gap-2 text-sm text-gray-700 bg-gray-50 px-2 py-1.5 rounded border border-gray-100 hover:bg-gray-100 cursor-pointer">
-                            <input 
-                              type="checkbox"
-                              checked={form.rights.allowedViews.includes(v.id)}
-                              onChange={() => toggleView(v.id)}
-                              className="rounded text-indigo-600 focus:ring-indigo-500"
-                            />
-                            {v.label}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
+                    <AccessViewsPicker
+                      allowedViews={form.rights.allowedViews}
+                      onChange={views => setForm({ ...form, rights: { ...form.rights, allowedViews: views } })}
+                    />
 
                     <div className="flex gap-2 pt-2">
                       <button onClick={handleSave} className="flex items-center justify-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition flex-1">
@@ -187,22 +158,10 @@ export default function AdminGroupsPanel() {
                   </label>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 mb-2">Доступні розділи</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {viewsList.map(v => (
-                      <label key={v.id} className="flex items-center gap-2 text-sm text-gray-700 bg-gray-50 px-2 py-1.5 rounded border border-gray-100 hover:bg-gray-100 cursor-pointer">
-                        <input 
-                          type="checkbox"
-                          checked={form.rights.allowedViews.includes(v.id)}
-                          onChange={() => toggleView(v.id)}
-                          className="rounded text-indigo-600 focus:ring-indigo-500"
-                        />
-                        {v.label}
-                      </label>
-                    ))}
-                  </div>
-                </div>
+                <AccessViewsPicker
+                  allowedViews={form.rights.allowedViews}
+                  onChange={views => setForm({ ...form, rights: { ...form.rights, allowedViews: views } })}
+                />
 
                 <div className="flex gap-2 pt-2">
                   <button onClick={handleSave} className="flex items-center justify-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition flex-1">
