@@ -335,6 +335,18 @@ export interface AppState {
 
 // ── Payroll Integration Types ───────────────────────────────────────────────
 
+import type { PayrollTemplate, PayrollAssignment } from './lib/payrollEngine';
+
+export type {
+  PayrollTemplate,
+  PayrollAssignment,
+  PayrollModule,
+  PayrollModuleKind,
+  PayrollModuleRole,
+  PayrollSection,
+  PayrollTier,
+} from './lib/payrollEngine';
+
 export type PayrollFieldType = 'fixed' | 'multiplier' | 'percentage';
 
 export interface CustomPayrollField {
@@ -377,6 +389,14 @@ export interface PayrollSettings {
   customDeductions: CustomPayrollField[];
   /** Per-user overrides for custom bonuses/deductions */
   userProfiles?: Record<string, PayrollUserProfile>;
+
+  /**
+   * Модульна система: шаблони посад. Кожна посада описує свої КПІ набором
+   * модулів, тому додати нову не означає правити код.
+   */
+  templates?: PayrollTemplate[];
+  /** userId → шаблон посади плюс індивідуальні правки поверх нього */
+  assignments?: Record<string, PayrollAssignment>;
 }
 
 export interface PayrollDocument {
@@ -384,24 +404,35 @@ export interface PayrollDocument {
   userId: string;
   period: string; // YYYY-MM
 
-  // Базові
-  baseSalary: number;
-  workingDaysInMonth: number;
+  /** Шаблон, за яким створено документ */
+  templateId?: string;
+  /**
+   * Знімок шаблону на момент створення документа.
+   *
+   * Зарплатний документ — це фінансовий факт: якщо в жовтні ставка за лід
+   * була 150 ₴, зміна шаблону в грудні не має переписувати жовтневу виплату.
+   * Тому документ рахується за власним знімком, а не за поточним шаблоном.
+   */
+  templateSnapshot?: PayrollTemplate;
+  /** Введені числа за ключем модуля */
+  values?: Record<string, number>;
 
-  // Доходи
-  workedDays: number;
-  paidVacationDays: number;
-  overtimeHours: number;
-  businessTripDays: number;
-  teamBonusPercent: number;
-  additionalActivity: number;
-  customBonusesValues: Record<string, number>;
-
-  // Відрахування
-  taxPercent: number;
-  amountReceived: number;
-  companyDebts: number;
-  customDeductionsValues: Record<string, number>;
+  // ── Спадщина: документи, створені до модульної системи ─────────────────────
+  // Читаються через payrollTemplates.legacyDocumentView() і лишаються
+  // валідними; нові документи цих полів не заповнюють.
+  baseSalary?: number;
+  workingDaysInMonth?: number;
+  workedDays?: number;
+  paidVacationDays?: number;
+  overtimeHours?: number;
+  businessTripDays?: number;
+  teamBonusPercent?: number;
+  additionalActivity?: number;
+  customBonusesValues?: Record<string, number>;
+  taxPercent?: number;
+  amountReceived?: number;
+  companyDebts?: number;
+  customDeductionsValues?: Record<string, number>;
 
   createdAt: string;
 }

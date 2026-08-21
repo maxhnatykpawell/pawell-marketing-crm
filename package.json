@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx src/lib/cohortLtv.test.ts && tsx src/lib/clientAnalytics.test.ts && tsx src/lib/celebrate.test.ts && tsx src/lib/assistantTools.test.ts && tsx src/lib/cac.test.ts && tsx src/lib/chat.test.ts && tsx src/lib/views.test.ts"
+    "test": "tsx src/lib/cohortLtv.test.ts && tsx src/lib/clientAnalytics.test.ts && tsx src/lib/celebrate.test.ts && tsx src/lib/assistantTools.test.ts && tsx src/lib/cac.test.ts && tsx src/lib/chat.test.ts && tsx src/lib/views.test.ts && tsx src/lib/payrollEngine.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -142,6 +142,20 @@ interface LocalChatFile {
   reads: Record<string, Record<string, string>>;
 }
 
+/**
+ * Останній бар'єр перед Firestore.
+ *
+ * `collection.doc(x)` трактує скісну риску як роздільник шляху, тож будь-який
+ * ідентифікатор із «/» здатен вивести читання чи запис за межі своєї колекції.
+ * Перевірка стоїть у сховищі, а не лише в обробниках: так її не обійде
+ * наступний маршрут, який хтось додасть, не пам'ятаючи про цю особливість.
+ */
+function assertSafeId(id: string, what: string): void {
+  if (!id || id.includes('/') || id.includes('..') || id.length > 200) {
+    throw new Error(`Некоректний ідентифікатор ${what}`);
+  }
+}
+
 function makeStore(deps: ChatDeps) {
   const localFile = path.join(deps.localDir, 'chat.json');
 
@@ -169,6 +183,7 @@ function makeStore(deps: ChatDeps) {
     },
 
     async getConversation(id: string): Promise<ChatConversation | null> {
+      assertSafeId(id, 'розмови');
       const db = deps.getFirestore();
       if (db) {
         const doc = await db.collection(CONVERSATIONS).doc(id).get();
@@ -178,6 +193,7 @@ function makeStore(deps: ChatDeps) {
     },
 
     async saveConversation(conv: ChatConversation): Promise<void> {
+      assertSafeId(conv.id, 'розмови');
       const db = deps.getFirestore();
       if (db) {
         await db.collection(CONVERSATIONS).doc(conv.id).set(conv, { merge: true });
@@ -192,6 +208,7 @@ function makeStore(deps: ChatDeps) {
 
     /** Історія: сторінка від найновіших до старіших, `before` — курсор за часом */
     async listMessages(conversationId: string, before?: string): Promise<ChatMessage[]> {
+      assertSafeId(conversationId, 'розмови');
       const db = deps.getFirestore();
       if (db) {
         let q = db.collection(CONVERSATIONS).doc(conversationId).collection(MESSAGES)
@@ -208,6 +225,8 @@ function makeStore(deps: ChatDeps) {
     },
 
     async getMessage(conversationId: string, id: string): Promise<ChatMessage | null> {
+      assertSafeId(conversationId, 'розмови');
+      assertSafeId(id, 'повідомлення');
       const db = deps.getFirestore();
       if (db) {
         const doc = await db.collection(CONVERSATIONS).doc(conversationId)
@@ -218,6 +237,8 @@ function makeStore(deps: ChatDeps) {
     },
 
     async saveMessage(msg: ChatMessage): Promise<void> {
+      assertSafeId(msg.conversationId, 'розмови');
+      assertSafeId(msg.id, 'повідомлення');
       const db = deps.getFirestore();
       if (db) {
         await db.collection(CONVERSATIONS).doc(msg.conversationId)
@@ -239,6 +260,7 @@ function makeStore(deps: ChatDeps) {
      * того, скільки повідомлень порахував.
      */
     async countSince(conversationId: string, since: string, exceptAuthor: string): Promise<number> {
+      assertSafeId(conversationId, 'розмови');
       const db = deps.getFirestore();
       if (db) {
         const snap = await db.collection(CONVERSATIONS).doc(conversationId)
@@ -255,6 +277,7 @@ function makeStore(deps: ChatDeps) {
     },
 
     async getReads(userId: string): Promise<Record<string, string>> {
+      assertSafeId(userId, 'користувача');
       const db = deps.getFirestore();
       if (db) {
         const doc = await db.collection(READS).doc(userId).get();
@@ -264,6 +287,8 @@ function makeStore(deps: ChatDeps) {
     },
 
     async setRead(userId: string, conversationId: string, at: string): Promise<void> {
+      assertSafeId(userId, 'користувача');
+      assertSafeId(conversationId, 'розмови');
       const db = deps.getFirestore();
       if (db) {
         await db.collection(READS).doc(userId).set(
@@ -380,6 +405,17 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
       if (kind === 'dm') {
         if (!peerId || peerId === userId) {
           res.status(400).json({ error: 'Потрібен співрозмовник' });
+          return;
+        }
+        // Співрозмовник має бути справжнім користувачем.
+        //
+        // Це не косметична перевірка: id розмови збирається з двох id і стає
+        // шляхом документа у Firestore, а шлях там розділяється скісною рискою.
+        // Непе­ревірений peerId на кшталт «u1__u3/messages/x» вивів би запис за
+        // межі власної розмови — у підколекцію повідомлень чужого листування.
+        const known = await deps.getUsers();
+        if (!known.some(u => u.id === peerId)) {
+          res.status(400).json({ error: 'Невідомий співрозмовник' });
           return;
         }
         const id = dmConversationId(userId, peerId);
