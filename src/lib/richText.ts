@@ -17,7 +17,11 @@ export type InlineNode =
   | { type: 'text'; value: string }
   | { type: 'bold' | 'italic' | 'underline' | 'strike'; children: InlineNode[] }
   | { type: 'code'; value: string }
-  | { type: 'link'; href: string; children: InlineNode[] };
+  /**
+   * `bare` — посилання вставили як голий URL, без власного підпису. Тільки для
+   * таких показ назви документа замість адреси не сперечається з автором.
+   */
+  | { type: 'link'; href: string; children: InlineNode[]; bare?: boolean };
 
 export type BlockNode =
   | { type: 'paragraph'; children: InlineNode[] }
@@ -41,7 +45,7 @@ const INLINE_RULES: InlineRule[] = [
     build: m => ({ type: 'italic', children: parseInline(m[1]) }),
   },
   { regex: /\[([^\]\n]+)\]\((\S+?)\)/, build: m => ({ type: 'link', href: m[2], children: parseInline(m[1]) }) },
-  { regex: /https?:\/\/[^\s<>()[\]]+/, build: m => ({ type: 'link', href: m[0], children: [{ type: 'text', value: m[0].replace(/^https?:\/\//, '') }] }) },
+  { regex: /https?:\/\/[^\s<>()[\]]+/, build: m => ({ type: 'link', href: m[0], bare: true, children: [{ type: 'text', value: m[0].replace(/^https?:\/\//, '') }] }) },
 ];
 
 export function parseInline(text: string): InlineNode[] {

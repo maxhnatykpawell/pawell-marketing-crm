@@ -29,6 +29,13 @@ console.log('\nРозбір розмітки');
   check('маркований список', parseMarkdown('- а\n- б'), [{ type: 'list', ordered: false, start: 1, items: [[{ type: 'text', value: 'а' }], [{ type: 'text', value: 'б' }]] }]);
   check('нумерований список', parseMarkdown('2. а'), [{ type: 'list', ordered: true, start: 2, items: [[{ type: 'text', value: 'а' }]] }]);
   check('порожній текст — жодного блоку', parseMarkdown(''), []);
+  // Голий URL можна замінити назвою документа, а підпис автора — ні
+  check('голий URL помічений як bare',
+    parseMarkdown('https://docs.google.com/document/d/1'),
+    [{ type: 'paragraph', children: [{ type: 'link', href: 'https://docs.google.com/document/d/1', bare: true, children: [{ type: 'text', value: 'docs.google.com/document/d/1' }] }] }]);
+  check('посилання з підписом не bare',
+    parseMarkdown('[бриф](https://docs.google.com/document/d/1)'),
+    [{ type: 'paragraph', children: [{ type: 'link', href: 'https://docs.google.com/document/d/1', children: [{ type: 'text', value: 'бриф' }] }] }]);
 }
 
 console.log('\nMarkdown → HTML редактора');

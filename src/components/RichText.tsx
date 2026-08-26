@@ -1,6 +1,7 @@
 import React from 'react';
 import { BlockNode, InlineNode, parseMarkdown } from '../lib/richText';
 import { detectProvider, normalizeUrl } from '../lib/links';
+import { useLinkTitle } from '../hooks/useLinkTitle';
 import FileTypeIcon from './FileTypeIcon';
 
 /**
@@ -32,6 +33,21 @@ function renderLink(href: string, label: React.ReactNode, key: string) {
   );
 }
 
+/**
+ * Голий URL на впізнаний сервіс — показуємо назвою документа.
+ *
+ * Поки назва їде (або якщо документ закритий), лишається адреса без схеми:
+ * посилання клікабельне з першої мілісекунди, ніщо не «мигає» порожнім.
+ * Для звичайних сайтів запит не робимо взагалі — там адреса й так читається,
+ * а ходити за назвою кожного посилання в описі було б і повільно, і зайво.
+ */
+function AutoTitleLink({ href, fallback }: { href: string; fallback: string }) {
+  const url = normalizeUrl(href);
+  const provider = detectProvider(url);
+  const title = useLinkTitle(url, provider.id !== 'link');
+  return renderLink(href, title || fallback, 'auto');
+}
+
 function renderInline(nodes: InlineNode[], keyPrefix: string): React.ReactNode[] {
   return nodes.map((node, i) => {
     const key = `${keyPrefix}-${i}`;
@@ -53,6 +69,10 @@ function renderInline(nodes: InlineNode[], keyPrefix: string): React.ReactNode[]
           </code>
         );
       case 'link':
+        if (node.bare) {
+          const fallback = node.href.replace(/^https?:\/\//, '');
+          return React.createElement(AutoTitleLink, { key, href: node.href, fallback });
+        }
         return renderLink(node.href, renderInline(node.children, key), key);
     }
   });
