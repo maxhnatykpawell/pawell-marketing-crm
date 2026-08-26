@@ -6,12 +6,17 @@ import {
   X, Calendar, AlignLeft, CheckSquare, Paperclip, Trash2,
   FolderKanban, Clock, Sparkles, Plus, Tag, Users, MessageSquare,
   Image, Eye, MoreHorizontal, Circle, CheckCircle2, ChevronDown,
-  User as UserIcon, Check, AlertTriangle
+  User as UserIcon, Check, AlertTriangle, Link2, ExternalLink
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
 import TagPicker from './TagPicker';
 import { v4 as uuidv4 } from 'uuid';
+import { detectProvider, isExternalUrl, normalizeUrl, suggestLinkName } from '../lib/links';
+import FileTypeIcon from './FileTypeIcon';
+import RichText from './RichText';
+import RichTextEditor from './RichTextEditor';
+import EmojiPicker from './EmojiPicker';
 
 interface Props {
   card: Card;
@@ -47,7 +52,45 @@ const AttachmentRow = React.memo(function AttachmentRow({
   onRemove: () => void;
 }) {
   const [broken, setBroken] = useState(false);
-  const isImage = /\.(jpeg|jpg|gif|png|webp|svg)$/i.test(att.name);
+  const isLink = att.kind === 'link' || isExternalUrl(att.url);
+  const provider = isLink ? detectProvider(att.url) : null;
+  const isImage = !isLink && /\.(jpeg|jpg|gif|png|webp|svg)$/i.test(att.name);
+
+  if (isLink && provider) {
+    return (
+      <div className="flex items-center gap-3 p-2 rounded-xl border border-gray-200 hover:border-gray-300 bg-gray-50 hover:bg-white transition group">
+        <div
+          className="w-12 h-12 rounded-lg bg-white border border-gray-200 flex items-center justify-center shrink-0"
+          title={provider.label}
+        >
+          <FileTypeIcon provider={provider} className="w-7 h-7" />
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-gray-800 truncate" title={att.name}>{att.name}</p>
+          <p className="text-xs text-gray-400 truncate" title={att.url}>{provider.label}</p>
+          <a
+            href={att.url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline mt-1"
+          >
+            <ExternalLink className="w-3 h-3" />
+            Відкрити
+          </a>
+        </div>
+
+        {canEdit && (
+          <button
+            onClick={onRemove}
+            className="opacity-0 group-hover:opacity-100 transition text-gray-300 hover:text-red-500 p-1"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center gap-3 p-2 rounded-xl border border-gray-200 hover:border-gray-300 bg-gray-50 hover:bg-white transition group">
@@ -112,9 +155,11 @@ export default function CardModal({ card, onClose }: Props) {
   const [showDetails, setShowDetails] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [subtaskAssigneeOpen, setSubtaskAssigneeOpen] = useState<string | null>(null);
+  const [linkUrl, setLinkUrl] = useState('');
+  const [linkName, setLinkName] = useState('');
 
   // Which "add" panels are open
-  const [openPanel, setOpenPanel] = useState<'members' | 'date' | 'checklist' | 'attachment' | null>(null);
+  const [openPanel, setOpenPanel] = useState<'members' | 'date' | 'checklist' | 'attachment' | 'link' | null>(null);
 
   const handleReviewPlan = async () => {
     if (!card.title) return;
@@ -223,6 +268,30 @@ export default function CardModal({ card, onClose }: Props) {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  };
+
+  /**
+   * Додає посилання як вкладення.
+   *
+   * Google-файли не можна (і не треба) заливати до нас: у них живе спільне
+   * редагування і права доступу. Тому вони чіпляються до картки посиланням —
+   * рівноправно з файлами, в одному списку вкладень.
+   */
+  const handleAddLink = (e: React.FormEvent) => {
+    e.preventDefault();
+    const url = normalizeUrl(linkUrl);
+    if (!url) return;
+    const attachment: Attachment = {
+      id: uuidv4(),
+      name: linkName.trim() || suggestLinkName(url),
+      url,
+      kind: 'link',
+      addedAt: new Date().toISOString(),
+    };
+    handleUpdate({ attachments: [...(card.attachments || []), attachment] });
+    setLinkUrl('');
+    setLinkName('');
+    setOpenPanel(null);
   };
 
   // Always read the LIVE card from state so updates (tags, assignee…) are reflected immediately
@@ -349,6 +418,14 @@ export default function CardModal({ card, onClose }: Props) {
                   <Paperclip className="w-3.5 h-3.5" />
                   Вкладення
                 </button>
+                <button
+                  onClick={() => setOpenPanel(openPanel === 'link' ? null : 'link')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition font-medium"
+                  title="Прикріпити Google Doc, Sheet, Drive-файл або будь-яке посилання"
+                >
+                  <Link2 className="w-3.5 h-3.5" />
+                  Посилання
+                </button>
                 <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
 
                 {/* AI button */}
@@ -361,6 +438,51 @@ export default function CardModal({ card, onClose }: Props) {
                   {isReviewing ? 'ШІ думає…' : 'ШІ аналіз'}
                 </button>
               </div>
+            )}
+
+            {/* Link quick-panel */}
+            {openPanel === 'link' && (
+              <form onSubmit={handleAddLink} className="ml-8 p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
+                <div className="flex items-center gap-2">
+                  {linkUrl.trim()
+                    ? <FileTypeIcon provider={detectProvider(normalizeUrl(linkUrl))} className="w-4 h-4" />
+                    : <Link2 className="w-4 h-4 text-gray-500" />}
+                  <span className="text-sm font-medium text-gray-700">
+                    {linkUrl.trim() ? detectProvider(normalizeUrl(linkUrl)).label : 'Посилання на файл'}
+                  </span>
+                </div>
+                <input
+                  autoFocus
+                  type="text"
+                  value={linkUrl}
+                  onChange={e => setLinkUrl(e.target.value)}
+                  placeholder="https://docs.google.com/spreadsheets/…"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
+                />
+                <input
+                  type="text"
+                  value={linkName}
+                  onChange={e => setLinkName(e.target.value)}
+                  placeholder={linkUrl.trim() ? suggestLinkName(normalizeUrl(linkUrl)) : 'Назва (необов’язково)'}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="submit"
+                    disabled={!linkUrl.trim()}
+                    className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-sm font-semibold rounded-lg transition shadow-sm"
+                  >
+                    Прикріпити
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setOpenPanel(null); setLinkUrl(''); setLinkName(''); }}
+                    className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition"
+                  >
+                    Скасувати
+                  </button>
+                </div>
+              </form>
             )}
 
             {/* Date quick-panel */}
@@ -470,17 +592,18 @@ export default function CardModal({ card, onClose }: Props) {
               {isEditingDescription ? (
                 /* Edit mode */
                 <div className="space-y-2">
-                  <textarea
+                  <RichTextEditor
                     autoFocus
-                    className="w-full bg-white border border-blue-400 ring-2 ring-blue-100 rounded-xl p-3 text-sm text-gray-700 outline-none transition resize-none min-h-[110px]"
-                    placeholder="Додати детальніший опис..."
                     value={description}
-                    onChange={e => setDescription(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Escape') {
-                        setDescription(liveCard.description || '');
-                        setIsEditingDescription(false);
-                      }
+                    onChange={setDescription}
+                    placeholder="Додати детальніший опис..."
+                    onSubmit={() => {
+                      handleUpdate({ description });
+                      setIsEditingDescription(false);
+                    }}
+                    onCancel={() => {
+                      setDescription(liveCard.description || '');
+                      setIsEditingDescription(false);
                     }}
                   />
                   <div className="flex items-center gap-2">
@@ -509,12 +632,12 @@ export default function CardModal({ card, onClose }: Props) {
                 <div
                   onClick={() => { if (hasEditRights) setIsEditingDescription(true); }}
                   className={`w-full min-h-[80px] rounded-xl p-3 text-sm transition ${
-                    description
-                      ? 'text-gray-700 bg-gray-50 whitespace-pre-wrap'
-                      : 'text-gray-400 bg-gray-50 italic'
+                    description ? 'text-gray-700 bg-gray-50' : 'text-gray-400 bg-gray-50 italic'
                   } ${hasEditRights ? 'cursor-pointer hover:bg-gray-100' : ''}`}
                 >
-                  {description || (hasEditRights ? 'Додати детальніший опис...' : 'Опис відсутній')}
+                  {description
+                    ? <RichText text={description} className="space-y-1" />
+                    : (hasEditRights ? 'Додати детальніший опис...' : 'Опис відсутній')}
                 </div>
               )}
             </div>
@@ -698,19 +821,28 @@ export default function CardModal({ card, onClose }: Props) {
             )}
 
             {/* Attachments (if any) */}
-            {card.attachments && card.attachments.length > 0 && (
+            {liveCard.attachments && liveCard.attachments.length > 0 && (
               <div className="pl-8">
                 <div className="flex items-center gap-2 mb-2 -ml-6">
                   <Paperclip className="w-4 h-4 text-gray-500" />
-                  <p className="text-sm font-semibold text-gray-700">Вкладення</p>
+                  <p className="text-sm font-semibold text-gray-700 flex-1">Вкладення</p>
+                  {hasEditRights && (
+                    <button
+                      onClick={() => setOpenPanel(openPanel === 'link' ? null : 'link')}
+                      className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
+                    >
+                      <Link2 className="w-3 h-3" />
+                      Посилання
+                    </button>
+                  )}
                 </div>
                 <div className="space-y-2">
-                  {card.attachments.map(att => (
+                  {liveCard.attachments.map(att => (
                     <AttachmentRow
                       key={att.id}
                       att={att}
                       canEdit={hasEditRights}
-                      onRemove={() => handleUpdate({ attachments: card.attachments!.filter(a => a.id !== att.id) })}
+                      onRemove={() => handleUpdate({ attachments: liveCard.attachments!.filter(a => a.id !== att.id) })}
                     />
                   ))}
                 </div>
@@ -753,14 +885,23 @@ export default function CardModal({ card, onClose }: Props) {
                   {currentUserRecord?.avatar
                     ? <img src={currentUserRecord.avatar} alt="" className="w-7 h-7 rounded-full shrink-0 mt-0.5" />
                     : <AvatarFallback name={currentUserRecord?.name || 'U'} />}
-                  <form onSubmit={handleAddComment} className="flex-1">
-                    <input
-                      type="text"
-                      value={newCommentText}
-                      onChange={e => setNewCommentText(e.target.value)}
-                      placeholder="Написати коментар..."
-                      className="w-full px-3 py-2 text-sm border border-gray-200 bg-white rounded-lg outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 transition"
-                    />
+                  <form onSubmit={handleAddComment} className="flex-1 min-w-0">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={newCommentText}
+                        onChange={e => setNewCommentText(e.target.value)}
+                        placeholder="Написати коментар..."
+                        className="w-full pl-3 pr-9 py-2 text-sm border border-gray-200 bg-white rounded-lg outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 transition"
+                      />
+                      <div className="absolute right-1 top-1/2 -translate-y-1/2">
+                        <EmojiPicker
+                          align="right"
+                          onPick={emoji => setNewCommentText(t => t + emoji)}
+                          className="p-1 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition"
+                        />
+                      </div>
+                    </div>
                     {newCommentText.trim() && (
                       <button
                         type="submit"
@@ -807,8 +948,8 @@ export default function CardModal({ card, onClose }: Props) {
                           <span className="font-semibold">{isAI ? 'ШІ Менеджер' : (author?.name || 'Unknown')}</span>
                           {' прокоментував(ла)'}
                         </p>
-                        <div className={`mt-1 p-2.5 rounded-xl text-sm text-gray-700 whitespace-pre-wrap shadow-sm border ${isAI ? 'bg-indigo-50 border-indigo-100' : 'bg-white border-gray-200'}`}>
-                          {comment.text}
+                        <div className={`mt-1 p-2.5 rounded-xl text-sm text-gray-700 shadow-sm border ${isAI ? 'bg-indigo-50 border-indigo-100' : 'bg-white border-gray-200'}`}>
+                          <RichText text={comment.text} />
                         </div>
                         <p className="text-xs text-blue-500 mt-1 hover:underline cursor-pointer">
                           {format(new Date(comment.createdAt), 'd MMM. yyyy р., HH:mm', { locale: uk })}

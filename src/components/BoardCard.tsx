@@ -6,6 +6,8 @@ import { format } from 'date-fns';
 import { Draggable } from '@hello-pangea/dnd';
 import CardModal from './CardModal';
 import { cn } from '../utils';
+import { detectProvider, isExternalUrl } from '../lib/links';
+import FileTypeIcon from './FileTypeIcon';
 
 interface Props {
   card: Card;
@@ -46,7 +48,14 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
   const completedSubtasks = card.subtasks?.filter(st => st.completed).length || 0;
   const hasDescription = card.description && card.description.trim().length > 0;
   const commentCount = card.comments?.length || 0;
-  const attachmentCount = card.attachments?.length || 0;
+
+  /**
+   * Посилання показуємо іконкою сервісу, а не скріпкою: «тут лежить та сама
+   * таблиця» має читатись зі стрічки борду без відкриття картки.
+   */
+  const attachments = card.attachments || [];
+  const linkAttachments = attachments.filter(a => a.kind === 'link' || isExternalUrl(a.url));
+  const fileCount = attachments.length - linkAttachments.length;
 
   const cardTags = state.tags?.filter(t => card.tagIds?.includes(t.id)) || [];
   const project = state.projects?.find(p => p.id === card.projectId);
@@ -176,10 +185,23 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
                 </div>
               )}
 
-              {attachmentCount > 0 && (
+              {fileCount > 0 && (
                 <div className="flex items-center">
                   <Paperclip className="w-3.5 h-3.5 mr-1" />
-                  {attachmentCount}
+                  {fileCount}
+                </div>
+              )}
+
+              {linkAttachments.length > 0 && (
+                <div className="flex items-center gap-0.5">
+                  {linkAttachments.slice(0, 3).map(att => (
+                    <span key={att.id} title={att.name} className="flex items-center">
+                      <FileTypeIcon provider={detectProvider(att.url)} className="w-3.5 h-3.5" />
+                    </span>
+                  ))}
+                  {linkAttachments.length > 3 && (
+                    <span className="text-[10px] font-medium">+{linkAttachments.length - 3}</span>
+                  )}
                 </div>
               )}
 

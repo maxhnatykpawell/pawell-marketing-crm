@@ -152,6 +152,14 @@ export interface Attachment {
   id: string;
   name: string;
   url: string;
+  /**
+   * 'link' — зовнішній файл (Google Docs/Sheets/Drive…), 'file' — завантажений
+   * у наше сховище. Поле необов'язкове: у старих вкладень його немає, і вони
+   * читаються як 'file'.
+   */
+  kind?: 'file' | 'link';
+  /** Коли додали посилання — для файлів це є в метаданих сховища. */
+  addedAt?: string;
 }
 
 export interface Card {
