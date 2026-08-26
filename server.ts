@@ -6,6 +6,7 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 import express, { Request, Response, NextFunction } from 'express';
 import fs from 'fs';
+import dns from 'dns/promises';
 import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 
@@ -21,6 +22,9 @@ import {
   resolveRights, availableTools, runReadTool, prepareAction, isWriteTool,
   AssistantUser, ToolContext,
 } from './src/lib/assistantTools';
+import {
+  isFetchableUrl, isPrivateAddress, titleFromHtml, TITLE_FETCH_LIMIT,
+} from './src/lib/linkTitle';
 import { registerChatRoutes, chatStreamStats } from './chat-server';
 
 
@@ -2109,6 +2113,59 @@ async function startServer() {
     if (!req.file) { res.status(400).json({ error: 'No file uploaded' }); return; }
     const decodedName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
     res.json({ id: req.file.filename, name: decodedName, url: `/uploads/${encodeURIComponent(req.file.filename)}` });
+  });
+
+  /**
+   * Назва документа за посиланням — для вкладень-посилань у картці.
+   *
+   * Ходить сервер, а не браузер: до docs.google.com з нашої сторінки не
+   * пускає CORS. Працює для файлів, відкритих «усім, хто має посилання»; для
+   * закритих Google віддає сторінку входу, і тоді чесно повертаємо порожньо —
+   * хай людина впише назву сама (див. lib/linkTitle).
+   */
+  app.post('/api/link-title', requireAuth, async (req, res) => {
+    const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+    if (!isFetchableUrl(url)) { res.status(400).json({ error: 'Bad URL' }); return; }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    try {
+      const target = new URL(url);
+      const resolved = await dns.lookup(target.hostname);
+      if (isPrivateAddress(resolved.address)) { res.json({ title: null }); return; }
+
+      const response = await fetch(url, {
+        signal: controller.signal,
+        redirect: 'follow',
+        headers: {
+          // Без User-Agent Google віддає урізану сторінку без <title>
+          'User-Agent': 'Mozilla/5.0 (compatible; PawellCRM link preview)',
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'uk,en;q=0.8',
+        },
+      });
+
+      // Після редиректів адреса могла змінитись — перевіряємо ще раз
+      if (!isFetchableUrl(response.url || url)) { res.json({ title: null }); return; }
+      if (!response.ok || !response.body) { res.json({ title: null }); return; }
+
+      // Читаємо лише початок сторінки: <title> живе в <head>, а документ
+      // Google цілком — це мегабайти скриптів, які нам ні до чого
+      let html = '';
+      const decoder = new TextDecoder('utf-8');
+      for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+        html += decoder.decode(chunk, { stream: true });
+        if (html.length >= TITLE_FETCH_LIMIT || /<\/title>/i.test(html)) break;
+      }
+      controller.abort();
+
+      res.json({ title: titleFromHtml(html, response.url || url) });
+    } catch (err) {
+      console.warn('[link-title] не вдалось отримати назву:', (err as Error).message);
+      res.json({ title: null });
+    } finally {
+      clearTimeout(timer);
+    }
   });
 
   app.post('/api/estimate-time', requireAuth, async (req, res) => {

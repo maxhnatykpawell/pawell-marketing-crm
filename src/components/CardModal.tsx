@@ -1,12 +1,12 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Card, Subtask, Comment, Attachment } from '../types';
 import { useAppContext } from '../App';
-import { uploadFile, reviewPlanWithAI } from '../api';
+import { uploadFile, reviewPlanWithAI, fetchLinkTitle } from '../api';
 import {
   X, Calendar, AlignLeft, CheckSquare, Paperclip, Trash2,
   FolderKanban, Clock, Sparkles, Plus, Tag, Users, MessageSquare,
   Image, Eye, MoreHorizontal, Circle, CheckCircle2, ChevronDown,
-  User as UserIcon, Check, AlertTriangle, Link2, ExternalLink
+  User as UserIcon, Check, AlertTriangle, Link2, ExternalLink, Loader2
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
@@ -157,6 +157,8 @@ export default function CardModal({ card, onClose }: Props) {
   const [subtaskAssigneeOpen, setSubtaskAssigneeOpen] = useState<string | null>(null);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkName, setLinkName] = useState('');
+  const [fetchedTitle, setFetchedTitle] = useState<string | null>(null);
+  const [titleState, setTitleState] = useState<'idle' | 'loading' | 'missing'>('idle');
 
   // Which "add" panels are open
   const [openPanel, setOpenPanel] = useState<'members' | 'date' | 'checklist' | 'attachment' | 'link' | null>(null);
@@ -283,16 +285,47 @@ export default function CardModal({ card, onClose }: Props) {
     if (!url) return;
     const attachment: Attachment = {
       id: uuidv4(),
-      name: linkName.trim() || suggestLinkName(url),
+      name: linkName.trim() || fetchedTitle || suggestLinkName(url),
       url,
       kind: 'link',
       addedAt: new Date().toISOString(),
     };
     handleUpdate({ attachments: [...(card.attachments || []), attachment] });
+    closeLinkPanel();
+  };
+
+  const closeLinkPanel = () => {
+    setOpenPanel(null);
     setLinkUrl('');
     setLinkName('');
-    setOpenPanel(null);
+    setFetchedTitle(null);
+    setTitleState('idle');
   };
+
+  /**
+   * Підтягує назву документа, щойно вставили посилання.
+   *
+   * У Google-посиланні немає назви файлу — самий ідентифікатор, тож без цього
+   * у списку вкладень стояло б «Google Таблиця» на всіх таблицях одразу.
+   * Затримка — щоб не смикати сервер на кожну літеру, коли адресу вписують
+   * руками; запит скасовується, якщо URL змінився або панель закрили.
+   */
+  useEffect(() => {
+    const raw = linkUrl.trim();
+    if (!raw) { setFetchedTitle(null); setTitleState('idle'); return; }
+
+    const url = normalizeUrl(raw);
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setTitleState('loading');
+      const title = await fetchLinkTitle(url, controller.signal);
+      if (controller.signal.aborted) return;
+      setFetchedTitle(title);
+      setTitleState(title ? 'idle' : 'missing');
+    }, 500);
+
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [linkUrl]);
 
   // Always read the LIVE card from state so updates (tags, assignee…) are reflected immediately
   const liveCard = state.cards.find(c => c.id === card.id) || card;
@@ -463,9 +496,32 @@ export default function CardModal({ card, onClose }: Props) {
                   type="text"
                   value={linkName}
                   onChange={e => setLinkName(e.target.value)}
-                  placeholder={linkUrl.trim() ? suggestLinkName(normalizeUrl(linkUrl)) : 'Назва (необов’язково)'}
+                  placeholder={
+                    fetchedTitle
+                      || (linkUrl.trim() ? suggestLinkName(normalizeUrl(linkUrl)) : 'Назва (необов’язково)')
+                  }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
                 />
+
+                {/* Що саме потрапить у назву вкладення, якщо поле лишити порожнім */}
+                {titleState === 'loading' && (
+                  <p className="text-xs text-gray-400 flex items-center gap-1.5">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Читаю назву документа…
+                  </p>
+                )}
+                {titleState === 'idle' && fetchedTitle && !linkName.trim() && (
+                  <p className="text-xs text-green-600 flex items-center gap-1.5">
+                    <Check className="w-3 h-3" />
+                    Назву підтягнуто: {fetchedTitle}
+                  </p>
+                )}
+                {titleState === 'missing' && (
+                  <p className="text-xs text-gray-400">
+                    Назву не вдалось прочитати — документ закритий для перегляду за посиланням. Впишіть свою.
+                  </p>
+                )}
+
                 <div className="flex items-center gap-2">
                   <button
                     type="submit"
@@ -476,7 +532,7 @@ export default function CardModal({ card, onClose }: Props) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setOpenPanel(null); setLinkUrl(''); setLinkName(''); }}
+                    onClick={closeLinkPanel}
                     className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition"
                   >
                     Скасувати

@@ -218,6 +218,29 @@ export const uploadFile = async (file: File): Promise<Attachment> => {
   return res.json();
 };
 
+/**
+ * Назва документа за посиланням (Google Doc, Sheet тощо).
+ *
+ * Запит іде через наш сервер — до docs.google.com із браузера не пускає CORS.
+ * Повертає null, коли документ закритий або сервіс не віддав назву: це
+ * очікуваний результат, а не помилка, тож викликати варто без try/catch навколо.
+ */
+export const fetchLinkTitle = async (url: string, signal?: AbortSignal): Promise<string | null> => {
+  try {
+    const res = await fetch('/api/link-title', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ url }),
+      signal,
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return typeof data.title === 'string' && data.title.trim() ? data.title.trim() : null;
+  } catch {
+    return null;
+  }
+};
+
 export const estimateTaskTime = async (title: string, description: string): Promise<number> => {
   const res = await fetch('/api/estimate-time', {
     method: 'POST',
