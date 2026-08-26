@@ -63,3 +63,35 @@
     background-color: rgb(240, 253, 244);
   }
 }
+/*
+ * Поле опису картки (contentEditable).
+ *
+ * Tailwind preflight знімає маркери зі списків — для звичайної верстки це
+ * зручно, але тут людина щойно натиснула «список» і має побачити крапки.
+ * Стилі свідомо повторюють те, як той самий текст виглядає в режимі перегляду
+ * (RichText): перехід між редагуванням і переглядом не має нічого зміщувати.
+ */
+.rich-editor ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+  margin: 0.25rem 0;
+}
+
+.rich-editor ol {
+  list-style: decimal;
+  padding-left: 1.25rem;
+  margin: 0.25rem 0;
+}
+
+.rich-editor a {
+  color: rgb(37, 99, 235);
+  text-decoration: underline;
+}
+
+.rich-editor code {
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  background-color: rgba(229, 231, 235, 0.7);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}

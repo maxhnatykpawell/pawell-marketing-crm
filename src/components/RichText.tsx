@@ -1,20 +1,15 @@
 import React from 'react';
+import { BlockNode, InlineNode, parseMarkdown } from '../lib/richText';
 import { detectProvider, normalizeUrl } from '../lib/links';
 import FileTypeIcon from './FileTypeIcon';
 
 /**
- * Рендер мінімальної розмітки описів і коментарів.
+ * Перегляд відформатованого тексту описів і коментарів.
  *
- * Свій крихітний парсер замість markdown-бібліотеки: підтримуємо рівно те, що
- * дає панель форматування, і жодного HTML з тексту не виконуємо — усе стає
- * React-вузлами. Посилання на Google-файли отримують іконку прямо в тексті,
- * щоб «ось та таблиця» читалась без переходу.
+ * Рендеримо з того ж AST, що й редактор (див. lib/richText), і завжди у
+ * React-вузли — жодного HTML з тексту не виконуємо. Посилання на Google-файли
+ * отримують іконку прямо в тексті, щоб «ось та таблиця» читалась без переходу.
  */
-
-interface Rule {
-  regex: RegExp;
-  render: (m: RegExpExecArray, key: string) => React.ReactNode;
-}
 
 /** Посилання з іконкою сервісу. Не компонент, щоб key лишався на самому <a>. */
 function renderLink(href: string, label: React.ReactNode, key: string) {
@@ -37,119 +32,44 @@ function renderLink(href: string, label: React.ReactNode, key: string) {
   );
 }
 
-const RULES: Rule[] = [
-  {
-    regex: /`([^`\n]+)`/,
-    render: (m, key) => (
-      <code key={key} className="px-1 py-0.5 rounded bg-gray-200/70 text-[0.9em] font-mono text-gray-800">
-        {m[1]}
-      </code>
-    ),
-  },
-  {
-    regex: /\*\*([\s\S]+?)\*\*/,
-    render: (m, key) => <strong key={key} className="font-semibold">{parseInline(m[1], key)}</strong>,
-  },
-  {
-    regex: /__([\s\S]+?)__/,
-    render: (m, key) => <u key={key}>{parseInline(m[1], key)}</u>,
-  },
-  {
-    regex: /~~([\s\S]+?)~~/,
-    render: (m, key) => <s key={key} className="opacity-70">{parseInline(m[1], key)}</s>,
-  },
-  {
-    // Вміст не починається і не закінчується пробілом — інакше «2 * 3 * 4»
-    // у кошторисі перетворилось би на курсив.
-    regex: /\*([^\s*][^*\n]*?[^\s*]|[^\s*])\*/,
-    render: (m, key) => <em key={key}>{parseInline(m[1], key)}</em>,
-  },
-  {
-    regex: /\[([^\]\n]+)\]\((\S+?)\)/,
-    render: (m, key) => renderLink(m[2], m[1], key),
-  },
-  {
-    regex: /https?:\/\/[^\s<>()[\]]+/,
-    render: (m, key) => renderLink(m[0], m[0].replace(/^https?:\/\//, ''), key),
-  },
-];
-
-function parseInline(text: string, keyPrefix: string): React.ReactNode[] {
-  if (!text) return [];
-
-  let best: { rule: Rule; match: RegExpExecArray } | null = null;
-  for (const rule of RULES) {
-    const match = rule.regex.exec(text);
-    if (!match) continue;
-    if (!best || match.index < best.match.index) best = { rule, match };
-  }
-
-  if (!best) return [text];
-
-  const { rule, match } = best;
-  const key = `${keyPrefix}-${match.index}`;
-  return [
-    ...(match.index > 0 ? [text.slice(0, match.index)] : []),
-    rule.render(match, key),
-    ...parseInline(text.slice(match.index + match[0].length), `${key}x`),
-  ];
+function renderInline(nodes: InlineNode[], keyPrefix: string): React.ReactNode[] {
+  return nodes.map((node, i) => {
+    const key = `${keyPrefix}-${i}`;
+    switch (node.type) {
+      case 'text':
+        return <React.Fragment key={key}>{node.value}</React.Fragment>;
+      case 'bold':
+        return <strong key={key} className="font-semibold">{renderInline(node.children, key)}</strong>;
+      case 'italic':
+        return <em key={key}>{renderInline(node.children, key)}</em>;
+      case 'underline':
+        return <u key={key}>{renderInline(node.children, key)}</u>;
+      case 'strike':
+        return <s key={key} className="opacity-70">{renderInline(node.children, key)}</s>;
+      case 'code':
+        return (
+          <code key={key} className="px-1 py-0.5 rounded bg-gray-200/70 text-[0.9em] font-mono text-gray-800">
+            {node.value}
+          </code>
+        );
+      case 'link':
+        return renderLink(node.href, renderInline(node.children, key), key);
+    }
+  });
 }
 
-const BULLET = /^\s*[-*]\s+(.*)$/;
-const ORDERED = /^\s*(\d+)\.\s+(.*)$/;
+function renderBlock(block: BlockNode, key: string): React.ReactNode {
+  if (block.type === 'blank') return <div key={key} className="h-2" />;
+  if (block.type === 'paragraph') {
+    return <p key={key} className="whitespace-pre-wrap break-words">{renderInline(block.children, key)}</p>;
+  }
+  const items = block.items.map((item, idx) => <li key={idx}>{renderInline(item, `${key}-${idx}`)}</li>);
+  return block.ordered
+    ? <ol key={key} start={block.start} className="list-decimal pl-5 space-y-0.5 my-1">{items}</ol>
+    : <ul key={key} className="list-disc pl-5 space-y-0.5 my-1">{items}</ul>;
+}
 
 export default function RichText({ text, className }: { text: string; className?: string }) {
   if (!text) return null;
-  const lines = text.split('\n');
-  const blocks: React.ReactNode[] = [];
-
-  let i = 0;
-  while (i < lines.length) {
-    const bullet = BULLET.exec(lines[i]);
-    const ordered = ORDERED.exec(lines[i]);
-
-    if (bullet) {
-      const items: string[] = [];
-      while (i < lines.length) {
-        const m = BULLET.exec(lines[i]);
-        if (!m) break;
-        items.push(m[1]);
-        i++;
-      }
-      blocks.push(
-        <ul key={`ul-${i}`} className="list-disc pl-5 space-y-0.5 my-1">
-          {items.map((item, idx) => <li key={idx}>{parseInline(item, `ul${i}-${idx}`)}</li>)}
-        </ul>
-      );
-      continue;
-    }
-
-    if (ordered) {
-      const items: string[] = [];
-      const startAt = parseInt(ordered[1], 10) || 1;
-      while (i < lines.length) {
-        const m = ORDERED.exec(lines[i]);
-        if (!m) break;
-        items.push(m[2]);
-        i++;
-      }
-      blocks.push(
-        <ol key={`ol-${i}`} start={startAt} className="list-decimal pl-5 space-y-0.5 my-1">
-          {items.map((item, idx) => <li key={idx}>{parseInline(item, `ol${i}-${idx}`)}</li>)}
-        </ol>
-      );
-      continue;
-    }
-
-    if (lines[i].trim() === '') {
-      blocks.push(<div key={`br-${i}`} className="h-2" />);
-      i++;
-      continue;
-    }
-
-    blocks.push(<p key={`p-${i}`} className="whitespace-pre-wrap break-words">{parseInline(lines[i], `p${i}`)}</p>);
-    i++;
-  }
-
-  return <div className={className}>{blocks}</div>;
+  return <div className={className}>{parseMarkdown(text).map((b, i) => renderBlock(b, `b${i}`))}</div>;
 }
