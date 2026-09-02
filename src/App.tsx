@@ -37,7 +37,7 @@ interface AppContextType {
   canView: (view: string) => boolean;
   logout: () => void;
   moveCard: (cardId: string, toListId: string, targetCardId?: string) => void;
-  addCard: (listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[] }) => void;
+  addCard: (listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[]; description?: string; deadline?: string | null; order?: number }) => void;
   updateCard: (cardId: string, updates: Partial<Card>) => void;
   deleteCard: (cardId: string) => void;
   clearList: (listId: string) => void;
@@ -356,7 +356,7 @@ export default function App() {
     updateEntity('cards', cardId, updates).catch(console.error);
   }, []);
 
-  const addCard = useCallback((listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[]; description?: string; deadline?: string | null }) => {
+  const addCard = useCallback((listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[]; description?: string; deadline?: string | null; order?: number }) => {
     if (!state) return;
     const listCards = state.cards.filter(c => c.listId === listId);
     const minOrder = listCards.length > 0 ? Math.min(...listCards.map(c => c.order)) : 0;
@@ -367,7 +367,9 @@ export default function App() {
       assigneeId: initialValues?.assigneeId ?? null,
       tagIds: initialValues?.tagIds ?? [],
       subtasks: [], comments: [], attachments: [],
-      order: minOrder - 1,
+      // Явний order потрібен, коли кілька карток створюють одним махом:
+      // state ще не встиг оновитись, тож усі отримали б однаковий minOrder - 1.
+      order: initialValues?.order ?? minOrder - 1,
       projectId: activeProjectId
     };
     setState(prev => prev ? { ...prev, cards: [...prev.cards, newCard] } : prev);

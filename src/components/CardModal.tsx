@@ -6,7 +6,8 @@ import {
   X, Calendar, AlignLeft, CheckSquare, Paperclip, Trash2,
   FolderKanban, Clock, Sparkles, Plus, Tag, Users, MessageSquare,
   Image, Eye, MoreHorizontal, Circle, CheckCircle2, ChevronDown,
-  User as UserIcon, Check, AlertTriangle, Link2, ExternalLink, Loader2
+  User as UserIcon, Check, AlertTriangle, Link2, ExternalLink, Loader2,
+  GripVertical, SquarePlus, Layers
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
@@ -138,7 +139,7 @@ const AttachmentRow = React.memo(function AttachmentRow({
 });
 
 export default function CardModal({ card, onClose }: Props) {
-  const { state, updateCard, deleteCard, confirmAction, currentUser, hasEditRights } = useAppContext();
+  const { state, updateCard, deleteCard, addCard, confirmAction, currentUser, hasEditRights } = useAppContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const currentUserRecord = state.users.find(u => u.id === currentUser?.userId) || state.users[0];
@@ -155,6 +156,12 @@ export default function CardModal({ card, onClose }: Props) {
   const [showDetails, setShowDetails] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [subtaskAssigneeOpen, setSubtaskAssigneeOpen] = useState<string | null>(null);
+  /** Пункт, за ручку якого взялися: draggable вмикаємо лише на ньому, щоб текст лишався виділюваним. */
+  const [subtaskDragArmed, setSubtaskDragArmed] = useState<string | null>(null);
+  const [draggingSubtaskId, setDraggingSubtaskId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  /** Контекстне меню пункту: id + позиція курсора. */
+  const [subtaskMenu, setSubtaskMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkName, setLinkName] = useState('');
   const [fetchedTitle, setFetchedTitle] = useState<string | null>(null);
@@ -230,6 +237,61 @@ export default function CardModal({ card, onClose }: Props) {
   const deleteSubtask = (subtaskId: string) => {
     const currentSubtasks = (state.cards.find(c => c.id === card.id) || card).subtasks || [];
     handleUpdate({ subtasks: currentSubtasks.filter(st => st.id !== subtaskId) });
+  };
+
+  /**
+   * Переставляє пункт переліку на місце іншого.
+   *
+   * Порядок пунктів — це порядок у масиві subtasks, окремого поля order у них
+   * немає, тож переміщення — звичайний splice і запис усього масиву.
+   */
+  const moveSubtask = (fromId: string, toId: string) => {
+    if (!hasEditRights || fromId === toId) return;
+    const currentSubtasks = (state.cards.find(c => c.id === card.id) || card).subtasks || [];
+    const from = currentSubtasks.findIndex(st => st.id === fromId);
+    const to = currentSubtasks.findIndex(st => st.id === toId);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = [...currentSubtasks];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    handleUpdate({ subtasks: next });
+  };
+
+  const resetSubtaskDrag = () => {
+    setSubtaskDragArmed(null);
+    setDraggingSubtaskId(null);
+    setDropTargetId(null);
+  };
+
+  /**
+   * Пункт переліку → окрема картка на дошці.
+   *
+   * Картки лягають у ту саму колонку, що й ця, зверху і в тому ж порядку, що
+   * стояли в переліку: order рахуємо тут, бо addCard бере мінімум зі state,
+   * який за один тік не встигає оновитись, і вся пачка отримала б однакове
+   * значення. Виконавця пункту переносимо, самі пункти прибираємо — це
+   * перенесення, а не копія.
+   */
+  const convertSubtasksToCards = (ids: string[]) => {
+    if (!hasEditRights || ids.length === 0) return;
+    const currentSubtasks = (state.cards.find(c => c.id === card.id) || card).subtasks || [];
+    const moving = currentSubtasks.filter(st => ids.includes(st.id));
+    if (moving.length === 0) return;
+
+    const listCards = state.cards.filter(c => c.listId === card.listId);
+    const minOrder = listCards.length > 0 ? Math.min(...listCards.map(c => c.order)) : 0;
+
+    moving.forEach((st, i) => {
+      addCard(card.listId, st.title, {
+        assigneeId: st.assigneeId ?? liveCard.assigneeId ?? null,
+        tagIds: liveCard.tagIds || [],
+        description: `З переліку картки «${liveCard.title || 'Без назви'}»`,
+        order: minOrder - moving.length + i,
+      });
+    });
+
+    handleUpdate({ subtasks: currentSubtasks.filter(st => !ids.includes(st.id)) });
+    setSubtaskMenu(null);
   };
 
   const updateSubtaskAssignee = (subtaskId: string, assigneeId: string | null) => {
@@ -729,11 +791,64 @@ export default function CardModal({ card, onClose }: Props) {
                 )}
 
                 <div className="space-y-1">
-                  {subtasks.map(st => {
+                  {subtasks.map((st, index) => {
                     const stAssignee = st.assigneeId ? state.users.find(u => u.id === st.assigneeId) : null;
                     const isAssigneeOpen = subtaskAssigneeOpen === st.id;
+                    const isDragging = draggingSubtaskId === st.id;
+                    // Лінія показує, куди саме впаде пункт: під ціллю, якщо тягнемо
+                    // згори вниз, і над нею — якщо навпаки.
+                    const draggingIndex = draggingSubtaskId
+                      ? subtasks.findIndex(s => s.id === draggingSubtaskId)
+                      : -1;
+                    const dropEdge = dropTargetId === st.id && draggingIndex >= 0 && draggingIndex !== index
+                      ? (draggingIndex < index ? 'bottom' : 'top')
+                      : null;
                     return (
-                      <div key={st.id} className="flex items-center gap-2 py-1 px-2 rounded-lg hover:bg-gray-50 group transition relative">
+                      <div
+                        key={st.id}
+                        draggable={hasEditRights && subtaskDragArmed === st.id}
+                        onDragStart={e => {
+                          setDraggingSubtaskId(st.id);
+                          e.dataTransfer.effectAllowed = 'move';
+                          e.dataTransfer.setData('text/plain', st.id);
+                        }}
+                        onDragEnd={resetSubtaskDrag}
+                        onDragOver={e => {
+                          if (!draggingSubtaskId || draggingSubtaskId === st.id) return;
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'move';
+                          setDropTargetId(st.id);
+                        }}
+                        onDragLeave={() => setDropTargetId(cur => (cur === st.id ? null : cur))}
+                        onDrop={e => {
+                          e.preventDefault();
+                          if (draggingSubtaskId) moveSubtask(draggingSubtaskId, st.id);
+                          resetSubtaskDrag();
+                        }}
+                        onContextMenu={e => {
+                          if (!hasEditRights) return;
+                          e.preventDefault();
+                          setSubtaskAssigneeOpen(null);
+                          setSubtaskMenu({ id: st.id, x: e.clientX, y: e.clientY });
+                        }}
+                        className={`flex items-center gap-2 py-1 px-2 rounded-lg hover:bg-gray-50 group transition relative ${
+                          isDragging ? 'opacity-40' : ''
+                        } ${dropEdge === 'top' ? 'border-t-2 border-blue-400' : ''} ${
+                          dropEdge === 'bottom' ? 'border-b-2 border-blue-400' : ''
+                        }`}
+                      >
+                        {hasEditRights && (
+                          <span
+                            // draggable вмикаємо лише поки тримають ручку — інакше
+                            // браузер тягнув би рядок замість виділення тексту.
+                            onMouseDown={() => setSubtaskDragArmed(st.id)}
+                            onMouseUp={() => setSubtaskDragArmed(null)}
+                            title="Перетягніть, щоб змінити порядок"
+                            className="opacity-0 group-hover:opacity-100 transition text-gray-300 hover:text-gray-500 cursor-grab active:cursor-grabbing shrink-0 -ml-1.5"
+                          >
+                            <GripVertical className="w-3.5 h-3.5" />
+                          </span>
+                        )}
                         {hasEditRights ? (
                           <button
                             onClick={() => toggleSubtask(st.id)}
@@ -843,6 +958,55 @@ export default function CardModal({ card, onClose }: Props) {
                     );
                   })}
                 </div>
+
+                {/* Контекстне меню пункту (правий клік) */}
+                {hasEditRights && subtaskMenu && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setSubtaskMenu(null)}
+                      onContextMenu={e => { e.preventDefault(); setSubtaskMenu(null); }}
+                    />
+                    <div
+                      className="fixed w-60 bg-white rounded-xl shadow-xl border border-gray-200 py-1 z-50 overflow-hidden"
+                      style={{
+                        left: Math.min(subtaskMenu.x, window.innerWidth - 250),
+                        top: Math.min(subtaskMenu.y, window.innerHeight - 140),
+                      }}
+                    >
+                      <button
+                        onClick={() => convertSubtasksToCards([subtaskMenu.id])}
+                        className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                      >
+                        <SquarePlus className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        Конвертувати в задачу
+                      </button>
+                      {subtasks.length > 1 && (
+                        <button
+                          onClick={() => {
+                            setSubtaskMenu(null);
+                            confirmAction(
+                              `Перенести всі пункти переліку (${subtasks.length}) в окремі задачі на дошці?`,
+                              () => convertSubtasksToCards(subtasks.map(s => s.id)),
+                            );
+                          }}
+                          className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                        >
+                          <Layers className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                          Конвертувати весь перелік
+                        </button>
+                      )}
+                      <div className="h-px bg-gray-100 my-1" />
+                      <button
+                        onClick={() => { deleteSubtask(subtaskMenu.id); setSubtaskMenu(null); }}
+                        className="w-full text-left px-3 py-2 text-xs text-red-600 hover:bg-red-50 flex items-center gap-2"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                        Видалити пункт
+                      </button>
+                    </div>
+                  </>
+                )}
 
                 {hasEditRights && (
                   showSubtaskInput ? (
