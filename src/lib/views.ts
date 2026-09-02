@@ -75,8 +75,8 @@ export const DEFAULT_ALLOWED_VIEWS = VIEWS
  * Чи має право бачити розділ.
  *
  * Єдине місце, де це вирішується. Адмін бачить усе; решта — те, що видали,
- * плюс завжди доступні розділи. `event-details` — не окрема вкладка, а сторінка
- * всередині «Подій», тож і право на неї те саме.
+ * плюс завжди доступні розділи. `event-details` і `gantt` — не окремі вкладки,
+ * а сторінки всередині «Подій» і «Проєктів», тож і права на них ті самі.
  */
 export function canViewSection(
   view: string,
@@ -86,5 +86,6 @@ export function canViewSection(
   if (role === 'admin') return true;
   if (ALWAYS_ALLOWED_VIEWS.includes(view)) return true;
   if (view === 'event-details') return allowedViews.includes('events');
+  if (view === 'gantt') return allowedViews.includes('projects');
   return allowedViews.includes(view);
 }

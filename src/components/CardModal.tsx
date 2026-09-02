@@ -15,6 +15,7 @@ import { uk } from 'date-fns/locale';
 import TagPicker from './TagPicker';
 import { v4 as uuidv4 } from 'uuid';
 import { detectProvider, isExternalUrl, normalizeUrl, suggestLinkName } from '../lib/links';
+import { isOverdue, rangeOf, toDayKey, toLocalDate, toStoredDate, todayKey } from '../lib/gantt';
 import FileTypeIcon from './FileTypeIcon';
 import RichText from './RichText';
 import RichTextEditor from './RichTextEditor';
@@ -163,6 +164,7 @@ export default function CardModal({ card, onClose }: Props) {
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   /** Контекстне меню пункту: id + позиція курсора. */
   const [subtaskMenu, setSubtaskMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [subtaskDatesOpen, setSubtaskDatesOpen] = useState<string | null>(null);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkName, setLinkName] = useState('');
   const [fetchedTitle, setFetchedTitle] = useState<string | null>(null);
@@ -293,6 +295,15 @@ export default function CardModal({ card, onClose }: Props) {
 
     handleUpdate({ subtasks: currentSubtasks.filter(st => !ids.includes(st.id)) });
     setSubtaskMenu(null);
+  };
+
+  /** Строки пункту переліку — та сама пара полів, що малює смужку на Ганті. */
+  const updateSubtaskDates = (subtaskId: string, patch: { startDate?: string | null; deadline?: string | null }) => {
+    if (!hasEditRights) return;
+    const currentSubtasks = (state.cards.find(c => c.id === card.id) || card).subtasks || [];
+    handleUpdate({
+      subtasks: currentSubtasks.map(st => (st.id === subtaskId ? { ...st, ...patch } : st)),
+    });
   };
 
   const updateSubtaskAssignee = (subtaskId: string, assigneeId: string | null) => {
@@ -617,14 +628,31 @@ export default function CardModal({ card, onClose }: Props) {
               <div className="ml-8 p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-3">
                 <div className="flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-gray-500" />
-                  <span className="text-sm font-medium text-gray-700">Дедлайн</span>
+                  <span className="text-sm font-medium text-gray-700">Строки</span>
                 </div>
-                <input
-                  type="date"
-                  value={card.deadline ? card.deadline.split('T')[0] : ''}
-                  onChange={e => handleUpdate({ deadline: e.target.value ? new Date(e.target.value).toISOString() : null })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
-                />
+                {/* Дві дати — це смужка задачі на діаграмі Ганта проєкту */}
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block">
+                    <span className="text-[11px] font-medium text-gray-500">Початок</span>
+                    <input
+                      type="date"
+                      value={toDayKey(liveCard.startDate) || ''}
+                      max={toDayKey(liveCard.deadline) || undefined}
+                      onChange={e => handleUpdate({ startDate: e.target.value ? toStoredDate(e.target.value) : null })}
+                      className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] font-medium text-gray-500">Дедлайн</span>
+                    <input
+                      type="date"
+                      value={toDayKey(liveCard.deadline) || ''}
+                      min={toDayKey(liveCard.startDate) || undefined}
+                      onChange={e => handleUpdate({ deadline: e.target.value ? toStoredDate(e.target.value) : null })}
+                      className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                  </label>
+                </div>
                 <div className="flex items-center gap-2 mt-1">
                   <Clock className="w-4 h-4 text-gray-500" />
                   <span className="text-sm font-medium text-gray-700">Оцінка часу (хв)</span>
@@ -803,6 +831,14 @@ export default function CardModal({ card, onClose }: Props) {
                   {subtasks.map((st, index) => {
                     const stAssignee = st.assigneeId ? state.users.find(u => u.id === st.assigneeId) : null;
                     const isAssigneeOpen = subtaskAssigneeOpen === st.id;
+                    const isDatesOpen = subtaskDatesOpen === st.id;
+                    const stRange = rangeOf(st);
+                    const stRangeLabel = stRange
+                      ? (stRange.start === stRange.end
+                        ? format(toLocalDate(stRange.end), 'd MMM', { locale: uk })
+                        : `${format(toLocalDate(stRange.start), 'd MMM', { locale: uk })} – ${format(toLocalDate(stRange.end), 'd MMM', { locale: uk })}`)
+                      : null;
+                    const stOverdue = stRange ? isOverdue(stRange, todayKey(), st.completed) : false;
                     const isDragging = draggingSubtaskId === st.id;
                     // Лінія показує, куди саме впаде пункт: під ціллю, якщо тягнемо
                     // згори вниз, і над нею — якщо навпаки.
@@ -882,6 +918,65 @@ export default function CardModal({ card, onClose }: Props) {
                         <span className={`text-sm flex-1 ${st.completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>
                           {st.title}
                         </span>
+
+                        {/* Строки пункту: чіп, якщо дати стоять, і календарик — щоб їх поставити */}
+                        <div className="relative shrink-0">
+                          <button
+                            onClick={e => {
+                              e.stopPropagation();
+                              if (!hasEditRights) return;
+                              setSubtaskAssigneeOpen(null);
+                              setSubtaskDatesOpen(isDatesOpen ? null : st.id);
+                            }}
+                            title={stRange
+                              ? `Строки: ${stRangeLabel}`
+                              : 'Поставити строки — задача зʼявиться на діаграмі Ганта'}
+                            className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] transition ${
+                              stRange
+                                ? (stOverdue ? 'text-red-600 bg-red-50' : 'text-gray-500 bg-gray-100')
+                                : 'text-gray-300 opacity-0 group-hover:opacity-100 hover:text-blue-500'
+                            } ${hasEditRights ? 'hover:ring-1 hover:ring-blue-300' : 'pointer-events-none'}`}
+                          >
+                            <Calendar className="w-3 h-3 shrink-0" />
+                            {stRangeLabel && <span className="whitespace-nowrap">{stRangeLabel}</span>}
+                          </button>
+
+                          {hasEditRights && isDatesOpen && (
+                            <>
+                              <div className="fixed inset-0 z-10" onClick={() => setSubtaskDatesOpen(null)} />
+                              <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-xl shadow-xl border border-gray-200 p-3 z-20 space-y-2">
+                                <label className="block">
+                                  <span className="text-[11px] font-medium text-gray-500">Початок</span>
+                                  <input
+                                    type="date"
+                                    value={toDayKey(st.startDate) || ''}
+                                    max={toDayKey(st.deadline) || undefined}
+                                    onChange={e => updateSubtaskDates(st.id, { startDate: e.target.value ? toStoredDate(e.target.value) : null })}
+                                    className="w-full mt-1 px-2 py-1.5 border border-gray-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400"
+                                  />
+                                </label>
+                                <label className="block">
+                                  <span className="text-[11px] font-medium text-gray-500">Дедлайн</span>
+                                  <input
+                                    type="date"
+                                    value={toDayKey(st.deadline) || ''}
+                                    min={toDayKey(st.startDate) || undefined}
+                                    onChange={e => updateSubtaskDates(st.id, { deadline: e.target.value ? toStoredDate(e.target.value) : null })}
+                                    className="w-full mt-1 px-2 py-1.5 border border-gray-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400"
+                                  />
+                                </label>
+                                {stRange && (
+                                  <button
+                                    onClick={() => { updateSubtaskDates(st.id, { startDate: null, deadline: null }); setSubtaskDatesOpen(null); }}
+                                    className="w-full text-center px-2 py-1 text-[11px] text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+                                  >
+                                    Прибрати строки
+                                  </button>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </div>
 
                         {/* Subtask assignee button */}
                         <div className="relative shrink-0">

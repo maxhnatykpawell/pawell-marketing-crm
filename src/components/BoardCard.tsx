@@ -7,6 +7,7 @@ import { Draggable } from '@hello-pangea/dnd';
 import CardModal from './CardModal';
 import { cn } from '../utils';
 import { detectProvider, isExternalUrl } from '../lib/links';
+import { rangeOf, toLocalDate } from '../lib/gantt';
 import FileTypeIcon from './FileTypeIcon';
 
 interface Props {
@@ -70,6 +71,7 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
     .map(id => state.users.find(u => u.id === id))
     .filter(Boolean) as typeof state.users;
 
+  const cardRange = rangeOf(card);
   const isOverdue = card.deadline && new Date(card.deadline) < new Date() && card.listId !== state.lists[state.lists.length - 1]?.id && !card.isCompleted; // basic logic, last list is done
 
   return (
@@ -152,13 +154,16 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
           <div className="flex items-center gap-3 flex-wrap">
             {/* Meta tags (deadline, etc) */}
             <div className="flex items-center gap-2 text-xs text-gray-500">
-              {card.deadline && (
+              {/* Строки: з початком — відрізок, як на діаграмі Ганта; без нього — сам дедлайн */}
+              {cardRange && (
                 <div className={cn(
                   "flex items-center px-1.5 py-0.5 rounded",
                   isOverdue ? "bg-red-100 text-red-700 font-medium" : "bg-gray-100 text-gray-600"
                 )}>
                   <Calendar className="w-3 h-3 mr-1" />
-                  {format(new Date(card.deadline), 'MMM d')}
+                  {cardRange.start === cardRange.end
+                    ? format(toLocalDate(cardRange.end), 'MMM d')
+                    : `${format(toLocalDate(cardRange.start), 'MMM d')} – ${format(toLocalDate(cardRange.end), 'MMM d')}`}
                 </div>
               )}
               

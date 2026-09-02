@@ -138,6 +138,8 @@ export interface Subtask {
   title: string;
   completed: boolean;
   assigneeId?: string | null;
+  /** Початок роботи — друга межа смужки на діаграмі Ганта */
+  startDate?: string | null;
   deadline?: string | null;
 }
 
@@ -167,6 +169,8 @@ export interface Card {
   listId: string;
   title: string;
   description: string;
+  /** Початок роботи; разом із deadline дає смужку на діаграмі Ганта */
+  startDate?: string | null;
   deadline: string | null;
   assigneeId: string | null;
   isCompleted?: boolean;

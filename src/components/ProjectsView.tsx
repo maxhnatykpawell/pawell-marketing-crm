@@ -3,7 +3,7 @@ import { useAppContext } from '../App';
 import { Project } from '../types';
 import ProjectModal from './ProjectModal';
 import {
-  FolderKanban, FolderOpen, Folder, Plus, Calendar, CheckSquare,
+  FolderKanban, FolderOpen, Folder, Plus, Calendar, CalendarRange, CheckSquare,
   Trash2, Edit2, Play, Pause, CheckCircle2, ChevronDown, ChevronRight,
   Pencil, Check, X
 } from 'lucide-react';
@@ -63,6 +63,11 @@ export default function ProjectsView() {
   const handleOpenProjectBoard = (p: Project) => {
     setActiveProjectId(p.id);
     setActiveView('board');
+  };
+
+  const handleOpenProjectGantt = (p: Project) => {
+    setActiveProjectId(p.id);
+    setActiveView('gantt');
   };
 
   // Rename group: update all projects in the group
@@ -356,12 +361,22 @@ export default function ProjectsView() {
                                     )}
                                   </div>
 
-                                  <button
-                                    onClick={() => handleOpenProjectBoard(project)}
-                                    className="text-xs font-medium text-blue-600 hover:text-blue-800 transition px-2 py-1 hover:bg-blue-50 rounded-lg"
-                                  >
-                                    Дошка задач →
-                                  </button>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => handleOpenProjectGantt(project)}
+                                      className="text-xs font-medium text-gray-500 hover:text-gray-800 transition px-2 py-1 hover:bg-gray-100 rounded-lg flex items-center gap-1"
+                                      title="Розкласти задачі проєкту по днях"
+                                    >
+                                      <CalendarRange className="w-3.5 h-3.5" />
+                                      Планування
+                                    </button>
+                                    <button
+                                      onClick={() => handleOpenProjectBoard(project)}
+                                      className="text-xs font-medium text-blue-600 hover:text-blue-800 transition px-2 py-1 hover:bg-blue-50 rounded-lg"
+                                    >
+                                      Дошка →
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
                             </div>

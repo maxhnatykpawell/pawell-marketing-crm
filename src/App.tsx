@@ -14,6 +14,7 @@ import MyProfileView from './components/MyProfileView';
 import LoginPage from './components/LoginPage';
 import InvitePage from './components/InvitePage';
 import ProjectsView from './components/ProjectsView';
+import ProjectGanttView from './components/ProjectGanttView';
 import ProcessTreeView from './components/ProcessTreeView';
 import ExpensesView from './components/ExpensesView';
 import ExpenseModal from './components/ExpenseModal';
@@ -27,7 +28,9 @@ import type { AssistantAction } from './api';
 import { canViewSection, ALL_VIEW_IDS, DEFAULT_ALLOWED_VIEWS } from './lib/views';
 import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet, MessageSquare } from 'lucide-react';
 
-type ActiveView = 'dashboard' | 'projects' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile' | 'expenses' | 'payroll' | 'chat';
+// 'gantt' і 'event-details' — не вкладки меню, а сторінки всередині «Проєктів»
+// і «Подій»: відкриваються з картки розділу й живуть на його правах.
+type ActiveView = 'dashboard' | 'projects' | 'gantt' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile' | 'expenses' | 'payroll' | 'chat';
 
 interface AppContextType {
   state: AppState;
@@ -1098,6 +1101,7 @@ export default function App() {
         <main className={`flex-1 p-6 h-[calc(100vh-73px)] print:h-auto print:overflow-visible print:p-0 flex flex-col ${['board', 'processes', 'chat'].includes(activeView) ? 'overflow-hidden' : 'overflow-auto hidden-scrollbar'}`}>
           {activeView === 'dashboard' && <DashboardView />}
           {activeView === 'projects' && <ProjectsView />}
+          {activeView === 'gantt' && <ProjectGanttView />}
           {activeView === 'processes' && <ProcessTreeView />}
           {activeView === 'board' && <Board />}
           {activeView === 'content' && <ContentPlanView />}

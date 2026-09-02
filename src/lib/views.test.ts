@@ -56,6 +56,13 @@ console.log('\nСторінка події');
   check('без «Подій» — закрита', canViewSection('event-details', ['board'], 'member'), false);
 }
 
+console.log('\nДіаграма Ганта');
+{
+  check('gantt іде за правом на «Проєкти»', canViewSection('gantt', ['projects'], 'member'), true);
+  check('без «Проєктів» — закрита', canViewSection('gantt', ['board'], 'member'), false);
+  check('це сторінка, а не вкладка меню', GRANTABLE_VIEWS.some(v => v.id === 'gantt'), false);
+}
+
 console.log('\nНевідомий розділ');
 check('чого немає в переліку — те закрите', canViewSection('secret-page', [], 'member'), false);
 check('вигаданий розділ не відкривається підробленими правами',
