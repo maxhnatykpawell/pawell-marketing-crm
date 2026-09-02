@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Card, Subtask, Comment, Attachment } from '../types';
 import { useAppContext } from '../App';
 import { uploadFile, reviewPlanWithAI, fetchLinkTitle } from '../api';
@@ -405,7 +406,15 @@ export default function CardModal({ card, onClose }: Props) {
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   );
 
-  return (
+  /**
+   * Портал у body.
+   *
+   * Модалку відкривають із картки, а картка лежить усередині колонки, вся
+   * площа якої — ручка перетягування @hello-pangea/dnd. Поки модалка була
+   * нащадком колонки, будь-яке натискання в ній (перетягування пункту
+   * переліку, виділення тексту) починало тягнути колонку по дошці.
+   */
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-12 bg-gray-900/50 backdrop-blur-sm overflow-y-auto"
       onClick={onClose}
@@ -808,6 +817,11 @@ export default function CardModal({ card, onClose }: Props) {
                         key={st.id}
                         draggable={hasEditRights && subtaskDragArmed === st.id}
                         onDragStart={e => {
+                          // Колонка дошки — теж ручка перетягування, і її
+                          // onDragStart скасовує нативний drag. Подія React
+                          // спливає деревом компонентів навіть крізь портал,
+                          // тож зупиняємо її тут.
+                          e.stopPropagation();
                           setDraggingSubtaskId(st.id);
                           e.dataTransfer.effectAllowed = 'move';
                           e.dataTransfer.setData('text/plain', st.id);
@@ -1184,6 +1198,7 @@ export default function CardModal({ card, onClose }: Props) {
 
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
