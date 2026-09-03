@@ -1,7 +1,10 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { X, Users, DollarSign, Gem, Download, ArrowUp, ArrowDown, AlertTriangle, Loader2 } from 'lucide-react';
-import { getKeepInCRMLTVClients } from '../api';
-import { LTV_HORIZONS, CohortLtvRow, CohortLtvHorizon } from '../lib/cohortLtv';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { Users, DollarSign, Gem, Download, FileDown, ArrowUp, ArrowDown, AlertTriangle, Loader2 } from 'lucide-react';
+import { useReactToPrint } from 'react-to-print';
+import { useAppContext } from '../App';
+import { getKeepInCRMLTV, getKeepInCRMLTVClients } from '../api';
+import { LTV_HORIZONS } from '../lib/cohortLtv';
+import { LtvSnapshot, EMPTY_LTV_SNAPSHOT } from '../lib/ltvSnapshot';
 import ClientFilterBar from './analytics/ClientFilterBar';
 import RevenueDistributionCard from './analytics/RevenueDistribution';
 import ClientTiers from './analytics/ClientTiers';
@@ -12,11 +15,12 @@ import {
   SortKey, SortDir, SORT_LABELS, TierId, TIERS,
   CustomerKind, CUSTOMER_KIND_LABELS, CUSTOMER_KIND_STYLES,
   enrichClients, applyFilters, sortClients, collectTags, collectCohortMonths,
-  computeDistribution, computeCustomerMix, assignTiers, clientsToCsv, getPurchaseMonths,
-  countByRfm, sanitizeRfmThresholds,
+  computeDistribution, computeCustomerMix, assignTiers, clientsToCsv, calculateCohorts,
+  countByRfm, sanitizeRfmThresholds, countActiveFilters,
 } from '../lib/clientAnalytics';
 import { loadView, saveView } from '../lib/analyticsViewState';
 import PeriodPicker, { PeriodKey, PeriodValue, describePeriod } from './PeriodPicker';
+import AnalyticsReport from './AnalyticsReport';
 
 /** Пресети періоду аналітики — усі місячної точності */
 const ANALYTICS_PRESETS: PeriodKey[] = ['all', 'month', 'ytd', 'year', 'custom'];
@@ -162,77 +166,47 @@ const ClientRow = React.memo(function ClientRow({
   );
 });
 
-interface CohortData {
-  size: number;
-  retention: Record<number, number>;
-}
-
-function calculateCohorts(clients: ClientLTV[]): Record<string, CohortData> {
-  const cohorts: Record<string, CohortData> = {};
-
-  clients.forEach(c => {
-    const sortedMonths = getPurchaseMonths(c);
-    if (sortedMonths.length === 0) return;
-
-    const firstMonth = sortedMonths[0]; 
-    
-    if (!cohorts[firstMonth]) {
-      cohorts[firstMonth] = { size: 0, retention: {} };
-    }
-    
-    cohorts[firstMonth].size += 1;
-    
-    const [y1, m1] = firstMonth.split('-').map(Number);
-    
-    sortedMonths.forEach(mStr => {
-      const [y2, m2] = mStr.split('-').map(Number);
-      const diffMonths = (y2 - y1) * 12 + (m2 - m1);
-      
-      if (diffMonths >= 0) {
-        cohorts[firstMonth].retention[diffMonths] = (cohorts[firstMonth].retention[diffMonths] || 0) + 1;
-      }
-    });
-  });
-
-  return cohorts;
-}
-
-interface StageStat {
-  stage: string;
-  count: number;
-  avgOpenDays: number;
-  avgCycleDays: number;
-}
-
 /** Скільки місяців показувати в матриці, щоб таблиця лишалась читабельною */
 const LTV_MAX_MONTHS = 24;
 
-interface LtvAnalyticsModalProps {
-  onClose: () => void;
-  /** Спільні пороги сегментації; undefined = команда їх ще не міняла */
-  rfmThresholds?: RfmThresholds;
-  /** Зберегти пороги для всієї команди */
-  onSaveRfmThresholds: (t: RfmThresholds) => void;
-  canEditSettings: boolean;
-  data: {
-    totalLTVRevenue: number;
-    uniqueClientsCount: number;
-    ltv: number;
-    stageStats?: StageStat[];
-    /** Помилка останньої синхронізації, якщо вона впала */
-    lastSyncError?: string | null;
-    cohortLtv?: {
-      rows: CohortLtvRow[];
-      horizons: Record<number, CohortLtvHorizon | null>;
-    };
-    /** Діапазон, яким обмежено вивантаження; null = за весь час */
-    scopedTo?: { from: string | null; to: string | null } | null;
-  };
-}
+/**
+ * Розширена аналітика — власний розділ, а не вікно поверх головної.
+ *
+ * Раніше це була модалка, яку відкривала картка LTV на дашборді: щоб побачити
+ * розподіл клієнтів, треба було спершу дочекатись, доки завантажиться вся
+ * головна. Тепер це вкладка, на яку заходять напряму, а знімок LTV сторінка
+ * тягне сама — вона більше ні від кого не залежить.
+ */
+export default function AnalyticsView() {
+  const { state, updateSettings, hasEditRights } = useAppContext();
+  const rfmThresholds = state.rfmThresholds;
+  const canEditSettings = hasEditRights;
 
-export default function LtvAnalyticsModal({
-  onClose, data, rfmThresholds, onSaveRfmThresholds, canEditSettings,
-}: LtvAnalyticsModalProps) {
+  const onSaveRfmThresholds = useCallback(
+    (t: RfmThresholds) => updateSettings({ rfmThresholds: t }),
+    [updateSettings],
+  );
+
+  // Знімок агрегатів: воронка, когортний LTV, помилка синхронізації.
+  const [snapshot, setSnapshot] = useState<LtvSnapshot | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await getKeepInCRMLTV();
+        if (!cancelled) setSnapshot(s);
+      } catch (e: any) {
+        if (!cancelled) setSnapshotError(e.message || 'Не вдалось завантажити знімок LTV');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  /** Порожній знімок замість null: розмітка не має перевіряти кожне поле окремо */
+  const data = snapshot ?? EMPTY_LTV_SNAPSHOT;
+
   // Вибір відновлюється з попереднього сеансу — фільтри й період це налаштування
   // робочого місця, а не разова дія.
   const saved = useMemo(() => loadView(), []);
@@ -284,24 +258,6 @@ export default function LtvAnalyticsModal({
    * зміну фільтра. Кому потрібен повний список — той бере CSV.
    */
   const [limit, setLimit] = useState<number>(saved.limit);
-
-  /**
-   * Esc закриває, а сторінка під нами не прокручується.
-   *
-   * У вікні це було не критично — воно й так не займало весь екран. На повний
-   * екран вихід мусить бути завжди під рукою, інакше єдиний шлях назад — це
-   * поцілити мишею в хрестик у кутку.
-   */
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [onClose]);
 
   // Зберігаємо вибір при кожній зміні
   useEffect(() => {
@@ -469,11 +425,47 @@ export default function LtvAnalyticsModal({
     URL.revokeObjectURL(url);
   };
 
+  // ── PDF-звіт ───────────────────────────────────────────────────────────────
+  /**
+   * Звіт існує в DOM лише поки його друкують.
+   *
+   * Він повторює всі три вкладки одразу — з таблицями, матрицями й сотнею
+   * рядків клієнтів. Тримати це намальованим весь час означало б платити за
+   * нього на кожен рух фільтра, хоч на екрані його не видно ніколи.
+   */
+  const [preparingPdf, setPreparingPdf] = useState(false);
+  const reportRef = useRef<HTMLDivElement>(null);
+
+  const printReport = useReactToPrint({
+    contentRef: reportRef,
+    documentTitle: `Аналітика клієнтів — ${new Date().toISOString().slice(0, 10)}`,
+    onAfterPrint: () => setPreparingPdf(false),
+    // Діалог закрили хрестиком або друк не стартував — звіт усе одно треба
+    // прибрати, інакше він лишиться рахуватись у пам'яті до перезаходу
+    onPrintError: () => setPreparingPdf(false),
+  });
+
+  /**
+   * Друкуємо лише після того, як React домалював звіт: до цього моменту
+   * react-to-print скопіював би порожній вузол.
+   *
+   * Саме таймер, а не requestAnimationFrame: кадри не малюються, поки вкладка
+   * у фоні, і друк тоді просто не починається — а натиснути «PDF» і піти в
+   * інше вікно люди будуть постійно.
+   */
+  useEffect(() => {
+    if (!preparingPdf) return;
+    const id = setTimeout(() => printReport(), 50);
+    return () => clearTimeout(id);
+  }, [preparingPdf, printReport]);
+
   // Когорти рахуємо лише коли їхня вкладка відкрита: це найдорожча операція
   // конвеєра (близько 85 % часу), а на інших вкладках її результат не видно.
+  // Для звіту вона потрібна завжди — його друкують з будь-якої вкладки.
+  const needCohorts = activeTab === 'cohorts' || preparingPdf;
   const cohortsData = useMemo(
-    () => (activeTab === 'cohorts' ? calculateCohorts(selectedClients) : {}),
-    [selectedClients, activeTab],
+    () => (needCohorts ? calculateCohorts(selectedClients) : {}),
+    [selectedClients, needCohorts],
   );
   const sortedCohortKeys = Object.keys(cohortsData).sort().reverse(); 
   const maxMonthOffset = Math.max(0, ...Object.values(cohortsData).flatMap((c: any) => Object.keys(c.retention).map(Number)));
@@ -500,12 +492,14 @@ export default function LtvAnalyticsModal({
   const totalOpenCount = openStages.reduce((sum, s) => sum + s.count, 0);
 
   return (
-    <div className="fixed inset-0 z-[100] flex flex-col bg-gray-50 animate-in fade-in duration-150">
+    <>
+    <div className="flex flex-col gap-4 w-full print:hidden">
 
-      {/* Шапка. На весь екран вона єдиний орієнтир — тому тримає і назву,
-          і вкладки, і дії, і лишається на місці при прокрутці. */}
-      <header className="flex-shrink-0 bg-white border-b border-gray-200 shadow-sm">
-        <div className="mx-auto w-full max-w-[1600px] px-6">
+      {/* Шапка, період, пороги і фільтри — однією карткою: усе це керує тим,
+          що показано нижче, і розсипати його на чотири коробки означало б
+          зробити з панелі керування смітник. */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-6">
           <div className="flex items-center justify-between gap-4 pt-4">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center flex-shrink-0 shadow-sm shadow-purple-200">
@@ -535,21 +529,28 @@ export default function LtvAnalyticsModal({
                 <Download className="w-4 h-4" />
                 <span className="hidden sm:inline">CSV</span>
               </button>
+              {/*
+                PDF збирає всі три вкладки в один документ, а не знімає екран:
+                звіт читають ті, хто фільтрів не бачив, тож у ньому має бути
+                написано і що саме показано, і за який період.
+              */}
               <button
-                onClick={onClose}
-                title="Закрити (Esc)"
-                className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-gray-500 rounded-lg hover:bg-gray-100 hover:text-gray-700 transition"
+                onClick={() => setPreparingPdf(true)}
+                disabled={clientsLoading || preparingPdf}
+                title="Зібрати звіт за поточною вибіркою і зберегти у PDF"
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <X className="w-4 h-4" />
-                <span className="hidden sm:inline">Закрити</span>
-                <kbd className="hidden md:inline text-[10px] font-sans font-bold text-gray-400 border border-gray-200 rounded px-1 py-0.5 ml-0.5">Esc</kbd>
+                {preparingPdf
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <FileDown className="w-4 h-4" />}
+                <span className="hidden sm:inline">{preparingPdf ? 'Готуємо…' : 'PDF'}</span>
               </button>
             </div>
           </div>
 
           {/* Вкладки підкресленням, а не «пігулками»: на всю ширину екрана
               пігулки в сірій коробці виглядають як загублений віджет. */}
-          <nav className="flex items-center gap-1 -mb-px mt-3">
+          <nav className="flex items-center gap-1 -mb-px mt-3 border-b border-gray-200">
             {TABS.map(t => (
               <button
                 key={t.key}
@@ -565,35 +566,33 @@ export default function LtvAnalyticsModal({
             ))}
           </nav>
         </div>
-      </header>
 
-      {/* Період аналітики */}
-      <div className="flex-shrink-0 border-b border-gray-200 bg-white">
-        <div className="mx-auto w-full max-w-[1600px] px-6 py-3 flex flex-wrap items-center gap-3">
-          <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Період</span>
-          <PeriodPicker
-            value={period}
-            onChange={setPeriod}
-            presets={ANALYTICS_PRESETS}
-            granularity="month"
-          />
-          <span className="text-xs text-gray-500">
-            Дохід, угоди й середній чек — {monthRange ? <strong className="text-gray-800">за {describePeriod(period)}</strong> : 'за весь час'}
-          </span>
-
-          {!hasMonthlyStats && monthRange && (
-            <span className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1">
-              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-              Знімок старого формату — суми по місяцях відсутні, тож період лише відбирає клієнтів,
-              а числа лишаються за весь час. Перезапустіть синхронізацію LTV.
+        {/* Період аналітики */}
+        <div className="border-b border-gray-200 bg-white">
+          <div className="px-6 py-3 flex flex-wrap items-center gap-3">
+            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Період</span>
+            <PeriodPicker
+              value={period}
+              onChange={setPeriod}
+              presets={ANALYTICS_PRESETS}
+              granularity="month"
+            />
+            <span className="text-xs text-gray-500">
+              Дохід, угоди й середній чек — {monthRange ? <strong className="text-gray-800">за {describePeriod(period)}</strong> : 'за весь час'}
             </span>
-          )}
-        </div>
-      </div>
 
-      {/* Пороги сегментації — над фільтрами: вони визначають, що взагалі
-          означають слова «Чемпіон» і «Сплячий» у фільтрі нижче. */}
-      <div className="flex-shrink-0">
+            {!hasMonthlyStats && monthRange && (
+              <span className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1">
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                Знімок старого формату — суми по місяцях відсутні, тож період лише відбирає клієнтів,
+                а числа лишаються за весь час. Перезапустіть синхронізацію LTV.
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Пороги сегментації — над фільтрами: вони визначають, що взагалі
+            означають слова «Чемпіон» і «Сплячий» у фільтрі нижче. */}
         <SegmentSettings
           draft={draftThresholds}
           onDraftChange={setDraftThresholds}
@@ -605,12 +604,10 @@ export default function LtvAnalyticsModal({
           counts={rfmSizes.counts}
           totalClients={rfmSizes.total}
         />
-      </div>
 
-      {/* Фільтри живуть над вкладками: вони впливають на вміст усіх трьох,
-          тож ховати їх на двох із них означало б приховати активний стан. */}
-      <div className="flex-shrink-0 bg-white border-b border-gray-200">
-        <div className="mx-auto w-full max-w-[1600px]">
+        {/* Фільтри живуть над вкладками: вони впливають на вміст усіх трьох,
+            тож ховати їх на двох із них означало б приховати активний стан. */}
+        <div className="bg-white border-t border-gray-200">
           <ClientFilterBar
             filters={filters}
             onChange={setFilters}
@@ -624,26 +621,21 @@ export default function LtvAnalyticsModal({
         </div>
       </div>
 
-      {clientsError && (
-        <div className="flex-shrink-0 bg-red-50 border-b border-red-100">
-          <div className="mx-auto w-full max-w-[1600px] px-6 py-2 flex items-center gap-2 text-xs text-red-700">
-            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-            {clientsError}
-          </div>
+      {[
+        clientsError,
+        snapshotError,
+        data.lastSyncError
+          ? `Остання синхронізація впала: ${data.lastSyncError}. Дані нижче застарілі.`
+          : null,
+      ].filter(Boolean).map(msg => (
+        <div key={msg as string} className="bg-red-50 border border-red-100 rounded-xl px-4 py-2 flex items-center gap-2 text-xs text-red-700">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          {msg}
         </div>
-      )}
-
-      {data.lastSyncError && (
-        <div className="flex-shrink-0 bg-red-50 border-b border-red-100">
-          <div className="mx-auto w-full max-w-[1600px] px-6 py-2 flex items-center gap-2 text-xs text-red-700">
-            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-            Остання синхронізація впала: {data.lastSyncError}. Дані нижче застарілі.
-          </div>
-        </div>
-      )}
+      ))}
 
       {activeTab === 'clients' && (
-        <div className="flex-1 overflow-auto">
+        <div>
           {clientsLoading && (
             <div className="flex items-center justify-center gap-2 px-6 py-3 text-sm text-gray-500 bg-white border-b border-gray-100">
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -657,7 +649,7 @@ export default function LtvAnalyticsModal({
             </div>
           )}
 
-          <div className="mx-auto w-full max-w-[1600px] p-6 space-y-6">
+          <div className="space-y-6">
             {/* Метрики вибірки */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {[
@@ -766,8 +758,8 @@ export default function LtvAnalyticsModal({
       )}
 
       {activeTab === 'funnel' && (
-        <div className="flex-1 overflow-auto">
-          <div className="mx-auto w-full max-w-[1600px] p-6 flex flex-col gap-6">
+        <div>
+          <div className="flex flex-col gap-6">
 
             {/* Configuration Panel */}
             <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 flex flex-col gap-3">
@@ -871,8 +863,8 @@ export default function LtvAnalyticsModal({
       )}
 
       {activeTab === 'cohorts' && (
-        <div className="flex-1 overflow-auto">
-          <div className="mx-auto w-full max-w-[1600px] p-6 flex flex-col gap-6">
+        <div>
+          <div className="flex flex-col gap-6">
             <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col">
               <h3 className="text-base font-black text-gray-800 mb-2">Когортний Аналіз (Утримання)</h3>
               <p className="text-sm text-gray-500 mb-6">Відсоток клієнтів, які повернулися за покупками в наступні місяці (застосовано поточні фільтри).</p>
@@ -1042,5 +1034,32 @@ export default function LtvAnalyticsModal({
       )}
 
     </div>
+
+    {/*
+      Звіт для друку. На екрані його немає (hidden), у режимі друку — є:
+      так Ctrl+P зі сторінки дає той самий документ, що й кнопка «PDF»,
+      а не знімок інтерфейсу з фільтрами й кнопками.
+    */}
+    {preparingPdf && (
+      <div ref={reportRef} className="hidden print:block">
+        <AnalyticsReport
+          clients={selectedClients}
+          distribution={distribution}
+          tiered={tiered}
+          customerMix={customerMix}
+          period={period}
+          monthRange={monthRange}
+          activeFilterCount={countActiveFilters(filters)}
+          filterChips={focusChips.map(c => c.label)}
+          thresholds={draftThresholds}
+          rfmCounts={rfmSizes.counts}
+          totalClients={allClients.length}
+          cohorts={cohortsData}
+          snapshot={data}
+          closedStages={closedStages}
+        />
+      </div>
+    )}
+    </>
   );
 }

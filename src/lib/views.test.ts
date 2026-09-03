@@ -63,6 +63,17 @@ console.log('\nДіаграма Ганта');
   check('це сторінка, а не вкладка меню', GRANTABLE_VIEWS.some(v => v.id === 'gantt'), false);
 }
 
+console.log('\nРозширена аналітика');
+{
+  check('analytics іде за правом на «Головну»', canViewSection('analytics', ['dashboard'], 'member'), true);
+  check('без «Головної» — закрита', canViewSection('analytics', ['board'], 'member'), false);
+  // Власного прапорця немає навмисно: інакше після оновлення розділ зник би в
+  // усіх, кому права вже налаштували руками
+  check('окремого прапорця не має', GRANTABLE_VIEWS.some(v => v.id === 'analytics'), false);
+  check('учасник за замовчуванням її бачить',
+    canViewSection('analytics', [...DEFAULT_ALLOWED_VIEWS], 'member'), true);
+}
+
 console.log('\nНевідомий розділ');
 check('чого немає в переліку — те закрите', canViewSection('secret-page', [], 'member'), false);
 check('вигаданий розділ не відкривається підробленими правами',

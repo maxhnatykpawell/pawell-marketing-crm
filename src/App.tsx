@@ -10,6 +10,7 @@ import MasterCalendarView from './components/MasterCalendarView';
 import EventPageView from './components/EventPageView';
 import TeamRegulationsView from './components/TeamRegulationsView';
 import DashboardView from './components/DashboardView';
+import AnalyticsView from './components/AnalyticsView';
 import MyProfileView from './components/MyProfileView';
 import LoginPage from './components/LoginPage';
 import InvitePage from './components/InvitePage';
@@ -26,11 +27,12 @@ import ChatView from './components/ChatView';
 import { useChat } from './hooks/useChat';
 import type { AssistantAction } from './api';
 import { canViewSection, ALL_VIEW_IDS, DEFAULT_ALLOWED_VIEWS } from './lib/views';
-import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet, MessageSquare } from 'lucide-react';
+import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet, MessageSquare, Gem } from 'lucide-react';
 
 // 'gantt' і 'event-details' — не вкладки меню, а сторінки всередині «Проєктів»
 // і «Подій»: відкриваються з картки розділу й живуть на його правах.
-type ActiveView = 'dashboard' | 'projects' | 'gantt' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile' | 'expenses' | 'payroll' | 'chat';
+// 'analytics' — вкладка меню, але право на неї теж успадковане, від «Головної».
+type ActiveView = 'dashboard' | 'analytics' | 'projects' | 'gantt' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile' | 'expenses' | 'payroll' | 'chat';
 
 interface AppContextType {
   state: AppState;
@@ -878,6 +880,7 @@ export default function App() {
 
   let allNavItems: { view: ActiveView; label: string; Icon: any }[] = [
     { view: 'dashboard', label: 'Головна', Icon: BarChart },
+    { view: 'analytics', label: 'Аналітика', Icon: Gem },
     { view: 'projects', label: 'Проєкти', Icon: FolderKanban },
     { view: 'processes', label: 'Процеси', Icon: GitMerge },
     { view: 'board', label: 'Дошка', Icon: Kanban },
@@ -1100,6 +1103,7 @@ export default function App() {
         {/* Main */}
         <main className={`flex-1 p-6 h-[calc(100vh-73px)] print:h-auto print:overflow-visible print:p-0 flex flex-col ${['board', 'processes', 'chat'].includes(activeView) ? 'overflow-hidden' : 'overflow-auto hidden-scrollbar'}`}>
           {activeView === 'dashboard' && <DashboardView />}
+          {activeView === 'analytics' && canView('analytics') && <AnalyticsView />}
           {activeView === 'projects' && <ProjectsView />}
           {activeView === 'gantt' && <ProjectGanttView />}
           {activeView === 'processes' && <ProcessTreeView />}

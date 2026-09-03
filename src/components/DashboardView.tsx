@@ -7,7 +7,6 @@ import { Metric, KeepInCRMHistoryResponse, KeepInCRMSourceStat, KeepInCRMAgreeme
 import { getKeepInCRMHistory, triggerKeepInCRMSync, triggerKeepInCRMHistorySync, getKeepInCRMSyncStatus, getKeepInCRMLTV, triggerKeepInCRMSyncLTV } from '../api';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { DollarSign, Gem, ExternalLink, Wallet } from 'lucide-react';
-import LtvAnalyticsModal from './LtvAnalyticsModal';
 import PeriodPicker, { PeriodKey, PeriodValue, makePeriod, describePeriod } from './PeriodPicker';
 import LtvSyncDialog from './LtvSyncDialog';
 import {
@@ -35,7 +34,7 @@ function loadCacScope(): CacScope {
 }
 
 export default function DashboardView() {
-  const { state, updateMetric, setActiveView, setActiveEventId, currentUser, updateSettings, hasEditRights, canView } = useAppContext();
+  const { state, updateMetric, setActiveView, setActiveEventId, currentUser, canView } = useAppContext();
   
   const [editingMetric, setEditingMetric] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<Metric>>({});
@@ -57,7 +56,6 @@ export default function DashboardView() {
   const [ltvLoading, setLtvLoading] = useState(true);
   const [ltvSyncing, setLtvSyncing] = useState(false);
   const [ltvError, setLtvError]     = useState<string | null>(null);
-  const [isLtvModalOpen, setIsLtvModalOpen] = useState(false);
   const [isLtvSyncOpen, setIsLtvSyncOpen]   = useState(false);
 
   // ── CAC ──────────────────────────────────────────────────────────────────────
@@ -552,10 +550,13 @@ export default function DashboardView() {
               {/* Когортний LTV на горизонті 12 міс. ARPU лишається довідковим числом нижче. */}
               <div className="flex flex-col">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">LTV клієнта</p>
+                {/* Картка веде на вкладку «Аналітика», а не відкриває вікно:
+                    туди ж можна зайти напряму з меню, і обидва шляхи мають
+                    приводити в одне й те саме місце. */}
                 <div 
-                  onClick={() => ltvData && setIsLtvModalOpen(true)}
-                  className={`flex-1 flex flex-col justify-center bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl border border-purple-100 p-5 relative overflow-hidden transition-all ${ltvData ? 'cursor-pointer hover:shadow-md hover:border-purple-300 group' : ''}`}
-                  title={ltvData ? 'Натисніть для детальної аналітики' : ''}
+                  onClick={() => setActiveView('analytics')}
+                  className="flex-1 flex flex-col justify-center bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl border border-purple-100 p-5 relative overflow-hidden transition-all cursor-pointer hover:shadow-md hover:border-purple-300 group"
+                  title="Відкрити розширену аналітику"
                 >
                   {ltvLoading ? (
                     <div className="flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-purple-400" /></div>
@@ -935,17 +936,6 @@ export default function DashboardView() {
         </div>
       </div>
       
-      {/* LTV Analytics Modal */}
-      {isLtvModalOpen && ltvData && (
-        <LtvAnalyticsModal
-          data={ltvData}
-          onClose={() => setIsLtvModalOpen(false)}
-          rfmThresholds={state.rfmThresholds}
-          onSaveRfmThresholds={t => updateSettings({ rfmThresholds: t })}
-          canEditSettings={hasEditRights}
-        />
-      )}
-
       {/* Вибір періоду для розрахунку LTV */}
       {isLtvSyncOpen && (
         <LtvSyncDialog

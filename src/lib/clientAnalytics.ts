@@ -837,6 +837,51 @@ export function assignTiers(clients: EnrichedClient[]): TierBreakdown {
   };
 }
 
+// ── Утримання по когортах ─────────────────────────────────────────────────────
+
+export interface CohortRetention {
+  /** Скільки клієнтів прийшло в цьому місяці */
+  size: number;
+  /** Скільки з них купували через N місяців: { зміщення: кількість } */
+  retention: Record<number, number>;
+}
+
+/**
+ * Скільки клієнтів кожної когорти поверталось у наступні місяці.
+ *
+ * На відміну від когортного LTV (cohortLtv.ts), тут рахуються ЛЮДИ, а не гроші,
+ * і рахуються по поточній вибірці — тобто з урахуванням фільтрів. Клієнт без
+ * жодного місяця покупки не утворює когорту: місяця, від якого відлічувати,
+ * у нього немає.
+ *
+ * Живе в бібліотеці, а не в компоненті, бо ту саму матрицю показує і сторінка
+ * аналітики, і PDF-звіт — а розходження між екраном і звітом у числах є
+ * найдорожчим з можливих.
+ */
+export function calculateCohorts(clients: ClientRecord[]): Record<string, CohortRetention> {
+  const cohorts: Record<string, CohortRetention> = {};
+
+  for (const c of clients) {
+    const months = getPurchaseMonths(c);
+    if (months.length === 0) continue;
+
+    const first = months[0];
+    if (!cohorts[first]) cohorts[first] = { size: 0, retention: {} };
+    cohorts[first].size += 1;
+
+    const [y1, m1] = first.split('-').map(Number);
+    for (const m of months) {
+      const [y2, m2] = m.split('-').map(Number);
+      const offset = (y2 - y1) * 12 + (m2 - m1);
+      if (offset >= 0) {
+        cohorts[first].retention[offset] = (cohorts[first].retention[offset] || 0) + 1;
+      }
+    }
+  }
+
+  return cohorts;
+}
+
 // ── Розбиття на частини для сховища ───────────────────────────────────────────
 
 /**

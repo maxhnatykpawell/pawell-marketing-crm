@@ -4,6 +4,7 @@ import {
   EMPTY_FILTERS, ClientRecord, ClientFilters, chunkList, chunkBySize, getPurchaseMonths,
   classifyCustomer, computeCustomerMix,
   checkRfmThresholds, sanitizeRfmThresholds, countByRfm, DEFAULT_RFM_THRESHOLDS,
+  calculateCohorts,
 } from './clientAnalytics';
 
 let failures = 0;
@@ -403,6 +404,25 @@ console.log('\nПороги сегментації');
   check('нема налаштувань — стандартні', sanitizeRfmThresholds(undefined), DEFAULT_RFM_THRESHOLDS);
   check('дробові округлюються',
     sanitizeRfmThresholds({ loyalDays: 45.6 }).loyalDays, 46);
+}
+
+console.log('\nУтримання по когортах');
+{
+  const r = calculateCohorts([
+    client({ id: 'a', purchaseMonths: ['2026-01', '2026-02', '2026-04'] }),
+    client({ id: 'b', purchaseMonths: ['2026-01'] }),
+    client({ id: 'c', purchaseMonths: ['2026-03', '2026-04'] }),
+    client({ id: 'd' }),
+  ]);
+
+  check('когорта — місяць першої покупки', Object.keys(r).sort(), ['2026-01', '2026-03']);
+  check('розмір січневої когорти', r['2026-01'].size, 2);
+  check('M0 — усі, хто прийшов', r['2026-01'].retention[0], 2);
+  check('M1 — повернувся один', r['2026-01'].retention[1], 1);
+  check('місяць без покупок порожній', r['2026-01'].retention[2], undefined);
+  check('M3 — той самий один', r['2026-01'].retention[3], 1);
+  // Клієнт без жодного місяця покупки не має від чого відлічувати когорту
+  check('клієнт без покупок когорти не утворює', Object.keys(r).length, 2);
 }
 
 console.log('\nРізання за розміром');

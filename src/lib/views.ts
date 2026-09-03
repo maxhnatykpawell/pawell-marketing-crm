@@ -75,8 +75,14 @@ export const DEFAULT_ALLOWED_VIEWS = VIEWS
  * Чи має право бачити розділ.
  *
  * Єдине місце, де це вирішується. Адмін бачить усе; решта — те, що видали,
- * плюс завжди доступні розділи. `event-details` і `gantt` — не окремі вкладки,
- * а сторінки всередині «Подій» і «Проєктів», тож і права на них ті самі.
+ * плюс завжди доступні розділи. `event-details`, `gantt` і `analytics` — не
+ * окремі права, а сторінки всередині «Подій», «Проєктів» і «Головної», тож і
+ * права на них ті самі.
+ *
+ * Аналітика навмисно не має власного прапорця: ці числа й раніше відкривались
+ * карткою LTV на головній. Окреме право означало б, що після оновлення розділ
+ * зник у всіх, кому права вже налаштували вручну, — а він не новий, він лише
+ * переїхав з модального вікна на власну вкладку.
  */
 export function canViewSection(
   view: string,
@@ -87,5 +93,6 @@ export function canViewSection(
   if (ALWAYS_ALLOWED_VIEWS.includes(view)) return true;
   if (view === 'event-details') return allowedViews.includes('events');
   if (view === 'gantt') return allowedViews.includes('projects');
+  if (view === 'analytics') return allowedViews.includes('dashboard');
   return allowedViews.includes(view);
 }
