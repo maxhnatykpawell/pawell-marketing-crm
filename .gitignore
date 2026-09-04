@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Локальні налаштування та worktree-и Claude Code
+.claude/
