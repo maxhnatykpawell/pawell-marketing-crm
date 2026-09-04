@@ -406,6 +406,7 @@ export default function App() {
       // Явний order потрібен, коли кілька карток створюють одним махом:
       // state ще не встиг оновитись, тож усі отримали б однаковий minOrder - 1.
       order: initialValues?.order ?? minOrder - 1,
+      updatedAt: new Date().toISOString(),
       projectId: activeProjectId,
       phaseId: initialValues?.phaseId ?? null
     };
@@ -439,6 +440,11 @@ export default function App() {
   }, [state, activeProjectId, updateCardAsync, currentUser, createNotification]);
 
   const updateCard = useCallback((cardId: string, updates: Partial<Card>) => {
+    // Будь-яка правка — це увага до задачі: за цим слідом видно проєкти, які
+    // стоять (lib/projectIdle). Ставимо тут, бо через updateCard проходить усе,
+    // що робить людина, — і рука, і асистент, який діє її руками.
+    updates = { ...updates, updatedAt: new Date().toISOString() };
+
     // Присвоюється нижче, одразу після setState. Telegram-сповіщення чекає на цю
     // обіцянку, бо сервер читає картку з БД — інакше візьме застарілі дані.
     let cardSaved: Promise<void> = Promise.resolve();

@@ -27,6 +27,8 @@ import {
 } from './src/lib/linkTitle';
 import { registerChatRoutes, chatStreamStats } from './chat-server';
 import { accessibleCards, scopeStateToUser } from './src/lib/projectAccess';
+import { randomUUID } from 'crypto';
+import { findIdleProjects, lastTouchedAt } from './src/lib/projectIdle';
 
 
 // ── Firebase Init ─────────────────────────────────────────────────────────────
@@ -154,6 +156,7 @@ const DEFAULT_NOTIFICATION_TEMPLATES = {
   taskOverdue: '⚠️ *Задача протермінована!*\n\n📌 *{{taskTitle}}*\n📅 Дедлайн був: {{deadline}}\n⏰ Прострочено на {{daysOverdue}} дн.',
   dailyDigestHeader: '📋 *Твої задачі на сьогодні, {{assigneeName}}!*\n\n',
   dailyDigestItem: '🔹 *{{taskTitle}}* — до {{deadline}}\n',
+  projectIdle: '🕸 *Проєкт стоїть без руху*\n\n🗂 *{{projectName}}*\n⏳ Нічого не рухалось {{days}} дн.\n📌 Незавершених задач: {{taskCount}}',
 };
 
 const DEFAULT_PERSONAL_NOTIFICATIONS = {
@@ -162,6 +165,8 @@ const DEFAULT_PERSONAL_NOTIFICATIONS = {
   notifyOnOverdue: true,
   dailyDigestEnabled: true,
   dailyDigestTime: '08:30',
+  projectIdleEnabled: true,
+  projectIdleDays: 7,
   templates: DEFAULT_NOTIFICATION_TEMPLATES,
 };
 
@@ -746,13 +751,119 @@ async function sendOverduePersonalNotifications(state: any): Promise<void> {
   }
 }
 
+/**
+ * Оновлює один запис — тим самим шляхом, що й PUT /api/entity.
+ *
+ * Крону нікуди слати HTTP-запит самому собі, а писати повз getDb/saveDb
+ * означало б завести другий спосіб зберігати те саме.
+ */
+async function updateEntityDoc(type: string, id: string, updates: any): Promise<void> {
+  const db = initFirebase();
+  if (db) {
+    await db.collection('crm_' + type).doc(id).set(updates, { merge: true });
+  } else {
+    const state = await getDb();
+    if (state[type]) {
+      state[type] = state[type].map((item: any) => (item.id === id ? { ...item, ...updates } : item));
+      await saveDb(state);
+    }
+  }
+  await updateLastModified();
+}
+
+/**
+ * Записує сповіщення в дзвіночок.
+ *
+ * Решта сповіщень створює браузер, але тут нікого немає: перевірку робить крон.
+ * Пишемо тим самим шляхом, що й /api/entity, — щоб запис нічим не відрізнявся
+ * від того, який зробив би застосунок.
+ */
+async function createServerNotification(notification: any): Promise<void> {
+  const db = initFirebase();
+  if (db) {
+    await db.collection('crm_notifications').doc(notification.id).set(notification);
+    return;
+  }
+  const state = await getDb();
+  state.notifications = [...(state.notifications || []), notification];
+  await saveDb(state);
+}
+
+/**
+ * Проєкти, які давно стоять, — відповідальному.
+ *
+ * Перед перевіркою проставляємо updatedAt карткам, у яких його ще немає.
+ * Поле з'явилось разом із цією перевіркою, і без такого початкового відліку
+ * кожна давня картка виглядала б занедбаною з першого ж дня — команда
+ * отримала б лавину нагадувань про все одразу. Так відлік починається з
+ * моменту, коли перевірку ввімкнули.
+ */
+async function notifyIdleProjects(state: any): Promise<void> {
+  const settings = state.personalNotifications || DEFAULT_PERSONAL_NOTIFICATIONS;
+  if (!settings.enabled || settings.projectIdleEnabled === false) return;
+
+  const idleDays = Number(settings.projectIdleDays ?? DEFAULT_PERSONAL_NOTIFICATIONS.projectIdleDays);
+  if (!(idleDays > 0)) return;
+
+  const now = new Date();
+  const projects = state.projects || [];
+  const projectIds = new Set(projects.map((p: any) => p.id));
+
+  const unstamped = (state.cards || []).filter(
+    (c: any) => c.projectId && projectIds.has(c.projectId) && !lastTouchedAt(c),
+  );
+  for (const card of unstamped) {
+    card.updatedAt = now.toISOString();
+    await updateEntityDoc('cards', card.id, { updatedAt: card.updatedAt });
+  }
+  if (unstamped.length) {
+    console.log(`🕸 Project idle check: stamped ${unstamped.length} card(s) with a starting point`);
+  }
+
+  const idle = findIdleProjects(projects, state.cards || [], now, idleDays);
+  if (idle.length === 0) return;
+
+  const tpl = settings.templates?.projectIdle || DEFAULT_NOTIFICATION_TEMPLATES.projectIdle;
+
+  for (const item of idle) {
+    const text = fillTemplate(tpl, {
+      projectName: item.project.title,
+      days: String(item.days),
+      taskCount: String(item.taskCount),
+    });
+
+    for (const userId of item.recipientIds) {
+      const user = (state.users || []).find((u: any) => u.id === userId);
+      if (!user) continue;
+
+      await createServerNotification({
+        id: randomUUID(),
+        userId,
+        title: 'Проєкт стоїть без руху',
+        message: `«${item.project.title}» — нічого не рухалось ${item.days} дн. Незавершених задач: ${item.taskCount}.`,
+        read: false,
+        createdAt: now.toISOString(),
+      });
+
+      if (user.telegramChatId) await sendPersonalTelegramMessage(user.telegramChatId, text);
+      console.log(`🕸 Idle project notice sent to ${user.name} about "${item.project.title}"`);
+    }
+
+    // Позначку ставимо навіть тоді, коли Telegram не дійшов: інакше наступного
+    // ранку людина отримала б те саме нагадування вдруге.
+    await updateEntityDoc('projects', item.project.id, { lastIdleNotifiedAt: now.toISOString() });
+  }
+}
+
 let personalDigestCronTask: any = null;
 let overdueNotifCronTask: any = null;
+let idleProjectCronTask: any = null;
 
 function setupPersonalNotificationCrons(settings: any) {
   // Stop existing
   if (personalDigestCronTask) { personalDigestCronTask.stop(); personalDigestCronTask = null; }
   if (overdueNotifCronTask) { overdueNotifCronTask.stop(); overdueNotifCronTask = null; }
+  if (idleProjectCronTask) { idleProjectCronTask.stop(); idleProjectCronTask = null; }
 
   if (!settings?.enabled) return;
 
@@ -784,6 +895,22 @@ function setupPersonalNotificationCrons(settings: any) {
       }, { timezone: 'Europe/Kyiv' });
       console.log(`📅 Overdue notifications cron scheduled.`);
     } catch (err) { console.error('❌ Invalid overdue cron:', err); }
+  }
+
+  // Занедбані проєкти — раз на добу, через 10 хвилин після дайджесту: одна
+  // ранкова розсилка замість трьох повідомлень підряд.
+  if (settings.projectIdleEnabled !== false && settings.dailyDigestTime) {
+    const [h, m] = settings.dailyDigestTime.split(':').map(Number);
+    const total = (h * 60 + m + 10) % 1440;
+    const expr = `${total % 60} ${Math.floor(total / 60)} * * *`;
+    try {
+      idleProjectCronTask = cron.schedule(expr, async () => {
+        console.log('📅 Checking idle projects...');
+        const state = await getDb();
+        await notifyIdleProjects(state);
+      }, { timezone: 'Europe/Kyiv' });
+      console.log('📅 Idle project cron scheduled.');
+    } catch (err) { console.error('❌ Invalid idle project cron:', err); }
   }
 }
 
@@ -2416,6 +2543,14 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
   });
 
   // Manually trigger personal digests (admin only)
+  app.post('/api/notify/check-idle-projects', requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const state = await getDb();
+      await notifyIdleProjects(state);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.post('/api/notify/send-digests', requireAuth, requireAdmin, async (req, res) => {
     try {
       const state = await getDb();

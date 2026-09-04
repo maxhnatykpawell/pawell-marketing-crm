@@ -36,10 +36,28 @@ const lists = [
   { id: 'l3', title: 'Готово', order: 2, boardId: 'b1' },
 ];
 
+// Свої адреси, а не зовнішні: зовнішня адреса читається як посилання, і
+// обкладинкою стати не може — саме так, як у застосунку з /uploads/…
+const img = (id, name, color) => ({
+  id, name, kind: 'file',
+  url: 'data:image/svg+xml;utf8,' + encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='600' height='400'><rect width='600' height='400' fill='${color}'/><text x='300' y='210' font-size='48' fill='white' text-anchor='middle' font-family='sans-serif'>${name}</text></svg>`),
+});
+const doc = (id, name) => ({ id, name, url: '/uploads/' + name, kind: 'file' });
+
 const cards = [
-  { id: 'c1', listId: 'l1', title: 'Бриф', description: '', deadline: null, assigneeId: 'u1', subtasks: [], comments: [], attachments: [], order: 0, projectId: 'p1' },
-  { id: 'c2', listId: 'l2', title: 'Креативи', description: '', deadline: null, assigneeId: 'u2', subtasks: [], comments: [], attachments: [], order: 1, projectId: 'p1' },
-  { id: 'c3', listId: 'l2', title: 'Гайдлайн', description: '', deadline: null, assigneeId: null, subtasks: [], comments: [], attachments: [], order: 2, projectId: 'p2' },
+  // Обкладинку не вибирали — має стати найсвіже фото (друге)
+  { id: 'c1', listId: 'l1', title: 'Бриф', description: '', deadline: null, assigneeId: 'u1', subtasks: [], comments: [],
+    attachments: [doc('f0', 'brief.pdf'), img('f1', 'first.jpg', '%23475569'), img('f2', 'second.jpg', '%230ea5e9')], order: 0, projectId: 'p1' },
+  // Обкладинку вибрали руками — має лишитись перше фото
+  { id: 'c2', listId: 'l2', title: 'Креативи', description: '', deadline: null, assigneeId: 'u2', subtasks: [], comments: [],
+    attachments: [img('f3', 'a.png', '%2316a34a'), img('f4', 'b.png', '%23f59e0b')], coverAttachmentId: 'f3', order: 1, projectId: 'p1' },
+  // Обкладинку прибрали руками — фото є, обкладинки бути не має
+  { id: 'c3', listId: 'l2', title: 'Гайдлайн', description: '', deadline: null, assigneeId: null, subtasks: [], comments: [],
+    attachments: [img('f5', 'c.jpg', '%23e11d48')], coverAttachmentId: null, order: 2, projectId: 'p2' },
+  // Тільки документ — обкладинки немає
+  { id: 'c4', listId: 'l1', title: 'Кошторис', description: '', deadline: null, assigneeId: null, subtasks: [], comments: [],
+    attachments: [doc('f6', 'budget.xlsx')], order: 3, projectId: 'p1' },
 ];
 
 function Harness() {

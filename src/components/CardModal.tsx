@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom';
 import { Card, Subtask, Comment, Attachment } from '../types';
 import { useAppContext } from '../App';
 import { uploadFile, reviewPlanWithAI, fetchLinkTitle } from '../api';
+import { coverAfterRemoving, isImageAttachment, resolveCover } from '../lib/cardCover';
 import {
   X, Calendar, AlignLeft, CheckSquare, Paperclip, Trash2,
   FolderKanban, Clock, Sparkles, Plus, Tag, Users, MessageSquare,
-  Image, Eye, MoreHorizontal, Circle, CheckCircle2, ChevronDown,
+  Image, Image as ImageIcon, Eye, MoreHorizontal, Circle, CheckCircle2, ChevronDown,
   User as UserIcon, Check, AlertTriangle, Link2, ExternalLink, Loader2,
   GripVertical, SquarePlus, Layers
 } from 'lucide-react';
@@ -48,16 +49,18 @@ function AvatarFallback({ name, color }: { name: string; color?: string }) {
  * того щоб перезалити файл.
  */
 const AttachmentRow = React.memo(function AttachmentRow({
-  att, canEdit, onRemove,
+  att, canEdit, isCover, onRemove, onSetCover,
 }: {
   att: Attachment;
   canEdit: boolean;
+  isCover: boolean;
   onRemove: () => void;
+  onSetCover: (next: string | null) => void;
 }) {
   const [broken, setBroken] = useState(false);
   const isLink = att.kind === 'link' || isExternalUrl(att.url);
   const provider = isLink ? detectProvider(att.url) : null;
-  const isImage = !isLink && /\.(jpeg|jpg|gif|png|webp|svg)$/i.test(att.name);
+  const isImage = isImageAttachment(att);
 
   if (isLink && provider) {
     return (
@@ -102,7 +105,7 @@ const AttachmentRow = React.memo(function AttachmentRow({
           src={att.url}
           alt={att.name}
           onError={() => setBroken(true)}
-          className="w-12 h-12 object-cover rounded-lg border border-gray-200"
+          className={`w-12 h-12 object-cover rounded-lg border ${isCover ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'}`}
         />
       ) : (
         <div
@@ -121,9 +124,21 @@ const AttachmentRow = React.memo(function AttachmentRow({
             Файл недоступний — його немає у сховищі сервера. Перезалийте вкладення.
           </p>
         ) : (
-          <div className="flex gap-2 mt-1">
+          <div className="flex flex-wrap items-center gap-2 mt-1">
             <a href={att.url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Відкрити</a>
             <a href={att.url} download={att.name} className="text-xs text-green-600 hover:underline">Завантажити</a>
+            {canEdit && isImage && (
+              <button
+                onClick={() => onSetCover(isCover ? null : att.id)}
+                className={`inline-flex items-center gap-1 text-xs font-medium transition ${
+                  isCover ? 'text-blue-700 hover:text-blue-900' : 'text-gray-400 hover:text-blue-600'
+                }`}
+                title={isCover ? 'Прибрати обкладинку картки' : 'Показувати це фото на картці'}
+              >
+                <ImageIcon className="w-3 h-3" />
+                {isCover ? 'Обкладинка — прибрати' : 'Зробити обкладинкою'}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -337,7 +352,13 @@ export default function CardModal({ card, onClose }: Props) {
     try {
       const attachment = await uploadFile(file);
       attachment.id = uuidv4();
-      handleUpdate({ attachments: [...(card.attachments || []), attachment] });
+      // Залите фото одразу стає обкладинкою — як у Trello. Пишемо вибір явно,
+      // а не покладаємось на «найсвіжіше»: інакше фото, залите в картку, де
+      // обкладинку раніше прибрали руками, не показалось би.
+      handleUpdate({
+        attachments: [...(card.attachments || []), attachment],
+        ...(isImageAttachment(attachment) ? { coverAttachmentId: attachment.id } : {}),
+      });
     } catch {
       alert('Upload failed');
     } finally {
@@ -403,6 +424,7 @@ export default function CardModal({ card, onClose }: Props) {
 
   // Always read the LIVE card from state so updates (tags, assignee…) are reflected immediately
   const liveCard = state.cards.find(c => c.id === card.id) || card;
+  const cover = resolveCover(liveCard);
 
   // Assignee: the main card assigneeId
   const assignees = liveCard.assigneeId ? [state.users.find(u => u.id === liveCard.assigneeId)].filter(Boolean) : [];
@@ -1171,7 +1193,12 @@ export default function CardModal({ card, onClose }: Props) {
                       key={att.id}
                       att={att}
                       canEdit={hasEditRights}
-                      onRemove={() => handleUpdate({ attachments: liveCard.attachments!.filter(a => a.id !== att.id) })}
+                      isCover={cover?.id === att.id}
+                      onSetCover={next => handleUpdate({ coverAttachmentId: next })}
+                      onRemove={() => handleUpdate({
+                        attachments: liveCard.attachments!.filter(a => a.id !== att.id),
+                        ...coverAfterRemoving(liveCard, att.id),
+                      })}
                     />
                   ))}
                 </div>

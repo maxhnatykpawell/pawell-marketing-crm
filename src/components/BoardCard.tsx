@@ -8,6 +8,7 @@ import CardModal from './CardModal';
 import { cn } from '../utils';
 import { detectProvider, isExternalUrl } from '../lib/links';
 import { rangeOf, toLocalDate } from '../lib/gantt';
+import { resolveCover } from '../lib/cardCover';
 import FileTypeIcon from './FileTypeIcon';
 
 interface Props {
@@ -71,6 +72,7 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
     .map(id => state.users.find(u => u.id === id))
     .filter(Boolean) as typeof state.users;
 
+  const cover = resolveCover(card);
   const cardRange = rangeOf(card);
   const isOverdue = card.deadline && new Date(card.deadline) < new Date() && card.listId !== state.lists[state.lists.length - 1]?.id && !card.isCompleted; // basic logic, last list is done
 
@@ -106,6 +108,21 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
               {isSelected && <Check className="w-3 h-3 text-white" />}
             </div>
           </div>
+        )}
+        {/*
+          Обкладинка стоїть над усім іншим — саме по ній картку впізнають у
+          стрічці, не читаючи назви. Помилку завантаження ковтаємо мовчки:
+          зникле фото має просто не показатись, а не залишити рвану іконку
+          посеред дошки.
+        */}
+        {cover && (
+          <img
+            src={cover.url}
+            alt=""
+            loading="lazy"
+            onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+            className="w-full h-32 object-cover shrink-0 bg-gray-100"
+          />
         )}
         {project && (
           <div className="h-1 w-full shrink-0" style={{ backgroundColor: project.color }} title={`Проєкт: ${project.title}`} />

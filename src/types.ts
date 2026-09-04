@@ -75,6 +75,8 @@ export interface NotificationTemplates {
   taskOverdue: string;       // Змінні: {{taskTitle}}, {{deadline}}, {{daysOverdue}}
   dailyDigestHeader: string; // Шапка щоденного дайджесту
   dailyDigestItem: string;   // Рядок задачі: {{taskTitle}}, {{deadline}}
+  /** Проєкт стоїть: {{projectName}}, {{days}}, {{taskCount}} */
+  projectIdle?: string;
 }
 
 export interface PersonalNotificationSettings {
@@ -83,6 +85,10 @@ export interface PersonalNotificationSettings {
   notifyOnOverdue: boolean;
   dailyDigestEnabled: boolean;
   dailyDigestTime: string;  // "HH:mm"
+  /** Казати відповідальному, що проєкт давно стоїть */
+  projectIdleEnabled?: boolean;
+  /** Скільки діб тиші вважати занедбаністю */
+  projectIdleDays?: number;
   templates: NotificationTemplates;
 }
 
@@ -202,6 +208,17 @@ export interface Card {
   phaseId?: string | null;
   estimatedMinutes?: number;
   storyPoints?: number;
+  /**
+   * Обкладинка — одне з вкладень-картинок. Поля немає — беремо найсвіже фото,
+   * null — обкладинку прибрали руками (див. lib/cardCover).
+   */
+  coverAttachmentId?: string | null;
+  /**
+   * Коли картку востаннє змінювали — будь-яка правка, перенос, дата чи
+   * підзадача. За цим полем видно проєкти, до яких давно ніхто не торкався
+   * (див. lib/projectIdle).
+   */
+  updatedAt?: string;
 }
 
 export interface List {
@@ -268,6 +285,8 @@ export interface Project {
   managerIds: string[];
   /** Чий це проєкт: за замовчуванням той, хто створив */
   ownerId?: string | null;
+  /** Коли востаннє казали, що проєкт стоїть — щоб не нагадувати щодня */
+  lastIdleNotifiedAt?: string | null;
   /**
    * Кому відкрито доступ поіменно. Порожній список означає відкритий
    * проєкт — правило описане в lib/projectAccess.

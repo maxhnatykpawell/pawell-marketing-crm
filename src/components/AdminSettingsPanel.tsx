@@ -3,7 +3,7 @@ import { useAppContext } from '../App';
 import {
   Settings, ChevronDown, ChevronUp, Check, Clock,
   Megaphone, Plus, Trash2, Edit3, X, Send, ToggleLeft, ToggleRight,
-  Bell, BellOff, MessageCircle, AlarmClock, FileText
+  Bell, BellOff, MessageCircle, AlarmClock, FileText, FolderClock
 } from 'lucide-react';
 import {
   getAnnouncements, createAnnouncement, updateAnnouncement,
@@ -220,6 +220,7 @@ export default function AdminSettingsPanel() {
     taskOverdue: '⚠️ *Задача протермінована!*\n\n📌 *{{taskTitle}}*\n📅 Дедлайн був: {{deadline}}\n⏰ Прострочено на {{daysOverdue}} дн.',
     dailyDigestHeader: '📋 *Твої задачі на сьогодні, {{assigneeName}}!*\n\n',
     dailyDigestItem: '🔹 *{{taskTitle}}* — до {{deadline}}\n',
+    projectIdle: '🕸 *Проєкт стоїть без руху*\n\n🗂 *{{projectName}}*\n⏳ Нічого не рухалось {{days}} дн.\n📌 Незавершених задач: {{taskCount}}',
   };
   const defaultPNSettings: PersonalNotificationSettings = {
     enabled: true,
@@ -227,6 +228,8 @@ export default function AdminSettingsPanel() {
     notifyOnOverdue: true,
     dailyDigestEnabled: true,
     dailyDigestTime: '08:30',
+    projectIdleEnabled: true,
+    projectIdleDays: 7,
     templates: DEFAULT_TEMPLATES,
   };
   const [pnSettings, setPnSettings] = useState<PersonalNotificationSettings>(
@@ -624,7 +627,43 @@ export default function AdminSettingsPanel() {
                     {pnSettings.dailyDigestEnabled ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6 text-gray-300" />}
                   </button>
                 </label>
+
+                <label className="flex items-center justify-between bg-purple-50/60 border border-purple-100 rounded-xl px-3.5 py-2.5 cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <FolderClock className="w-4 h-4 text-purple-500" />
+                    <div>
+                      <p className="text-sm font-semibold text-gray-800">🕸 Проєкт без руху</p>
+                      <p className="text-[11px] text-gray-500">Власнику проєкту, коли всі задачі стоять</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setPnSettings(s => ({ ...s, projectIdleEnabled: !(s.projectIdleEnabled !== false) }))}
+                    className="text-purple-500"
+                  >
+                    {pnSettings.projectIdleEnabled !== false ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6 text-gray-300" />}
+                  </button>
+                </label>
               </div>
+
+              {/* Поріг тиші */}
+              {pnSettings.projectIdleEnabled !== false && (
+                <div className="flex flex-wrap items-center gap-3">
+                  <FolderClock className="w-4 h-4 text-gray-400 shrink-0" />
+                  <span className="text-xs text-gray-600 font-medium">Вважати проєкт занедбаним після:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={pnSettings.projectIdleDays ?? 7}
+                    onChange={e => setPnSettings(s => ({ ...s, projectIdleDays: Math.max(1, Number(e.target.value) || 1) }))}
+                    className="w-20 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-purple-300"
+                  />
+                  <span className="text-xs text-gray-600 font-medium">діб тиші</span>
+                  <span className="text-[10px] text-gray-400">
+                    Рахується остання зміна задачі; повторно нагадуємо не раніше, ніж через стільки ж діб.
+                  </span>
+                </div>
+              )}
 
               {/* Digest time */}
               {pnSettings.dailyDigestEnabled && (
@@ -659,7 +698,9 @@ export default function AdminSettingsPanel() {
                       <code>{'{{assigneeName}}'}</code>{' '}·{' '}
                       <code>{'{{deadline}}'}</code>{' '}·{' '}
                       <code>{'{{projectName}}'}</code>{' '}·{' '}
-                      <code>{'{{daysOverdue}}'}</code>
+                      <code>{'{{daysOverdue}}'}</code>{' '}·{' '}
+                      <code>{'{{days}}'}</code>{' '}·{' '}
+                      <code>{'{{taskCount}}'}</code>
                     </div>
 
                     {([
@@ -667,6 +708,7 @@ export default function AdminSettingsPanel() {
                       { key: 'taskOverdue', label: '⚠️ Протермінована задача', hint: 'taskTitle, deadline, daysOverdue' },
                       { key: 'dailyDigestHeader', label: '📋 Шапка дайджесту', hint: 'assigneeName' },
                       { key: 'dailyDigestItem', label: '🔹 Рядок задачі', hint: 'taskTitle, deadline' },
+                      { key: 'projectIdle', label: '🕸 Проєкт без руху', hint: 'projectName, days, taskCount' },
                     ] as { key: keyof NotificationTemplates; label: string; hint: string }[]).map(({ key, label, hint }) => (
                       <div key={key}>
                         <label className="block text-xs font-semibold text-gray-600 mb-1">
@@ -674,13 +716,13 @@ export default function AdminSettingsPanel() {
                           <span className="ml-1 font-normal text-gray-400">({hint})</span>
                         </label>
                         <textarea
-                          value={pnSettings.templates[key]}
+                          value={pnSettings.templates[key] ?? DEFAULT_TEMPLATES[key] ?? ''}
                           onChange={e => setPnSettings(s => ({ ...s, templates: { ...s.templates, [key]: e.target.value } }))}
                           rows={3}
                           className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-sky-100 focus:border-sky-400 resize-y font-mono"
                         />
                         <button
-                          onClick={() => setPnSettings(s => ({ ...s, templates: { ...s.templates, [key]: DEFAULT_TEMPLATES[key] } }))}
+                          onClick={() => setPnSettings(s => ({ ...s, templates: { ...s.templates, [key]: DEFAULT_TEMPLATES[key] as string } }))}
                           className="mt-1 text-[10px] text-gray-400 hover:text-gray-600 transition"
                         >
                           ↺ Повернути за замовчунням
