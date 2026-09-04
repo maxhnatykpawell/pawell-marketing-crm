@@ -118,7 +118,7 @@ const INITIAL_APP_STATE = {
   lastModified: new Date().toISOString(),
 };
 
-const ATOMIC_COLLECTIONS = ['users', 'userGroups', 'lists', 'cards', 'tags', 'contentPlans', 'events', 'projects', 'metrics', 'boards', 'processes', 'notifications', 'expenses', 'payrolls'];
+const ATOMIC_COLLECTIONS = ['users', 'userGroups', 'lists', 'cards', 'tags', 'contentPlans', 'events', 'projects', 'phases', 'metrics', 'boards', 'processes', 'notifications', 'expenses', 'payrolls'];
 const SETTINGS_DOC = 'settings';
 
 /**

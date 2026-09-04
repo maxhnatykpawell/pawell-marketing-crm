@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppContext } from '../App';
-import { Card, Subtask } from '../types';
+import { Card, Phase, Subtask } from '../types';
 import CardModal from './CardModal';
 import {
   ArrowLeft, CalendarRange, ChevronDown, ChevronRight, CheckCircle2, Circle,
-  CornerDownRight, Crosshair, Eraser, FolderKanban, Plus, X,
+  CornerDownRight, Crosshair, Eraser, FolderKanban, GripVertical, Layers, Plus, Trash2, X,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
@@ -52,7 +52,9 @@ type Scale = keyof typeof DAY_WIDTH;
 
 interface Row {
   key: string;
-  kind: 'card' | 'subtask';
+  kind: 'phase' | 'card' | 'subtask';
+  /** У рядка етапу — його власний id; у задачі — етап, у якому вона лежить */
+  phaseId?: string | null;
   cardId: string;
   subtaskId?: string;
   title: string;
@@ -66,6 +68,16 @@ interface Row {
   progress: number;
   hasChildren: boolean;
   collapsed: boolean;
+  /** Скільки задач в етапі — показуємо поруч із назвою */
+  childCount?: number;
+}
+
+/** Рядок етапу разом із його задачами: етапи — це групи рядків. */
+interface RowGroup {
+  /** null — псевдоетап «Без етапу» */
+  phase: Phase | null;
+  key: string;
+  rows: Row[];
 }
 
 type DragMode = 'move' | 'start' | 'end' | 'draw';
@@ -83,8 +95,32 @@ interface DragState {
   shiftChildren: boolean;
 }
 
+/**
+ * Перетягування задачі між етапами.
+ *
+ * Це окремий жест, а не той самий, що рухає смужки: там тягнуть дати вздовж
+ * шкали, а тут — саму задачу впоперек, з групи в групу. Ціль визначаємо
+ * попаданням курсора в прямокутник групи, а не наведенням на рядок: між
+ * рядками є проміжки, і на них ціль губилася б.
+ */
+interface RowDrag {
+  cardId: string;
+  title: string;
+  fromPhaseId: string | null;
+  x: number;
+  y: number;
+  /** undefined — курсор поза будь-якою групою */
+  overKey: string | undefined;
+}
+
+const PHASE_COLORS = ['#6366f1', '#0ea5e9', '#14b8a6', '#f59e0b', '#ec4899', '#8b5cf6'];
+const NO_PHASE = '__none__';
+
 export default function ProjectGanttView() {
-  const { state, activeProjectId, activeBoardId, setActiveView, updateCard, addCard, hasEditRights } = useAppContext();
+  const {
+    state, activeProjectId, activeBoardId, setActiveView, updateCard, addCard,
+    addPhase, updatePhase, deletePhase, confirmAction, hasEditRights,
+  } = useAppContext();
 
   const project = (state.projects || []).find(p => p.id === activeProjectId) || null;
   const [scale, setScale] = useState<Scale>('day');
@@ -92,7 +128,9 @@ export default function ProjectGanttView() {
   const [openCardId, setOpenCardId] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState({ title: '', listId: '', start: '', end: '' });
+  const [draft, setDraft] = useState({ title: '', listId: '', start: '', end: '', phaseId: '' });
+  const [rowDrag, setRowDrag] = useState<RowDrag | null>(null);
+  const [renamingPhaseId, setRenamingPhaseId] = useState<string | null>(null);
 
   const dayWidth = DAY_WIDTH[scale];
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -103,8 +141,16 @@ export default function ProjectGanttView() {
     [state.cards, activeProjectId],
   );
 
-  /** Рядки діаграми: картка, а під нею — її підзадачі. */
-  const rows = useMemo<Row[]>(() => {
+  const phases = useMemo<Phase[]>(
+    () => (state.phases || []).filter(ph => ph.projectId === activeProjectId),
+    [state.phases, activeProjectId],
+  );
+
+  /** Охоплення задачі: власні дати або, якщо їх немає, дати підзадач. */
+  const cardSpan = (card: Card) => rangeOf(card) || spanOf((card.subtasks || []).map(rangeOf));
+
+  /** Рядки діаграми, зібрані в групи-етапи. */
+  const groups = useMemo<RowGroup[]>(() => {
     const build = (card: Card): Row[] => {
       const subtasks = card.subtasks || [];
       const ownRange = rangeOf(card);
@@ -145,17 +191,93 @@ export default function ProjectGanttView() {
     };
 
     // Заплановані — за датою початку, незаплановані — в кінці, у порядку дошки.
-    const ordered = [...cards].sort((a, b) => {
-      const ra = rangeOf(a) || spanOf((a.subtasks || []).map(rangeOf));
-      const rb = rangeOf(b) || spanOf((b.subtasks || []).map(rangeOf));
-      if (ra && rb) return ra.start.localeCompare(rb.start) || a.order - b.order;
+    const comparePlan = (ra: DayRange | null, rb: DayRange | null, oa: number, ob: number) => {
+      if (ra && rb) return ra.start.localeCompare(rb.start) || oa - ob;
       if (ra) return -1;
       if (rb) return 1;
-      return a.order - b.order;
-    });
+      return oa - ob;
+    };
 
-    return ordered.flatMap(build);
-  }, [cards, collapsed]);
+    const ordered = [...cards].sort((a, b) => comparePlan(cardSpan(a), cardSpan(b), a.order, b.order));
+
+    // Задачі етапу, який хтось видалив на іншій вкладці, не мають зникнути з
+    // очей: посилання в нікуди читаємо як «без етапу».
+    const known = new Set(phases.map(ph => ph.id));
+    const inPhase = (id: string) => ordered.filter(c => c.phaseId === id);
+    const loose = ordered.filter(c => !c.phaseId || !known.has(c.phaseId));
+
+    const phaseGroup = (phase: Phase): RowGroup => {
+      const own = inPhase(phase.id);
+      const span = spanOf(own.map(cardSpan));
+      const done = own.filter(c => c.isCompleted).length;
+      const isCollapsed = collapsed.has(phase.id);
+      const phaseRow: Row = {
+        key: `phase:${phase.id}`,
+        kind: 'phase',
+        phaseId: phase.id,
+        cardId: '',
+        title: phase.title,
+        completed: own.length > 0 && done === own.length,
+        range: null,
+        // Етап не має власних дат — його смужка це охоплення задач
+        summary: span,
+        progress: own.length ? done / own.length : 0,
+        hasChildren: own.length > 0,
+        collapsed: isCollapsed,
+        childCount: own.length,
+      };
+      return {
+        phase,
+        key: phase.id,
+        rows: isCollapsed ? [phaseRow] : [phaseRow, ...own.flatMap(build)],
+      };
+    };
+
+    // Етапи шикуються так само, як задачі: за початком у часі. Так порядок
+    // рядків збігається з порядком смужок, і читати діаграму можна згори вниз.
+    const phaseGroups = [...phases]
+      .sort((a, b) => comparePlan(
+        spanOf(inPhase(a.id).map(cardSpan)),
+        spanOf(inPhase(b.id).map(cardSpan)),
+        a.order, b.order,
+      ))
+      .map(phaseGroup);
+
+    const looseRows = loose.flatMap(build);
+
+    // Поки етапів немає, діаграма лишається пласким списком, як була: окремий
+    // заголовок «Без етапу» над усіма задачами був би шумом.
+    if (phaseGroups.length === 0) {
+      return [{ phase: null, key: NO_PHASE, rows: looseRows }];
+    }
+
+    const looseSpan = spanOf(loose.map(cardSpan));
+    const looseHeader: Row = {
+      key: `phase:${NO_PHASE}`,
+      kind: 'phase',
+      phaseId: null,
+      cardId: '',
+      title: 'Без етапу',
+      completed: false,
+      range: null,
+      summary: looseSpan,
+      progress: 0,
+      hasChildren: loose.length > 0,
+      collapsed: collapsed.has(NO_PHASE),
+      childCount: loose.length,
+    };
+
+    return [
+      ...phaseGroups,
+      {
+        phase: null,
+        key: NO_PHASE,
+        rows: collapsed.has(NO_PHASE) ? [looseHeader] : [looseHeader, ...looseRows],
+      },
+    ];
+  }, [cards, phases, collapsed]);
+
+  const rows = useMemo(() => groups.flatMap(g => g.rows), [groups]);
 
   const timeline = useMemo(() => {
     const ranges = rows.flatMap(r => [r.range, r.summary]);
@@ -253,6 +375,34 @@ export default function ProjectGanttView() {
   const commit = (gesture: DragState | null) => {
     if (!gesture) return;
     const { row, preview, base, shiftChildren } = gesture;
+
+    if (row.kind === 'phase') {
+      // Етап не має власних дат, тож «перенести етап» означає перенести все,
+      // що в ньому лежить, на однакову кількість днів — і задачі, і їхні
+      // підзадачі. Незаплановане лишається незапланованим: вигадувати йому
+      // дати через сусідів по етапу не можна.
+      const delta = base ? diffDays(base.start, preview.start) : 0;
+      if (!delta) return;
+      state.cards
+        .filter(c => c.projectId === activeProjectId && (c.phaseId || null) === (row.phaseId || null))
+        .forEach(c => {
+          const own = rangeOf(c);
+          const subtasks = c.subtasks || [];
+          const shifted = shiftSchedulables(subtasks, delta);
+          // shiftSchedulables лишає незаплановані пункти тими самими об'єктами,
+          // тож порівняння за посиланням і каже, чи справді щось зрушило.
+          const movedSubtasks = shifted.some((st, i) => st !== subtasks[i]);
+          // Задача без дат у цьому етапі просто не має чого рухати — писати їй
+          // порожнє оновлення означало б зайвий запит на кожне тягання етапу.
+          if (!own && !movedSubtasks) return;
+          updateCard(c.id, {
+            ...(own ? rangeToFields(shiftRange(own, delta)) : {}),
+            ...(movedSubtasks ? { subtasks: shifted } : {}),
+          });
+        });
+      return;
+    }
+
     const card = state.cards.find(c => c.id === row.cardId);
     if (!card) return;
 
@@ -298,6 +448,94 @@ export default function ProjectGanttView() {
       row, mode: 'draw', originX: e.clientX, trackLeft,
       anchorDay: anchor, base: null, preview: { start: anchor, end: anchor }, shiftChildren: false,
     });
+  };
+
+  /* ────────────────── перетягування задачі між етапами ────────────────── */
+
+  /**
+   * Прямокутники груп тримаємо в ref, а не рахуємо на кожен рух: під час жесту
+   * розмітка не міняється, а getBoundingClientRect у mousemove — найдорожче,
+   * що тут може бути.
+   */
+  const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const rowDragRef = useRef<RowDrag | null>(null);
+  const stopRowDrag = useRef<() => void>(() => {});
+  useEffect(() => () => stopRowDrag.current(), []);
+
+  const beginRowDrag = (e: React.MouseEvent, row: Row) => {
+    if (!hasEditRights || row.kind !== 'card') return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rects = Object.entries(groupRefs.current)
+      .filter(([, el]) => el)
+      .map(([key, el]) => ({ key, rect: (el as HTMLDivElement).getBoundingClientRect() }));
+    const keyAt = (y: number) => rects.find(r => y >= r.rect.top && y <= r.rect.bottom)?.key;
+
+    const initial: RowDrag = {
+      cardId: row.cardId,
+      title: row.title,
+      fromPhaseId: row.phaseId || null,
+      x: e.clientX,
+      y: e.clientY,
+      overKey: keyAt(e.clientY),
+    };
+    rowDragRef.current = initial;
+    setRowDrag(initial);
+
+    const onMove = (ev: MouseEvent) => {
+      const current = rowDragRef.current;
+      if (!current) return;
+      const next = { ...current, x: ev.clientX, y: ev.clientY, overKey: keyAt(ev.clientY) };
+      rowDragRef.current = next;
+      setRowDrag(next);
+    };
+
+    const onUp = () => {
+      detach();
+      const current = rowDragRef.current;
+      rowDragRef.current = null;
+      setRowDrag(null);
+      if (!current?.overKey) return;
+      const target = current.overKey === NO_PHASE ? null : current.overKey;
+      if (target === current.fromPhaseId) return;
+      updateCard(current.cardId, { phaseId: target });
+    };
+
+    const detach = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      stopRowDrag.current = () => {};
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    stopRowDrag.current = detach;
+  };
+
+  /* ──────────────────────────── етапи ──────────────────────────── */
+
+  const createPhase = () => {
+    if (!activeProjectId) return;
+    const phase = {
+      projectId: activeProjectId,
+      title: `Етап ${phases.length + 1}`,
+      color: PHASE_COLORS[phases.length % PHASE_COLORS.length],
+      order: phases.length,
+    };
+    // Назву одразу дають свою — «Етап 3» це заготовка, а не назва. Тому
+    // addPhase віддає створений етап: інакше поле для перейменування не було б
+    // до чого прив'язати.
+    setRenamingPhaseId(addPhase(phase).id);
+  };
+
+  const removePhase = (phase: Phase, taskCount: number) => {
+    confirmAction(
+      taskCount > 0
+        ? `Видалити етап «${phase.title}»? ${taskCount} задач(і) лишаться на місці й повернуться в «Без етапу».`
+        : `Видалити етап «${phase.title}»?`,
+      () => deletePhase(phase.id),
+    );
   };
 
   const clearSchedule = (row: Row) => {
@@ -350,7 +588,10 @@ export default function ProjectGanttView() {
     if (!title || !draft.listId) return;
     const start = draft.start || draft.end;
     const end = draft.end || draft.start;
-    addCard(draft.listId, title, rangeToFields(start ? rangeFromDrag(start, end) : null));
+    addCard(draft.listId, title, {
+      ...rangeToFields(start ? rangeFromDrag(start, end) : null),
+      phaseId: draft.phaseId || null,
+    });
     // Список і дати лишаємо: підряд додають кілька задач одного етапу.
     setDraft(d => ({ ...d, title: '' }));
   };
@@ -462,6 +703,16 @@ export default function ProjectGanttView() {
           </div>
           {hasEditRights && (
             <button
+              onClick={createPhase}
+              className="px-3 py-1.5 text-sm font-semibold rounded-lg transition flex items-center gap-1.5 bg-gray-100 text-gray-700 hover:bg-gray-200"
+              title="Додати етап — блок задач, який планують і рухають цілком"
+            >
+              <Layers className="w-4 h-4" />
+              Етап
+            </button>
+          )}
+          {hasEditRights && (
+            <button
               onClick={() => (adding ? setAdding(false) : openAdd())}
               className={`px-3 py-1.5 text-sm font-semibold rounded-lg transition flex items-center gap-1.5 ${
                 adding ? 'bg-blue-50 text-blue-700' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
@@ -529,6 +780,19 @@ export default function ProjectGanttView() {
                 {boardLists.map(l => <option key={l.id} value={l.id}>{l.title}</option>)}
               </select>
             </label>
+            {phases.length > 0 && (
+              <label>
+                <span className={fieldLabel}>Етап</span>
+                <select
+                  value={draft.phaseId}
+                  onChange={e => setDraft(d => ({ ...d, phaseId: e.target.value }))}
+                  className={fieldInput}
+                >
+                  <option value="">Без етапу</option>
+                  {phases.map(ph => <option key={ph.id} value={ph.id}>{ph.title}</option>)}
+                </select>
+              </label>
+            )}
             <label>
               <span className={fieldLabel}>Початок</span>
               <input
@@ -641,8 +905,26 @@ export default function ProjectGanttView() {
                 </div>
               </div>
 
-              {/* Рядки */}
-              {rows.map(row => {
+              {/*
+                Рядки, зібрані в групи-етапи. Група — це і рамка на екрані, і
+                ціль для перетягування: задачу кидають у прямокутник групи, а
+                не в конкретний рядок.
+              */}
+              {groups.map(group => (
+                <div
+                  key={group.key}
+                  ref={el => { groupRefs.current[group.key] = el; }}
+                  className={`transition-colors ${
+                    rowDrag && rowDrag.overKey === group.key && (rowDrag.fromPhaseId || NO_PHASE) !== group.key
+                      ? 'bg-blue-50/70 ring-2 ring-inset ring-blue-300'
+                      : ''
+                  }`}
+                >
+              {group.rows.map(row => {
+                const isPhase = row.kind === 'phase';
+                const phaseColor = row.phaseId
+                  ? (phases.find(ph => ph.id === row.phaseId)?.color || color)
+                  : '#94a3b8';
                 const isDragging = drag?.row.key === row.key;
                 const ownRange = isDragging && drag && !drag.shiftChildren ? drag.preview : row.range;
                 const summaryRange = isDragging && drag?.shiftChildren ? drag.preview : row.summary;
@@ -662,14 +944,91 @@ export default function ProjectGanttView() {
                 return (
                   <div
                     key={row.key}
-                    className="flex group border-b border-gray-50 hover:bg-blue-50/30 transition-colors"
+                    className={`flex group border-b transition-colors ${
+                      isPhase
+                        ? 'border-gray-200 bg-gray-50/80 hover:bg-gray-100/80'
+                        : 'border-gray-50 hover:bg-blue-50/30'
+                    } ${rowDrag?.cardId === row.cardId && !isPhase ? 'opacity-40' : ''}`}
                     style={{ height: ROW_HEIGHT }}
                   >
                     {/* Ліва колонка */}
                     <div
-                      className="sticky left-0 z-10 bg-white group-hover:bg-blue-50/60 shrink-0 border-r border-gray-200 flex items-center gap-1.5 pr-2 transition-colors"
-                      style={{ width: LEFT_PANE, paddingLeft: row.kind === 'subtask' ? 30 : 10 }}
+                      className={`sticky left-0 z-10 shrink-0 border-r border-gray-200 flex items-center gap-1.5 pr-2 transition-colors ${
+                        isPhase ? 'bg-gray-50 group-hover:bg-gray-100' : 'bg-white group-hover:bg-blue-50/60'
+                      }`}
+                      style={{
+                        width: LEFT_PANE,
+                        paddingLeft: row.kind === 'subtask' ? 34 : row.kind === 'card' ? 20 : 8,
+                      }}
                     >
+                      {isPhase ? (
+                        <>
+                          <button
+                            onClick={() => toggleCollapse(row.phaseId || NO_PHASE)}
+                            className="p-0.5 text-gray-400 hover:text-gray-700 shrink-0"
+                            title={row.collapsed ? 'Показати задачі етапу' : 'Згорнути етап'}
+                          >
+                            {row.collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </button>
+                          <span className="w-2 h-4 rounded-sm shrink-0" style={{ backgroundColor: phaseColor }} />
+
+                          {/* Псевдоетап «Без етапу» перейменовувати нема чого, а
+                              null === null зробив би його полем вводу одразу */}
+                          {row.phaseId && renamingPhaseId === row.phaseId ? (
+                            <input
+                              autoFocus
+                              defaultValue={row.title}
+                              onBlur={e => {
+                                const next = e.target.value.trim();
+                                if (next && next !== row.title) updatePhase(row.phaseId as string, { title: next });
+                                setRenamingPhaseId(null);
+                              }}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                                if (e.key === 'Escape') { setRenamingPhaseId(null); }
+                              }}
+                              className="flex-1 min-w-0 text-[13px] font-bold text-gray-900 bg-white border border-blue-400 rounded px-1.5 py-0.5 outline-none"
+                            />
+                          ) : (
+                            <button
+                              onClick={() => row.phaseId && hasEditRights && setRenamingPhaseId(row.phaseId)}
+                              title={row.phaseId ? 'Перейменувати етап' : 'Задачі, які ще не рознесли по етапах'}
+                              className={`flex-1 min-w-0 text-left truncate text-[13px] font-bold uppercase tracking-wide ${
+                                row.phaseId ? 'text-gray-800 hover:text-blue-700' : 'text-gray-400'
+                              }`}
+                            >
+                              {row.title}
+                            </button>
+                          )}
+
+                          <span className="text-[11px] text-gray-400 shrink-0 tabular-nums">{row.childCount}</span>
+
+                          {hasEditRights && row.phaseId && (
+                            <button
+                              onClick={() => {
+                                const phase = phases.find(ph => ph.id === row.phaseId);
+                                if (phase) removePhase(phase, row.childCount || 0);
+                              }}
+                              className="opacity-0 group-hover:opacity-100 transition text-gray-300 hover:text-red-500 shrink-0 p-0.5"
+                              title="Видалити етап"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                      <>
+                      {/* Ручка перетягування: задачу переносять між етапами саме
+                          за неї, щоб не сплутати з кліком по назві */}
+                      {hasEditRights && row.kind === 'card' && groups.length > 1 && (
+                        <span
+                          onMouseDown={e => beginRowDrag(e, row)}
+                          className="absolute left-1 opacity-0 group-hover:opacity-100 transition text-gray-300 hover:text-gray-600 cursor-grab active:cursor-grabbing"
+                          title="Перетягніть в інший етап"
+                        >
+                          <GripVertical className="w-3.5 h-3.5" />
+                        </span>
+                      )}
                       {row.kind === 'card' ? (
                         row.hasChildren ? (
                           <button
@@ -707,6 +1066,8 @@ export default function ProjectGanttView() {
                           <Eraser className="w-3.5 h-3.5" />
                         </button>
                       )}
+                      </>
+                      )}
                     </div>
 
                     {/* Доріжка */}
@@ -735,14 +1096,16 @@ export default function ProjectGanttView() {
                       {bar ? (
                         <div
                           className={`absolute top-1.5 rounded-md flex items-center overflow-hidden ${
-                            isSummary ? 'h-3 mt-1' : 'h-[22px]'
+                            isPhase ? 'h-[18px] mt-0.5 shadow-sm' : isSummary ? 'h-3 mt-1' : 'h-[22px]'
                           } ${hasEditRights ? 'cursor-grab active:cursor-grabbing' : ''} ${
                             isDragging ? 'ring-2 ring-blue-400 shadow-md z-10' : ''
                           } ${overdue ? 'ring-1 ring-red-400' : ''}`}
                           style={{
                             left: barLeft,
                             width: barWidth,
-                            backgroundColor: row.completed ? '#dcfce7' : tint(color, isSummary ? '55' : '2e'),
+                            backgroundColor: isPhase
+                              ? tint(phaseColor, '33')
+                              : row.completed ? '#dcfce7' : tint(color, isSummary ? '55' : '2e'),
                           }}
                           title={`${row.title}\n${format(toLocalDate(bar.start), 'd MMM', { locale: uk })} — ${format(toLocalDate(bar.end), 'd MMM yyyy', { locale: uk })} · ${rangeLength(bar)} дн.${assignee ? `\n${assignee.name}` : ''}`}
                           onMouseDown={e => startBarDrag(e, row, 'move', bar, isSummary)}
@@ -753,12 +1116,14 @@ export default function ProjectGanttView() {
                             className="absolute inset-y-0 left-0 pointer-events-none"
                             style={{
                               width: `${Math.round(row.progress * 100)}%`,
-                              backgroundColor: row.completed ? '#22c55e' : color,
-                              opacity: isSummary ? 0.9 : 0.85,
+                              backgroundColor: isPhase ? phaseColor : row.completed ? '#22c55e' : color,
+                              opacity: isSummary && !isPhase ? 0.9 : 0.85,
                             }}
                           />
-                          {!isSummary && (
-                            <span className="relative px-2 text-[11px] font-medium text-gray-800 truncate pointer-events-none">
+                          {(!isSummary || isPhase) && (
+                            <span className={`relative px-2 truncate pointer-events-none ${
+                              isPhase ? 'text-[10px] font-bold uppercase tracking-wide text-gray-700' : 'text-[11px] font-medium text-gray-800'
+                            }`}>
                               {rangeLength(bar) * dayWidth > 64 ? row.title : ''}
                             </span>
                           )}
@@ -783,6 +1148,10 @@ export default function ProjectGanttView() {
                             </>
                           )}
                         </div>
+                      ) : isPhase ? (
+                        <span className="absolute inset-y-0 left-2 flex items-center text-[11px] text-gray-300 pointer-events-none">
+                          {row.childCount ? 'задачі етапу ще без дат' : 'перетягніть сюди задачі'}
+                        </span>
                       ) : hasEditRights && (
                         <span
                           className="absolute inset-y-0 flex items-center text-[11px] text-gray-300 opacity-0 group-hover:opacity-100 transition pointer-events-none"
@@ -810,6 +1179,8 @@ export default function ProjectGanttView() {
                   </div>
                 );
               })}
+                </div>
+              ))}
             </div>
           </div>
 
@@ -837,10 +1208,31 @@ export default function ProjectGanttView() {
                 дедлайн проєкту
               </span>
             )}
+            {phases.length > 0 && (
+              <span className="flex items-center gap-1.5">
+                <span className="w-4 h-2 rounded" style={{ backgroundColor: tint(PHASE_COLORS[0], '33') }} />
+                етап
+              </span>
+            )}
             <span className="ml-auto">
               Тягніть смужку — зсув, за край — тривалість, подвійний клік — картка
+              {phases.length > 0 && '; задачу за ⣿ — в інший етап'}
             </span>
           </div>
+        </div>
+      )}
+
+      {/*
+        Примара під курсором. Сам рядок лишається на місці (лише блідне): у
+        діаграмі рядок — це ще й смужка на шкалі, і виривати його з розмітки
+        означало б смикати всю сітку на кожен рух миші.
+      */}
+      {rowDrag && (
+        <div
+          className="fixed z-50 pointer-events-none px-2.5 py-1 rounded-lg bg-gray-900 text-white text-xs font-medium shadow-lg max-w-[240px] truncate"
+          style={{ left: rowDrag.x + 14, top: rowDrag.y + 10 }}
+        >
+          {rowDrag.title}
         </div>
       )}
 

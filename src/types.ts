@@ -164,6 +164,24 @@ export interface Attachment {
   addedAt?: string;
 }
 
+/**
+ * Етап проєкту — блок задач, який планують і рухають цілком.
+ *
+ * Власних дат етап не має навмисно: його смужка — охоплення задач, що в ньому
+ * лежать. Два джерела правди (дати етапу окремо, дати задач окремо) неминуче
+ * розходяться, і тоді незрозуміло, котре з них план. Тут відповідь одна:
+ * етап триває рівно стільки, скільки його задачі.
+ */
+export interface Phase {
+  id: string;
+  projectId: string;
+  title: string;
+  color?: string;
+  /** Порядок серед незапланованих етапів; заплановані шикуються за датами */
+  order: number;
+  createdAt: string;
+}
+
 export interface Card {
   id: string;
   listId: string;
@@ -180,6 +198,8 @@ export interface Card {
   tagIds?: string[];
   order: number;
   projectId?: string | null;
+  /** Етап проєкту, до якого належить задача (див. Phase) */
+  phaseId?: string | null;
   estimatedMinutes?: number;
   storyPoints?: number;
 }
@@ -325,6 +345,7 @@ export interface AppState {
   contentPlanColumns?: ContentPlanColumn[];
   events?: EventItem[];
   projects?: Project[];
+  phases?: Phase[];
   processes?: Process[];
   aiReportSchedule?: string;
   announcements?: ScheduledAnnouncement[];

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
-import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Metric, Project, Process, UserGroup, AccessRights, NotificationItem, Expense } from './types';
+import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Metric, Project, Phase, Process, UserGroup, AccessRights, NotificationItem, Expense } from './types';
 import { fetchState, syncState, getMe, estimateTaskTime, createEntity, updateEntity, deleteEntity, processOfflineQueue, sendCardAssignedNotification } from './api';
 import { v4 as uuidv4 } from 'uuid';
 import Board from './components/Board';
@@ -43,7 +43,7 @@ interface AppContextType {
   canView: (view: string) => boolean;
   logout: () => void;
   moveCard: (cardId: string, toListId: string, targetCardId?: string) => void;
-  addCard: (listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[]; description?: string; startDate?: string | null; deadline?: string | null; order?: number }) => void;
+  addCard: (listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[]; description?: string; startDate?: string | null; deadline?: string | null; phaseId?: string | null; order?: number }) => void;
   updateCard: (cardId: string, updates: Partial<Card>) => void;
   deleteCard: (cardId: string) => void;
   clearList: (listId: string) => void;
@@ -71,6 +71,10 @@ interface AppContextType {
   addProject: (project: Omit<Project, 'id' | 'createdAt'>) => void;
   updateProject: (id: string, updates: Partial<Project>) => void;
   deleteProject: (id: string) => void;
+  /** Повертає створений етап: викликач одразу пропонує дати йому назву */
+  addPhase: (phase: Omit<Phase, 'id' | 'createdAt'>) => Phase;
+  updatePhase: (id: string, updates: Partial<Phase>) => void;
+  deletePhase: (id: string) => void;
   addProcess: (process: Omit<Process, 'id' | 'createdAt'>) => void;
   updateProcess: (id: string, updates: Partial<Process>) => void;
   deleteProcess: (id: string) => void;
@@ -387,7 +391,7 @@ export default function App() {
     updateEntity('cards', cardId, updates).catch(console.error);
   }, []);
 
-  const addCard = useCallback((listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[]; description?: string; startDate?: string | null; deadline?: string | null; order?: number }) => {
+  const addCard = useCallback((listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[]; description?: string; startDate?: string | null; deadline?: string | null; phaseId?: string | null; order?: number }) => {
     if (!state) return;
     const listCards = state.cards.filter(c => c.listId === listId);
     const minOrder = listCards.length > 0 ? Math.min(...listCards.map(c => c.order)) : 0;
@@ -402,7 +406,8 @@ export default function App() {
       // Явний order потрібен, коли кілька карток створюють одним махом:
       // state ще не встиг оновитись, тож усі отримали б однаковий minOrder - 1.
       order: initialValues?.order ?? minOrder - 1,
-      projectId: activeProjectId
+      projectId: activeProjectId,
+      phaseId: initialValues?.phaseId ?? null
     };
     setState(prev => prev ? { ...prev, cards: [...prev.cards, newCard] } : prev);
     const cardSaved = createEntity('cards', newCard);
@@ -730,6 +735,40 @@ export default function App() {
     if (activeProjectId === id) setActiveProjectId(null);
   }, [state, activeProjectId]);
 
+  /* ───────────────────────────── етапи ───────────────────────────── */
+
+  const addPhase = useCallback((phase: Omit<Phase, 'id' | 'createdAt'>): Phase => {
+    const newPhase: Phase = { ...phase, id: uuidv4(), createdAt: new Date().toISOString() };
+    setState(prev => prev ? { ...prev, phases: [...(prev.phases || []), newPhase] } : prev);
+    createEntity('phases', newPhase).catch(console.error);
+    return newPhase;
+  }, []);
+
+  const updatePhase = useCallback((id: string, updates: Partial<Phase>) => {
+    if (!state) return;
+    setState(prev => prev ? { ...prev, phases: (prev.phases || []).map(p => p.id === id ? { ...p, ...updates } : p) } : prev);
+    updateEntity('phases', id, updates).catch(console.error);
+  }, [state]);
+
+  /**
+   * Етап зникає, задачі лишаються.
+   *
+   * Видалити етап — це передумати про групування, а не про роботу. Тому
+   * картки не чіпаємо, лише знімаємо з них позначку етапу: вони повертаються
+   * у «Без етапу» з усіма своїми датами.
+   */
+  const deletePhase = useCallback((id: string) => {
+    if (!state) return;
+    const orphans = state.cards.filter(c => c.phaseId === id);
+    setState(prev => prev ? {
+      ...prev,
+      phases: (prev.phases || []).filter(p => p.id !== id),
+      cards: prev.cards.map(c => c.phaseId === id ? { ...c, phaseId: null } : c),
+    } : prev);
+    deleteEntity('phases', id).catch(console.error);
+    orphans.forEach(c => updateEntity('cards', c.id, { phaseId: null }).catch(console.error));
+  }, [state]);
+
   const addProcess = useCallback((process: Omit<Process, 'id' | 'createdAt'>) => {
     if (!state) return;
     const newProcess: Process = { ...process, id: uuidv4(), createdAt: new Date().toISOString() };
@@ -939,7 +978,9 @@ export default function App() {
       addTag, deleteTag, updateTag, addUser, updateUser, deleteUser,
       addContentPlan, updateContentPlan, deleteContentPlan, importContentPlans, 
       addUserGroup, updateUserGroup, deleteUserGroup, updateSettings,
-      addEvent, updateEvent, deleteEvent, addProject, updateProject, deleteProject, addProcess, updateProcess, deleteProcess, addBoard, deleteBoard,
+      addEvent, updateEvent, deleteEvent, addProject, updateProject, deleteProject,
+      addPhase, updatePhase, deletePhase,
+      addProcess, updateProcess, deleteProcess, addBoard, deleteBoard,
       activeBoardId, setActiveBoardId, activeEventId, setActiveEventId, activeProjectId, setActiveProjectId,
       activeView, setActiveView, updateMetric, importTrelloBoard, confirmAction,
       createNotification, markNotificationAsRead,
