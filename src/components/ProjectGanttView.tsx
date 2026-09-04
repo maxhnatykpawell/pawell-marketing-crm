@@ -4,7 +4,7 @@ import { Card, Subtask } from '../types';
 import CardModal from './CardModal';
 import {
   ArrowLeft, CalendarRange, ChevronDown, ChevronRight, CheckCircle2, Circle,
-  CornerDownRight, Crosshair, Eraser, FolderKanban,
+  CornerDownRight, Crosshair, Eraser, FolderKanban, Plus, X,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
@@ -68,13 +68,15 @@ interface DragState {
 }
 
 export default function ProjectGanttView() {
-  const { state, activeProjectId, setActiveView, updateCard, hasEditRights } = useAppContext();
+  const { state, activeProjectId, activeBoardId, setActiveView, updateCard, addCard, hasEditRights } = useAppContext();
 
   const project = (state.projects || []).find(p => p.id === activeProjectId) || null;
   const [scale, setScale] = useState<Scale>('day');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [openCardId, setOpenCardId] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({ title: '', listId: '', start: '', end: '' });
 
   const dayWidth = DAY_WIDTH[scale];
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -295,6 +297,48 @@ export default function ProjectGanttView() {
     }
   };
 
+  /* ───────────────────────── нова задача ───────────────────────── */
+
+  /**
+   * Списки поточної дошки — картку треба покласти в один з них.
+   *
+   * Умова та сама, що й на дошці: у старих списків boardId немає, і вони
+   * належать першій дошці. Без вибраної дошки лишаються всі списки — інакше
+   * форма мовчки не мала б куди додавати.
+   */
+  const boardLists = useMemo(() => {
+    const boards = state.boards || [];
+    const scoped = state.lists.filter(l =>
+      l.boardId === activeBoardId || (!l.boardId && boards[0]?.id === activeBoardId));
+    return [...(scoped.length ? scoped : state.lists)].sort((a, b) => a.order - b.order);
+  }, [state.lists, state.boards, activeBoardId]);
+
+  const openAdd = () => {
+    setDraft(d => ({
+      ...d,
+      listId: boardLists.some(l => l.id === d.listId) ? d.listId : (boardLists[0]?.id || ''),
+    }));
+    setAdding(true);
+  };
+
+  /**
+   * Картку створює той самий addCard, що й дошка: проєкт вона бере з
+   * activeProjectId, тобто з того, чию діаграму зараз відкрито.
+   *
+   * Дати необов'язкові — без них задача стає незапланованим рядком, і смужку
+   * їй малюють мишею. Одна дата дає одноденну смужку.
+   */
+  const handleCreate = (e: React.FormEvent) => {
+    e.preventDefault();
+    const title = draft.title.trim();
+    if (!title || !draft.listId) return;
+    const start = draft.start || draft.end;
+    const end = draft.end || draft.start;
+    addCard(draft.listId, title, rangeToFields(start ? rangeFromDrag(start, end) : null));
+    // Список і дати лишаємо: підряд додають кілька задач одного етапу.
+    setDraft(d => ({ ...d, title: '' }));
+  };
+
   const toggleCollapse = (cardId: string) => {
     setCollapsed(prev => {
       const next = new Set(prev);
@@ -312,6 +356,8 @@ export default function ProjectGanttView() {
   /* ──────────────────────────── відображення ──────────────────────────── */
 
   const color = project?.color || '#3b82f6';
+  const fieldLabel = 'block text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1';
+  const fieldInput = 'text-sm border border-gray-300 rounded-lg px-3 py-2 bg-gray-50 outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition';
   const tint = (hex: string, alpha: string) => (/^#[0-9a-f]{6}$/i.test(hex) ? `${hex}${alpha}` : hex);
 
   const topSegments = groupDays(days, 'month');
@@ -398,6 +444,18 @@ export default function ProjectGanttView() {
               </button>
             ))}
           </div>
+          {hasEditRights && (
+            <button
+              onClick={() => (adding ? setAdding(false) : openAdd())}
+              className={`px-3 py-1.5 text-sm font-semibold rounded-lg transition flex items-center gap-1.5 ${
+                adding ? 'bg-blue-50 text-blue-700' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
+              }`}
+              title="Додати задачу в цей проєкт"
+            >
+              <Plus className="w-4 h-4" />
+              Задача
+            </button>
+          )}
           <button
             onClick={() => setActiveView('board')}
             className="px-3 py-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition"
@@ -407,16 +465,115 @@ export default function ProjectGanttView() {
         </div>
       </div>
 
+      {/*
+        Нову задачу заводять прямо тут: у діаграмі видно, куди вона стає в
+        плані, і йти по неї на дошку заради самого лише заголовка не треба.
+        Проєкт їй проставляється той, чию діаграму відкрито.
+      */}
+      {hasEditRights && adding && (
+        boardLists.length === 0 ? (
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-200 text-sm text-gray-600 flex flex-wrap items-center gap-2">
+            На дошці немає жодного списку — задачу нікуди покласти.
+            <button
+              onClick={() => setActiveView('board')}
+              className="text-blue-600 font-semibold hover:underline"
+            >
+              Створити список на дошці
+            </button>
+          </div>
+        ) : (
+          /*
+            noValidate — щоб недописана дата не блокувала кнопку мовчки:
+            браузер вважає «08.09.____» невалідним і не пускає submit, а
+            користувач бачить лише те, що «Додати» нічого не робить. Для нас
+            незаповнена дата — це просто задача без плану.
+          */
+          <form
+            noValidate
+            onSubmit={handleCreate}
+            className="bg-white p-4 rounded-2xl shadow-sm border border-gray-200 flex flex-wrap items-end gap-3"
+          >
+            <label className="flex-1 min-w-[240px]">
+              <span className={fieldLabel}>Назва задачі</span>
+              <input
+                autoFocus
+                value={draft.title}
+                onChange={e => setDraft(d => ({ ...d, title: e.target.value }))}
+                placeholder="Що потрібно зробити?"
+                className={`w-full ${fieldInput}`}
+              />
+            </label>
+            <label>
+              <span className={fieldLabel}>Список</span>
+              <select
+                value={draft.listId}
+                onChange={e => setDraft(d => ({ ...d, listId: e.target.value }))}
+                className={fieldInput}
+              >
+                {boardLists.map(l => <option key={l.id} value={l.id}>{l.title}</option>)}
+              </select>
+            </label>
+            <label>
+              <span className={fieldLabel}>Початок</span>
+              <input
+                type="date"
+                value={draft.start}
+                onChange={e => setDraft(d => ({ ...d, start: e.target.value }))}
+                className={fieldInput}
+              />
+            </label>
+            <label>
+              <span className={fieldLabel}>Дедлайн</span>
+              <input
+                type="date"
+                value={draft.end}
+                onChange={e => setDraft(d => ({ ...d, end: e.target.value }))}
+                className={fieldInput}
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={!draft.title.trim()}
+              className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            >
+              Додати
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdding(false)}
+              className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition"
+              title="Закрити"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <p className="w-full text-[11px] text-gray-400">
+              Дати необовʼязкові — без них задача стане рядком без смужки, і план їй можна намалювати мишею.
+            </p>
+          </form>
+        )
+      )}
+
       {rows.length === 0 ? (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-12 text-center">
           <h3 className="text-lg font-bold text-gray-900 mb-1">У проєкті ще немає задач</h3>
-          <p className="text-gray-500 mb-6">Створіть задачі на дошці й привʼяжіть їх до проєкту — вони одразу зʼявляться тут.</p>
-          <button
-            onClick={() => setActiveView('board')}
-            className="px-5 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition"
-          >
-            До дошки
-          </button>
+          <p className="text-gray-500 mb-6">Додайте першу задачу тут або створіть її на дошці — у діаграмі зʼявляться всі задачі проєкту.</p>
+          <div className="flex items-center justify-center gap-3">
+            {hasEditRights && (
+              <button
+                onClick={openAdd}
+                className="px-5 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Додати задачу
+              </button>
+            )}
+            <button
+              onClick={() => setActiveView('board')}
+              className="px-5 py-2.5 bg-gray-100 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-200 transition"
+            >
+              До дошки
+            </button>
+          </div>
         </div>
       ) : (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">

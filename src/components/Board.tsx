@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
 import BoardList from './BoardList';
 import CardModal from './CardModal';
-import { Plus, Trash2, DownloadCloud, FolderKanban, Filter } from 'lucide-react';
+import { Plus, Trash2, DownloadCloud, FolderKanban, Filter, CalendarRange } from 'lucide-react';
 import TrelloImportModal from './TrelloImportModal';
 import { DragDropContext, Droppable, DropResult } from '@hello-pangea/dnd';
 
 export default function Board() {
-  const { state, addList, activeBoardId, setActiveBoardId, activeProjectId, setActiveProjectId, addBoard, deleteBoard, confirmAction, hasEditRights, moveList, moveCard, openCardId, setOpenCardId } = useAppContext();
+  const { state, addList, activeBoardId, setActiveBoardId, activeProjectId, setActiveProjectId, setActiveView, addBoard, deleteBoard, confirmAction, hasEditRights, moveList, moveCard, openCardId, setOpenCardId } = useAppContext();
   const [isAddingList, setIsAddingList] = useState(false);
   const [newListTitle, setNewListTitle] = useState('');
   const [isAddingBoard, setIsAddingBoard] = useState(false);
@@ -180,6 +180,18 @@ export default function Board() {
               {p.title}
             </button>
           ))}
+          {/* Дорога назад у план: у проєкт зайшли з діаграми — з дошки має бути
+              чим повернутись, а не через список проєктів. */}
+          {activeProjectId && (
+            <button
+              onClick={() => setActiveView('gantt')}
+              className="ml-auto px-3 py-1.5 rounded-lg text-sm font-medium transition shrink-0 flex items-center gap-1.5 bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
+              title="Діаграма Ганта цього проєкту"
+            >
+              <CalendarRange className="w-4 h-4" />
+              ← Діаграма Ганта
+            </button>
+          )}
         </div>
       )}
 

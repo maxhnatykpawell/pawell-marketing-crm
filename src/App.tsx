@@ -42,7 +42,7 @@ interface AppContextType {
   canView: (view: string) => boolean;
   logout: () => void;
   moveCard: (cardId: string, toListId: string, targetCardId?: string) => void;
-  addCard: (listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[]; description?: string; deadline?: string | null; order?: number }) => void;
+  addCard: (listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[]; description?: string; startDate?: string | null; deadline?: string | null; order?: number }) => void;
   updateCard: (cardId: string, updates: Partial<Card>) => void;
   deleteCard: (cardId: string) => void;
   clearList: (listId: string) => void;
@@ -361,13 +361,14 @@ export default function App() {
     updateEntity('cards', cardId, updates).catch(console.error);
   }, []);
 
-  const addCard = useCallback((listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[]; description?: string; deadline?: string | null; order?: number }) => {
+  const addCard = useCallback((listId: string, title: string, initialValues?: { assigneeId?: string | null; tagIds?: string[]; description?: string; startDate?: string | null; deadline?: string | null; order?: number }) => {
     if (!state) return;
     const listCards = state.cards.filter(c => c.listId === listId);
     const minOrder = listCards.length > 0 ? Math.min(...listCards.map(c => c.order)) : 0;
     const newCard: Card = {
       id: uuidv4(), listId, title,
       description: initialValues?.description ?? '',
+      startDate: initialValues?.startDate ?? null,
       deadline: initialValues?.deadline ?? null,
       assigneeId: initialValues?.assigneeId ?? null,
       tagIds: initialValues?.tagIds ?? [],

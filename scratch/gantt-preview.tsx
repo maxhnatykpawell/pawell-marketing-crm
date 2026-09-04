@@ -69,15 +69,30 @@ function Harness() {
         managerIds: [], deadline: day(16), createdAt: day(-30),
       }],
       users: [{ id: 'u1', name: 'Максим Гнатик', avatar: '' }],
-      lists: [{ id: 'l1', title: 'В роботі', order: 0 }],
-      tags: [], boards: [],
+      lists: [
+        { id: 'l1', title: 'В роботі', order: 0, boardId: 'b1' },
+        { id: 'l2', title: 'Черга', order: 1, boardId: 'b1' },
+      ],
+      tags: [], boards: [{ id: 'b1', title: 'Маркетинг' }],
     },
     activeProjectId: 'p1',
+    activeBoardId: 'b1',
     hasEditRights: true,
     setActiveView: (view: string) => console.log('[gantt] setActiveView', view),
     updateCard: (cardId: string, updates: Partial<Card>) => {
       console.log('[gantt] updateCard', cardId, JSON.stringify(updates));
       setCards(prev => prev.map(c => (c.id === cardId ? { ...c, ...updates } : c)));
+    },
+    // Як у застосунку: проєкт картці ставить сам addCard, з activeProjectId.
+    addCard: (listId: string, title: string, initial: any = {}) => {
+      console.log('[gantt] addCard', listId, title, JSON.stringify(initial));
+      setCards(prev => [...prev, {
+        id: `new-${prev.length + 1}`, listId, title, description: '',
+        startDate: initial.startDate ?? null, deadline: initial.deadline ?? null,
+        assigneeId: null, isCompleted: false,
+        subtasks: [], comments: [], attachments: [],
+        order: Math.min(0, ...prev.map(c => c.order)) - 1, projectId: 'p1',
+      }]);
     },
   };
 
