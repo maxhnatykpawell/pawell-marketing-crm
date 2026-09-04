@@ -160,7 +160,8 @@ export default function Board() {
 
       {/* Project tabs */}
       {projects.length > 0 && (
-        <div className="flex items-center gap-2 mb-4 w-full overflow-x-auto hidden-scrollbar pb-1">
+        <div className="flex items-center gap-3 mb-4 w-full">
+        <div className="flex-1 min-w-0 flex items-center gap-2 overflow-x-auto hidden-scrollbar pb-1">
           <div className="flex items-center text-sm font-semibold text-gray-500 mr-2 shrink-0">
             <FolderKanban className="w-4 h-4 mr-1.5" /> Фільтр:
           </div>
@@ -180,18 +181,33 @@ export default function Board() {
               {p.title}
             </button>
           ))}
-          {/* Дорога назад у план: у проєкт зайшли з діаграми — з дошки має бути
-              чим повернутись, а не через список проєктів. */}
-          {activeProjectId && (
-            <button
-              onClick={() => setActiveView('gantt')}
-              className="ml-auto px-3 py-1.5 rounded-lg text-sm font-medium transition shrink-0 flex items-center gap-1.5 bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
-              title="Діаграма Ганта цього проєкту"
-            >
-              <CalendarRange className="w-4 h-4" />
-              ← Діаграма Ганта
-            </button>
-          )}
+        </div>
+
+          {/*
+            Перехід у план проєкту. Стоїть поза стрічкою проєктів навмисно:
+            всередині неї кнопку зносило за правий край, щойно проєктів
+            ставало більше, ніж уміщує рядок, — і знайти її можна було, лише
+            прокрутивши стрічку до кінця.
+
+            Коли проєкт не вибрано, кнопка лишається на місці неактивною:
+            діаграма буває тільки в конкретного проєкту, і сказати про це
+            прямо краще, ніж зникнути й лишити людину шукати вхід.
+          */}
+          <button
+            onClick={() => activeProjectId && setActiveView('gantt')}
+            disabled={!activeProjectId}
+            title={activeProjectId
+              ? 'Діаграма Ганта цього проєкту'
+              : 'Оберіть проєкт — і його задачі можна буде розкласти по днях'}
+            className={`shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition flex items-center gap-1.5 ${
+              activeProjectId
+                ? 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100'
+                : 'bg-gray-50 text-gray-400 border border-gray-200 cursor-not-allowed'
+            }`}
+          >
+            <CalendarRange className="w-4 h-4" />
+            Діаграма Ганта →
+          </button>
         </div>
       )}
 
