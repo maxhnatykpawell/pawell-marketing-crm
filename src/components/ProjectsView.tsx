@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useAppContext } from '../App';
 import { Project } from '../types';
 import ProjectModal from './ProjectModal';
@@ -8,6 +8,7 @@ import {
   Pencil, Check, X, Lock
 } from 'lucide-react';
 import { canManageProjectAccess, isProjectRestricted, projectAccessIds } from '../lib/projectAccess';
+import { doneListIds, projectProgress } from '../lib/projectProgress';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
 
@@ -24,6 +25,9 @@ export default function ProjectsView() {
 
   // Inline group rename state: { groupKey: 'currentName', value: 'editing...' }
   const [renamingGroup, setRenamingGroup] = useState<{ key: string; value: string } | null>(null);
+
+  // Останні колонки дощок однакові для всіх плиток — рахуємо раз, не на проєкт
+  const doneListIdSet = useMemo(() => doneListIds(state.lists || []), [state.lists]);
 
   const projects = state.projects || [];
 
@@ -276,19 +280,8 @@ export default function ProjectsView() {
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                       {group.projects.map(project => {
                         const projectCards = state.cards.filter(c => c.projectId === project.id);
-                        const totalCards = projectCards.length;
-
-                        const completedCards = projectCards.filter(c => {
-                          const boardLists = state.lists.filter(l =>
-                            state.boards?.length
-                              ? l.boardId === (state.lists.find(x => x.id === c.listId)?.boardId || state.boards[0].id)
-                              : true
-                          ).sort((a, b) => a.order - b.order);
-                          const lastList = boardLists[boardLists.length - 1];
-                          return lastList && c.listId === lastList.id;
-                        }).length;
-
-                        const progress = totalCards === 0 ? 0 : Math.round((completedCards / totalCards) * 100);
+                        const { total: totalCards, done: completedCards, percent: progress } =
+                          projectProgress(projectCards, doneListIdSet);
 
                         return (
                           <div key={project.id} className="bg-gray-50 rounded-xl border border-gray-200 overflow-hidden hover:shadow-md hover:border-gray-300 transition flex flex-col">
