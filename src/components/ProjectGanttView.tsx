@@ -4,7 +4,8 @@ import { Card, Phase, Subtask } from '../types';
 import CardModal from './CardModal';
 import {
   ArrowLeft, CalendarRange, ChevronDown, ChevronRight, CheckCircle2, Circle,
-  CornerDownRight, Crosshair, Eraser, FolderKanban, GripVertical, Layers, Plus, Trash2, X,
+  CornerDownRight, Crosshair, Eraser, FolderKanban, GripVertical, Layers, ListPlus,
+  Plus, Search, Trash2, X,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
@@ -129,6 +130,9 @@ export default function ProjectGanttView() {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ title: '', listId: '', start: '', end: '', phaseId: '' });
+  const [attaching, setAttaching] = useState(false);
+  const [attachQuery, setAttachQuery] = useState('');
+  const [attachPhaseId, setAttachPhaseId] = useState('');
   const [rowDrag, setRowDrag] = useState<RowDrag | null>(null);
   const [renamingPhaseId, setRenamingPhaseId] = useState<string | null>(null);
 
@@ -572,6 +576,7 @@ export default function ProjectGanttView() {
       ...d,
       listId: boardLists.some(l => l.id === d.listId) ? d.listId : (boardLists[0]?.id || ''),
     }));
+    setAttaching(false);
     setAdding(true);
   };
 
@@ -594,6 +599,59 @@ export default function ProjectGanttView() {
     });
     // Список і дати лишаємо: підряд додають кілька задач одного етапу.
     setDraft(d => ({ ...d, title: '' }));
+  };
+
+  /* ──────────────────── існуюча задача в проєкт ──────────────────── */
+
+  /**
+   * Задачі, які ще не в цьому проєкті.
+   *
+   * Робота часто починається на дошці й лише потім усвідомлюється проєктом:
+   * картка вже жива — з описом, коментарями й підзадачами, — і переписувати її
+   * заново лише заради проєкту безглуздо. Тож сюди беремо всі видимі картки,
+   * не тільки безпроєктні: перекинути задачу з одного проєкту в інший — така
+   * сама буденна дія, як і підібрати сироту з дошки.
+   *
+   * Порядок — спершу вільні картки, потім чужі: свою загублену задачу шукають
+   * саме серед безпроєктних, а переносити з проєкту в проєкт — рідший намір.
+   */
+  const attachCandidates = useMemo(() => {
+    const q = attachQuery.trim().toLowerCase();
+    const listTitle = (id: string) => state.lists.find(l => l.id === id)?.title || '';
+    const projectTitle = (id?: string | null) =>
+      (id && (state.projects || []).find(p => p.id === id)?.title) || '';
+    return state.cards
+      .filter(c => c.projectId !== activeProjectId)
+      .map(c => ({ card: c, list: listTitle(c.listId), project: projectTitle(c.projectId) }))
+      .filter(x => !q || `${x.card.title} ${x.list} ${x.project}`.toLowerCase().includes(q))
+      .sort((a, b) =>
+        (a.project ? 1 : 0) - (b.project ? 1 : 0) ||
+        a.card.title.localeCompare(b.card.title, 'uk'));
+  }, [state.cards, state.lists, state.projects, activeProjectId, attachQuery]);
+
+  /**
+   * Прикріплення — це той самий updateCard, що й перетягування рядка між
+   * етапами: картка лишається на своєму місці на дошці, змінюється лише те,
+   * чиєю задачею вона рахується.
+   *
+   * phaseId переписуємо завжди. Етапи належать конкретному проєкту, тож етап
+   * старого проєкту в новому не значить нічого — лишити його означало б
+   * посилання в нікуди й задачу, що не потрапила в жодну групу діаграми.
+   */
+  const attachCard = (cardId: string) => {
+    if (!activeProjectId) return;
+    updateCard(cardId, {
+      projectId: activeProjectId,
+      phaseId: phases.some(ph => ph.id === attachPhaseId) ? attachPhaseId : null,
+    });
+  };
+
+  /** Панелі додавання й прикріплення — про одне й те саме, показуємо по одній. */
+  const openAttach = () => {
+    setAdding(false);
+    setAttachQuery('');
+    setAttachPhaseId(d => (phases.some(ph => ph.id === d) ? d : ''));
+    setAttaching(true);
   };
 
   const toggleCollapse = (cardId: string) => {
@@ -709,6 +767,18 @@ export default function ProjectGanttView() {
             >
               <Layers className="w-4 h-4" />
               Етап
+            </button>
+          )}
+          {hasEditRights && (
+            <button
+              onClick={() => (attaching ? setAttaching(false) : openAttach())}
+              className={`px-3 py-1.5 text-sm font-semibold rounded-lg transition flex items-center gap-1.5 ${
+                attaching ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+              title="Прикріпити до проєкту задачу, яка вже існує на дошці"
+            >
+              <ListPlus className="w-4 h-4" />
+              Існуюча
             </button>
           )}
           {hasEditRights && (
@@ -833,10 +903,106 @@ export default function ProjectGanttView() {
         )
       )}
 
+      {/*
+        Прикріплення існуючої задачі.
+        Панель не закривається після кожного натискання: у проєкт зазвичай
+        збирають одразу кілька розкиданих задач, і прикріплена просто зникає зі
+        списку — видно, що саме вже взято.
+      */}
+      {hasEditRights && attaching && (
+        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-200">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex-1 min-w-[240px]">
+              <span className={fieldLabel}>Знайти задачу</span>
+              <div className="relative">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  autoFocus
+                  value={attachQuery}
+                  onChange={e => setAttachQuery(e.target.value)}
+                  placeholder="Назва задачі, списку або проєкту"
+                  className={`w-full pl-9 ${fieldInput}`}
+                />
+              </div>
+            </label>
+            {phases.length > 0 && (
+              <label>
+                <span className={fieldLabel}>Покласти в етап</span>
+                <select
+                  value={attachPhaseId}
+                  onChange={e => setAttachPhaseId(e.target.value)}
+                  className={fieldInput}
+                >
+                  <option value="">Без етапу</option>
+                  {phases.map(ph => <option key={ph.id} value={ph.id}>{ph.title}</option>)}
+                </select>
+              </label>
+            )}
+            <button
+              type="button"
+              onClick={() => setAttaching(false)}
+              className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition"
+              title="Закрити"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {attachCandidates.length === 0 ? (
+            <p className="mt-3 text-sm text-gray-500">
+              {attachQuery.trim()
+                ? 'За цим запитом задач не знайшли.'
+                : 'Усі доступні вам задачі вже в цьому проєкті.'}
+            </p>
+          ) : (
+            <>
+              <div className="mt-3 max-h-72 overflow-y-auto border border-gray-100 rounded-xl divide-y divide-gray-100">
+                {attachCandidates.slice(0, 50).map(({ card, list, project }) => (
+                  <div
+                    key={card.id}
+                    className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 transition"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className={`text-sm truncate ${card.isCompleted ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
+                        {card.title}
+                      </div>
+                      <div className="text-[11px] text-gray-400 truncate flex items-center gap-1.5">
+                        {list || 'Без списку'}
+                        {project && (
+                          <span className="text-amber-600 font-medium flex items-center gap-1">
+                            <FolderKanban className="w-3 h-3" />
+                            {project}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => attachCard(card.id)}
+                      className="shrink-0 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition"
+                      title={project
+                        ? `Перенести задачу з проєкту «${project}» сюди`
+                        : 'Прикріпити задачу до цього проєкту'}
+                    >
+                      {project ? 'Перенести' : 'Прикріпити'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-2 text-[11px] text-gray-400">
+                {attachCandidates.length > 50
+                  ? `Показано 50 із ${attachCandidates.length} — уточніть пошук.`
+                  : 'Задача лишається на своєму місці на дошці — змінюється лише проєкт.'}
+              </p>
+            </>
+          )}
+        </div>
+      )}
+
       {rows.length === 0 ? (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-12 text-center">
           <h3 className="text-lg font-bold text-gray-900 mb-1">У проєкті ще немає задач</h3>
-          <p className="text-gray-500 mb-6">Додайте першу задачу тут або створіть її на дошці — у діаграмі зʼявляться всі задачі проєкту.</p>
+          <p className="text-gray-500 mb-6">Додайте першу задачу тут, прикріпіть уже існуючу з дошки або створіть її на дошці — у діаграмі зʼявляться всі задачі проєкту.</p>
           <div className="flex items-center justify-center gap-3">
             {hasEditRights && (
               <button
@@ -845,6 +1011,15 @@ export default function ProjectGanttView() {
               >
                 <Plus className="w-4 h-4" />
                 Додати задачу
+              </button>
+            )}
+            {hasEditRights && (
+              <button
+                onClick={openAttach}
+                className="px-5 py-2.5 bg-gray-100 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-200 transition flex items-center gap-2"
+              >
+                <ListPlus className="w-4 h-4" />
+                Існуючу задачу
               </button>
             )}
             <button
