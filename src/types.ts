@@ -244,7 +244,15 @@ export interface Project {
   description?: string;
   color: string;
   status: ProjectStatus;
+  /** Хто веде проєкт — показується на картці проєкту й має доступ */
   managerIds: string[];
+  /** Чий це проєкт: за замовчуванням той, хто створив */
+  ownerId?: string | null;
+  /**
+   * Кому відкрито доступ поіменно. Порожній список означає відкритий
+   * проєкт — правило описане в lib/projectAccess.
+   */
+  memberIds?: string[];
   deadline?: string | null;
   createdAt: string;
   groupName?: string | null;

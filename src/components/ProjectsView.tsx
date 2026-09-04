@@ -5,8 +5,9 @@ import ProjectModal from './ProjectModal';
 import {
   FolderKanban, FolderOpen, Folder, Plus, Calendar, CalendarRange, CheckSquare,
   Trash2, Edit2, Play, Pause, CheckCircle2, ChevronDown, ChevronRight,
-  Pencil, Check, X
+  Pencil, Check, X, Lock
 } from 'lucide-react';
+import { canManageProjectAccess, isProjectRestricted, projectAccessIds } from '../lib/projectAccess';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
 
@@ -294,11 +295,32 @@ export default function ProjectsView() {
                             <div className="h-1.5 w-full" style={{ backgroundColor: project.color }} />
                             <div className="p-4 flex-1 flex flex-col">
                               <div className="flex justify-between items-start mb-3">
-                                <span className={`px-2.5 py-1 rounded-md text-[11px] font-bold flex items-center gap-1.5 uppercase tracking-wide ${getStatusBg(project.status)}`}>
-                                  {getStatusIcon(project.status)}
-                                  {getStatusLabel(project.status)}
-                                </span>
-                                {hasEditRights && (isAdmin || project.managerIds.includes(currentUser?.userId || '')) && (
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className={`px-2.5 py-1 rounded-md text-[11px] font-bold flex items-center gap-1.5 uppercase tracking-wide ${getStatusBg(project.status)}`}>
+                                    {getStatusIcon(project.status)}
+                                    {getStatusLabel(project.status)}
+                                  </span>
+                                  {/*
+                                    Замок — не прикраса: коли проєкт закритий, це
+                                    має бути видно з першого погляду, інакше
+                                    легко здивуватись, чому колега не бачить
+                                    задачі, про яку ви говорите.
+                                  */}
+                                  {isProjectRestricted(project) && (
+                                    <span
+                                      className="px-2 py-1 rounded-md text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1"
+                                      title={`Доступ мають лише: ${projectAccessIds(project)
+                                        .map(id => state.users.find(u => u.id === id)?.name)
+                                        .filter(Boolean).join(', ') || '—'} (та адміністратори)`}
+                                    >
+                                      <Lock className="w-3 h-3" />
+                                      {projectAccessIds(project).length}
+                                    </span>
+                                  )}
+                                </div>
+                                {/* Власника сюди додано навмисно: без цього він не міг би
+                                    відкрити власний закритий проєкт і роздати до нього доступ */}
+                                {hasEditRights && (canManageProjectAccess(project, currentUser || { userId: '' }) || project.managerIds.includes(currentUser?.userId || '')) && (
                                   <div className="flex items-center gap-1">
                                     <button onClick={() => handleEdit(project)} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition" title="Редагувати">
                                       <Edit2 className="w-3.5 h-3.5" />

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Metric, Project, Process, UserGroup, AccessRights, NotificationItem, Expense } from './types';
 import { fetchState, syncState, getMe, estimateTaskTime, createEntity, updateEntity, deleteEntity, processOfflineQueue, sendCardAssignedNotification } from './api';
 import { v4 as uuidv4 } from 'uuid';
@@ -27,6 +27,7 @@ import ChatView from './components/ChatView';
 import { useChat } from './hooks/useChat';
 import type { AssistantAction } from './api';
 import { canViewSection, ALL_VIEW_IDS, DEFAULT_ALLOWED_VIEWS } from './lib/views';
+import { canAccessProject, scopeStateToUser } from './lib/projectAccess';
 import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet, MessageSquare, Gem } from 'lucide-react';
 
 // 'gantt' і 'event-details' — не вкладки меню, а сторінки всередині «Проєктів»
@@ -310,6 +311,31 @@ export default function App() {
     setState(newState);
     syncState(newState).catch(console.error);
   }, []);
+
+  /**
+   * Стан очима цієї людини: закриті проєкти та їхні картки не доходять до
+   * жодного екрана.
+   *
+   * Фільтр стоїть тут, на межі контексту, а не в кожному списку окремо. Так
+   * закритий проєкт зникає одразу звідусіль — з проєктів, дошки, діаграми,
+   * календаря, головної, — і новий екран не доведеться згадувати руками.
+   *
+   * Мутації нижче працюють із повним state, а не з цим: інакше збереження
+   * стану звичайним учасником затерло б у базі чужі проєкти, яких він просто
+   * не бачив.
+   */
+  const visibleState = useMemo(
+    () => (state && currentUser ? scopeStateToUser(state, currentUser) : state),
+    [state, currentUser],
+  );
+
+  // Доступ до відкритого проєкту могли щойно забрати — не тримаємо на екрані
+  // проєкт, якого для цієї людини вже немає.
+  useEffect(() => {
+    if (!activeProjectId || !state || !currentUser) return;
+    const project = (state.projects || []).find(p => p.id === activeProjectId);
+    if (project && !canAccessProject(project, currentUser)) setActiveProjectId(null);
+  }, [activeProjectId, state, currentUser]);
 
   // ── State mutations ────────────────────────────────────────────────────────
 
@@ -675,10 +701,17 @@ export default function App() {
 
   const addProject = useCallback((project: Omit<Project, 'id' | 'createdAt'>) => {
     if (!state) return;
-    const newProject: Project = { ...project, id: uuidv4(), createdAt: new Date().toISOString() };
+    const newProject: Project = {
+      ...project,
+      // Власник за замовчуванням — той, хто створив: проєкт без власника ніхто,
+      // крім адміна, потім не закриє й не відкриє.
+      ownerId: project.ownerId ?? currentUser?.userId ?? null,
+      id: uuidv4(),
+      createdAt: new Date().toISOString(),
+    };
     setState(prev => prev ? { ...prev, projects: [...(prev.projects || []), newProject] } : prev);
     createEntity('projects', newProject).catch(console.error);
-  }, [state]);
+  }, [state, currentUser]);
 
   const updateProject = useCallback((id: string, updates: Partial<Project>) => {
     if (!state) return;
@@ -901,7 +934,7 @@ export default function App() {
 
   return (
     <AppContext.Provider value={{
-      state, currentUser, hasEditRights, canView, logout,
+      state: visibleState || state, currentUser, hasEditRights, canView, logout,
       moveCard, addCard, updateCard, deleteCard, clearList, addList, deleteList, updateList, moveList,
       addTag, deleteTag, updateTag, addUser, updateUser, deleteUser,
       addContentPlan, updateContentPlan, deleteContentPlan, importContentPlans, 

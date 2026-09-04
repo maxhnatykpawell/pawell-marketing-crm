@@ -26,6 +26,7 @@ import {
   isFetchableUrl, isPrivateAddress, titleFromHtml, TITLE_FETCH_LIMIT,
 } from './src/lib/linkTitle';
 import { registerChatRoutes, chatStreamStats } from './chat-server';
+import { accessibleCards, scopeStateToUser } from './src/lib/projectAccess';
 
 
 // ── Firebase Init ─────────────────────────────────────────────────────────────
@@ -325,6 +326,22 @@ async function getAuthDb(): Promise<AuthDbType> {
   }
   if (fs.existsSync(authFile)) return JSON.parse(fs.readFileSync(authFile, 'utf-8'));
   return { credentials: [] };
+}
+
+/**
+ * Ролі входу одним словником: userId → 'admin' | 'member'.
+ *
+ * Доступ до проєктів питає саме цю роль. У state.users поле role — посада
+ * людини («Таргетолог»), тож брати її звідти було б помилкою, яку помітили б
+ * лише тоді, коли адмін перестав би отримувати свої ж нагадування.
+ */
+async function authRoles(): Promise<Map<string, string>> {
+  try {
+    const authDb = await getAuthDb();
+    return new Map((authDb.credentials || []).map((c: any) => [c.userId, c.role]));
+  } catch {
+    return new Map();
+  }
 }
 
 async function saveAuthDb(authData: AuthDbType): Promise<void> {
@@ -652,9 +669,12 @@ async function sendDailyPersonalDigests(state: any): Promise<void> {
   const itemTpl = templates.dailyDigestItem || DEFAULT_NOTIFICATION_TEMPLATES.dailyDigestItem;
 
   const usersWithTelegram = (state.users || []).filter((u: any) => u.telegramChatId);
+  const roles = await authRoles();
 
   for (const user of usersWithTelegram) {
-    const userCards = allCards.filter((c: any) => c.assigneeId === user.id);
+    // Дайджест показує рівно те, що людина побачила б у застосунку
+    const visible = accessibleCards(allCards, state.projects || [], { userId: user.id, role: roles.get(user.id) });
+    const userCards = visible.filter((c: any) => c.assigneeId === user.id);
     const todayCards = userCards.filter((c: any) => isToday(c.deadline));
     const overdueCards = userCards.filter((c: any) => isOverdue(c.deadline));
 
@@ -699,9 +719,17 @@ async function sendOverduePersonalNotifications(state: any): Promise<void> {
   const templates = settings.templates || DEFAULT_NOTIFICATION_TEMPLATES;
   const tpl = templates.taskOverdue || DEFAULT_NOTIFICATION_TEMPLATES.taskOverdue;
 
+  const roles = await authRoles();
+
   for (const card of overdueCards) {
     const assignee = (state.users || []).find((u: any) => u.id === card.assigneeId);
     if (!assignee?.telegramChatId) continue;
+    // Прострочена задача з закритого проєкту мовчить: людина все одно не має
+    // куди по ній піти
+    const seesCard = accessibleCards([card], state.projects || [], {
+      userId: assignee.id, role: roles.get(assignee.id),
+    }).length > 0;
+    if (!seesCard) continue;
 
     const deadlineDate = new Date(card.deadline);
     const daysOverdue = Math.ceil((today.getTime() - deadlineDate.getTime()) / 86400000);
@@ -2507,7 +2535,10 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
         }
       } catch { /* без LTV асистент просто не назве цю цифру */ }
 
-      const ctx: ToolContext = { state, ltv, now: new Date(), user, rights };
+      // Асистент дивиться на систему очима того, хто питає: закритого проєкту
+      // він не бачить так само, як не бачить його сам користувач, — інакше
+      // найпростішим способом обійти доступ було б просто спитати.
+      const ctx: ToolContext = { state: scopeStateToUser(state, user), ltv, now: new Date(), user, rights };
 
       const history = await loadAssistantHistory(user.userId);
       const contents: any[] = [
