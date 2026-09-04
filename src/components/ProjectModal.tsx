@@ -39,7 +39,10 @@ export default function ProjectModal({ project, onClose }: Props) {
   const [managerIds, setManagerIds] = useState<string[]>(project?.managerIds || (currentUser ? [currentUser.userId] : []));
   const [deadline, setDeadline] = useState(project?.deadline || '');
   const [groupName, setGroupName] = useState(project?.groupName || '');
-  const [ownerId, setOwnerId] = useState<string>(project?.ownerId || currentUser?.userId || '');
+  // Новому проєкту власник — той, хто його створює. Старому, де власника ще
+  // немає, не підставляємо нікого: інакше перше ж збереження тихо зробило б
+  // власником того, хто просто зайшов виправити назву.
+  const [ownerId, setOwnerId] = useState<string>(project ? (project.ownerId || '') : (currentUser?.userId || ''));
   const [memberIds, setMemberIds] = useState<string[]>(project?.memberIds || []);
 
   const [isManagerDropdownOpen, setIsManagerDropdownOpen] = useState(false);
@@ -302,7 +305,12 @@ export default function ProjectModal({ project, onClose }: Props) {
             перший доданий учасник закриває його для решти команди. Правило
             описане в lib/projectAccess, тут лише його видима частина.
           */}
-          {canManageAccess && (
+          {/*
+            Секція показується всім, хто відкрив проєкт, — і тому, хто не може
+            її змінити, теж. Приховати доступ означало б лишити людину гадати,
+            чому колега не бачить проєкту; видно, але недоступно — чесніше.
+          */}
+          {(
             <div className="pt-4 border-t border-gray-100 space-y-4">
               <div className="flex items-center justify-between gap-3">
                 <label className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
@@ -327,14 +335,20 @@ export default function ProjectModal({ project, onClose }: Props) {
                 </label>
                 <select
                   value={ownerId}
+                  disabled={!canManageAccess}
                   onChange={e => setOwnerId(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white disabled:bg-gray-50 disabled:text-gray-500"
                 >
                   <option value="">Без власника</option>
                   {state.users.map(u => (
                     <option key={u.id} value={u.id}>{u.name}</option>
                   ))}
                 </select>
+                {canManageAccess && !ownerId && (
+                  <p className="text-xs text-gray-400 mt-1.5">
+                    У цього проєкту ще немає власника. Поки його немає, доступом розпоряджаються адміністратори й менеджери проєкту.
+                  </p>
+                )}
               </div>
 
               <div className="relative member-dropdown">
@@ -343,8 +357,10 @@ export default function ProjectModal({ project, onClose }: Props) {
                   Учасники з доступом
                 </label>
                 <div
-                  onClick={() => setIsMemberDropdownOpen(!isMemberDropdownOpen)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-xl bg-white cursor-pointer hover:border-blue-400 transition min-h-[42px] flex items-center gap-2 flex-wrap"
+                  onClick={() => canManageAccess && setIsMemberDropdownOpen(!isMemberDropdownOpen)}
+                  className={`w-full px-4 py-2 border border-gray-300 rounded-xl min-h-[42px] flex items-center gap-2 flex-wrap transition ${
+                    canManageAccess ? 'bg-white cursor-pointer hover:border-blue-400' : 'bg-gray-50'
+                  }`}
                 >
                   {memberIds.length === 0 ? (
                     <span className="text-gray-400 text-sm">Нікого не додано — проєкт відкритий</span>
@@ -356,20 +372,22 @@ export default function ProjectModal({ project, onClose }: Props) {
                         <div key={id} className="flex items-center gap-1.5 bg-amber-50 text-amber-800 px-2 py-0.5 rounded text-xs font-medium border border-amber-100">
                           <img src={user.avatar} className="w-4 h-4 rounded-full" alt="" />
                           {user.name}
-                          <button
-                            type="button"
-                            onClick={e => { e.stopPropagation(); toggleMember(id); }}
-                            className="hover:text-amber-950 ml-1"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
+                          {canManageAccess && (
+                            <button
+                              type="button"
+                              onClick={e => { e.stopPropagation(); toggleMember(id); }}
+                              className="hover:text-amber-950 ml-1"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
                         </div>
                       );
                     })
                   )}
                 </div>
 
-                {isMemberDropdownOpen && (
+                {isMemberDropdownOpen && canManageAccess && (
                   <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-10 max-h-48 overflow-y-auto p-1">
                     {state.users.map(user => {
                       const isSelected = memberIds.includes(user.id);
@@ -398,10 +416,11 @@ export default function ProjectModal({ project, onClose }: Props) {
                   {isRestricted
                     ? 'Проєкт і його задачі бачать лише власник, менеджери й ці люди. Адміністратори бачать усе.'
                     : 'Поки нікого не додано, проєкт і його задачі бачить уся команда. Додайте бодай одного — і проєкт закриється для решти.'}
+                  {!canManageAccess && ' Змінити склад доступу може власник проєкту або адміністратор.'}
                 </p>
               </div>
 
-              {strandedAssignees.length > 0 && (
+              {canManageAccess && strandedAssignees.length > 0 && (
                 <div className="flex items-start gap-2.5 p-3 bg-red-50 border border-red-100 rounded-xl">
                   <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
                   <div className="min-w-0 text-xs text-red-800">

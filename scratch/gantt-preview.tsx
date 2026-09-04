@@ -24,7 +24,7 @@ const initialCards: Card[] = [
     startDate: day(-4), deadline: day(2), assigneeId: 'u1', isCompleted: false,
     subtasks: [
       { id: 's1', title: 'Опитування клієнтів', completed: true, startDate: day(-4), deadline: day(-2) },
-      { id: 's2', title: 'Аналіз конкурентів', completed: false, startDate: day(-1), deadline: day(2) },
+      { id: 's2', title: 'Аналіз конкурентів', completed: false, assigneeId: 'u2', startDate: day(-1), deadline: day(2) },
     ],
     comments: [], attachments: [], order: 0, projectId: 'p1',
   },
@@ -39,21 +39,21 @@ const initialCards: Card[] = [
   },
   {
     id: 'c3', listId: 'l1', title: 'Зйомка', description: '',
-    deadline: day(-1), assigneeId: null, isCompleted: false,
+    deadline: day(-1), assigneeId: 'u2', isCompleted: false,
     subtasks: [], comments: [], attachments: [], order: 2, projectId: 'p1',
   },
   {
     id: 'c4', listId: 'l1', title: 'Запуск кампанії', description: '',
     assigneeId: null, deadline: null, isCompleted: false,
     subtasks: [
-      { id: 's5', title: 'Налаштувати кабінет', completed: false, startDate: day(10), deadline: day(12) },
+      { id: 's5', title: 'Налаштувати кабінет', completed: false, assigneeId: 'u1', startDate: day(10), deadline: day(12) },
       { id: 's6', title: 'Залити креативи', completed: false, startDate: day(12), deadline: day(14) },
     ],
     comments: [], attachments: [], order: 3, projectId: 'p1',
   },
   {
     id: 'c5', listId: 'l1', title: 'Звіт по результатах', description: '',
-    assigneeId: null, deadline: null, isCompleted: false,
+    assigneeId: 'u2', deadline: null, isCompleted: false,
     subtasks: [], comments: [], attachments: [], order: 4, projectId: 'p1',
   },
 ];
@@ -68,7 +68,11 @@ function Harness() {
         id: 'p1', title: 'Осінній запуск', color: '#6366f1', status: 'active',
         managerIds: [], deadline: day(16), createdAt: day(-30),
       }],
-      users: [{ id: 'u1', name: 'Максим Гнатик', avatar: '' }],
+      users: [
+        { id: 'u1', name: 'Максим Гнатик', avatar: 'https://i.pravatar.cc/40?img=12' },
+        // Без аватарки — має показатись кружечок з ініціалами
+        { id: 'u2', name: 'Олена Ковальчук', avatar: '' },
+      ],
       lists: [
         { id: 'l1', title: 'В роботі', order: 0, boardId: 'b1' },
         { id: 'l2', title: 'Черга', order: 1, boardId: 'b1' },

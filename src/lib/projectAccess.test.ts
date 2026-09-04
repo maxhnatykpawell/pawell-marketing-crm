@@ -49,7 +49,11 @@ check('власник керує доступом', canManageProjectAccess(close
 // Менеджер веде роботу, але не вирішує, кого пускати
 check('менеджер не керує доступом', canManageProjectAccess(closed, manager), false);
 check('учасник не керує доступом', canManageProjectAccess(closed, member), false);
-check('у проєкті без власника доступ роздає лише адмін', canManageProjectAccess(legacy, manager), false);
+// Проєкти, створені до появи власників, інакше не мали б жодного способу
+// змінити доступ: власника в них нема, і призначити його теж нікому
+check('проєкт без власника налаштовує менеджер', canManageProjectAccess(legacy, manager), true);
+check('але не будь-хто', canManageProjectAccess(legacy, outsider), false);
+check('адмін керує і проєктом без власника', canManageProjectAccess(legacy, admin), true);
 
 console.log('\nСписок проєктів');
 check('сторонній бачить лише відкриті',

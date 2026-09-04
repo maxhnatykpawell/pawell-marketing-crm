@@ -28,6 +28,22 @@ import {
  * малювання.
  */
 
+/**
+ * Аватар виконавця. Аватарки може не бути — тоді кружечок з ініціалами, як на
+ * дошці: порожнє місце в цьому рядку читалось би як «нікого не призначено».
+ */
+function AssigneeDot({ user, title }: { user: { name: string; avatar?: string }; title: string }) {
+  const common = 'w-[18px] h-[18px] rounded-full shrink-0 ring-1 ring-white/80 shadow-sm';
+  if (user.avatar) {
+    return <img src={user.avatar} alt={user.name} title={title} className={`${common} object-cover`} />;
+  }
+  return (
+    <div title={title} className={`${common} bg-amber-400 text-white text-[8px] font-bold flex items-center justify-center`}>
+      {user.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+    </div>
+  );
+}
+
 const LEFT_PANE = 268;
 const ROW_HEIGHT = 34;
 const DAY_WIDTH = { day: 34, week: 13 } as const;
@@ -633,6 +649,15 @@ export default function ProjectGanttView() {
                 const bar = ownRange || summaryRange;
                 const isSummary = !ownRange && !!summaryRange;
                 const overdue = bar ? isOverdue(bar, today, row.completed) : false;
+                const assignee = row.assigneeId
+                  ? state.users.find(u => u.id === row.assigneeId)
+                  : undefined;
+                const barLeft = bar ? dayIndex(bar.start) * dayWidth + 1 : 0;
+                const barWidth = bar ? Math.max(rangeLength(bar) * dayWidth - 2, 6) : 0;
+                // На вузькій смужці аватар з'їв би її всю — одноденна задача
+                // просто зникла б під кружечком, — а на зведеній не поміститься
+                // по висоті. У таких випадках ставимо його поруч, за смужкою.
+                const dotInsideBar = !isSummary && barWidth >= 56;
 
                 return (
                   <div
@@ -715,11 +740,11 @@ export default function ProjectGanttView() {
                             isDragging ? 'ring-2 ring-blue-400 shadow-md z-10' : ''
                           } ${overdue ? 'ring-1 ring-red-400' : ''}`}
                           style={{
-                            left: dayIndex(bar.start) * dayWidth + 1,
-                            width: Math.max(rangeLength(bar) * dayWidth - 2, 6),
+                            left: barLeft,
+                            width: barWidth,
                             backgroundColor: row.completed ? '#dcfce7' : tint(color, isSummary ? '55' : '2e'),
                           }}
-                          title={`${row.title}\n${format(toLocalDate(bar.start), 'd MMM', { locale: uk })} — ${format(toLocalDate(bar.end), 'd MMM yyyy', { locale: uk })} · ${rangeLength(bar)} дн.`}
+                          title={`${row.title}\n${format(toLocalDate(bar.start), 'd MMM', { locale: uk })} — ${format(toLocalDate(bar.end), 'd MMM yyyy', { locale: uk })} · ${rangeLength(bar)} дн.${assignee ? `\n${assignee.name}` : ''}`}
                           onMouseDown={e => startBarDrag(e, row, 'move', bar, isSummary)}
                           onDoubleClick={() => setOpenCardId(row.cardId)}
                         >
@@ -735,6 +760,11 @@ export default function ProjectGanttView() {
                           {!isSummary && (
                             <span className="relative px-2 text-[11px] font-medium text-gray-800 truncate pointer-events-none">
                               {rangeLength(bar) * dayWidth > 64 ? row.title : ''}
+                            </span>
+                          )}
+                          {assignee && dotInsideBar && (
+                            <span className="relative ml-auto mr-1 flex items-center pointer-events-none">
+                              <AssigneeDot user={assignee} title={`Виконавець: ${assignee.name}`} />
                             </span>
                           )}
 
@@ -754,8 +784,26 @@ export default function ProjectGanttView() {
                           )}
                         </div>
                       ) : hasEditRights && (
-                        <span className="absolute inset-y-0 left-2 flex items-center text-[11px] text-gray-300 opacity-0 group-hover:opacity-100 transition pointer-events-none">
+                        <span
+                          className="absolute inset-y-0 flex items-center text-[11px] text-gray-300 opacity-0 group-hover:opacity-100 transition pointer-events-none"
+                          style={{ left: assignee ? 30 : 8 }}
+                        >
                           протягніть, щоб запланувати
+                        </span>
+                      )}
+
+                      {/*
+                        Аватар поза смужкою. Вузька смужка сховала б його під
+                        себе, у зведеної не вистачає висоти, а незапланована
+                        задача смужки не має взагалі — але виконавець у неї є,
+                        і саме таку задачу найчастіше й шукають очима.
+                      */}
+                      {assignee && !dotInsideBar && (
+                        <span
+                          className="absolute top-0 bottom-0 flex items-center pointer-events-none"
+                          style={{ left: bar ? barLeft + barWidth + 4 : 6 }}
+                        >
+                          <AssigneeDot user={assignee} title={`Виконавець: ${assignee.name}`} />
                         </span>
                       )}
                     </div>

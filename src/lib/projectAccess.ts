@@ -58,12 +58,19 @@ export function canAccessProject(project: ProjectAccessFields, subject: AccessSu
 /**
  * Хто змінює склад доступу: адміністратор і власник.
  *
- * Менеджера тут навмисно немає. Менеджер веде роботу, але роздавати доступ до
- * закритого проєкту — рішення того, чий це проєкт.
+ * У проєкта з власником менеджера тут немає навмисно: менеджер веде роботу,
+ * але роздавати доступ — рішення того, чий це проєкт.
+ *
+ * Проєкт без власника — нічий, і його налаштовує будь-хто з менеджерів. Так
+ * зроблено заради проєктів, створених до появи власників: інакше вони
+ * назавжди лишились би без способу змінити доступ, бо власника нема кому
+ * призначити. Менеджер і без того може такий проєкт перейменувати й видалити,
+ * тож нового рівня довіри тут не з'являється.
  */
 export function canManageProjectAccess(project: ProjectAccessFields, subject: AccessSubject): boolean {
   if (subject.role === 'admin') return true;
-  return !!project.ownerId && project.ownerId === subject.userId;
+  if (project.ownerId) return project.ownerId === subject.userId;
+  return (project.managerIds || []).includes(subject.userId);
 }
 
 export function accessibleProjects<T extends ProjectAccessFields>(projects: T[], subject: AccessSubject): T[] {
