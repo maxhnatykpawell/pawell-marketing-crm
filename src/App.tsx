@@ -18,6 +18,7 @@ import ProjectsView from './components/ProjectsView';
 import ProjectGanttView from './components/ProjectGanttView';
 import ProcessTreeView from './components/ProcessTreeView';
 import ExpensesView from './components/ExpensesView';
+import AutomationsView from './components/AutomationsView';
 import ExpenseModal from './components/ExpenseModal';
 import { PayrollView } from './components/Payroll/PayrollView';
 import Celebration from './components/Celebration';
@@ -28,12 +29,12 @@ import { useChat } from './hooks/useChat';
 import type { AssistantAction } from './api';
 import { canViewSection, ALL_VIEW_IDS, DEFAULT_ALLOWED_VIEWS } from './lib/views';
 import { canAccessProject, scopeStateToUser } from './lib/projectAccess';
-import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet, MessageSquare, Gem } from 'lucide-react';
+import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet, MessageSquare, Gem, Bot } from 'lucide-react';
 
 // 'gantt' і 'event-details' — не вкладки меню, а сторінки всередині «Проєктів»
 // і «Подій»: відкриваються з картки розділу й живуть на його правах.
 // 'analytics' — вкладка меню, але право на неї теж успадковане, від «Головної».
-type ActiveView = 'dashboard' | 'analytics' | 'projects' | 'gantt' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'profile' | 'expenses' | 'payroll' | 'chat';
+type ActiveView = 'dashboard' | 'analytics' | 'projects' | 'gantt' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'automations' | 'profile' | 'expenses' | 'payroll' | 'chat';
 
 interface AppContextType {
   state: AppState;
@@ -951,6 +952,7 @@ export default function App() {
     { view: 'events', label: 'Події', Icon: CalendarDays },
     { view: 'calendar', label: 'Календар', Icon: LayoutGrid },
     { view: 'regulations', label: 'Регламенти', Icon: BookOpen },
+    { view: 'automations', label: 'Автоматизації', Icon: Bot },
     { view: 'expenses', label: 'Витрати', Icon: Receipt },
     { view: 'payroll', label: 'Зарплати', Icon: Wallet },
     { view: 'chat', label: 'Чат', Icon: MessageSquare },
@@ -1178,6 +1180,7 @@ export default function App() {
           {activeView === 'calendar' && <MasterCalendarView />}
           {activeView === 'event-details' && <EventPageView />}
           {activeView === 'regulations' && <TeamRegulationsView />}
+          {activeView === 'automations' && canView('automations') && <AutomationsView />}
           {activeView === 'profile' && <MyProfileView />}
           {activeView === 'expenses' && canView('expenses') && <ExpensesView />}
           {activeView === 'payroll' && <PayrollView />}

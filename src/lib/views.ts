@@ -38,6 +38,11 @@ export const VIEWS: ViewDef[] = [
   { id: 'calendar',    label: 'Календар' },
   { id: 'regulations', label: 'Регламенти' },
   {
+    id: 'automations',
+    label: 'Автоматизації',
+    hint: 'Правила, за якими задачі створюються самі; змінює лише адмін',
+  },
+  {
     id: 'payroll',
     label: 'Зарплати',
     hint: 'Кожен бачить лише власну відомість; адмін — усі',

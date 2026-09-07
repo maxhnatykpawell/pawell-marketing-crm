@@ -29,6 +29,16 @@ import { registerChatRoutes, chatStreamStats } from './chat-server';
 import { accessibleCards, scopeStateToUser } from './src/lib/projectAccess';
 import { randomUUID } from 'crypto';
 import { findIdleProjects, lastTouchedAt } from './src/lib/projectIdle';
+import {
+  isDue as isRecurrenceDue,
+  toCronExpression as recurrenceToCron,
+  describeSchedule as describeRecurrence,
+  validateSchedule as validateRecurrence,
+  calendarDay as calendarDayInTeamZone,
+  addDaysToYmd,
+  TEAM_TIMEZONE,
+} from './src/lib/recurrence';
+import type { TaskAutomation } from './src/types';
 
 
 // ── Firebase Init ─────────────────────────────────────────────────────────────
@@ -127,7 +137,7 @@ const SETTINGS_DOC = 'settings';
  * Налаштування, які з'явились пізніше і можуть бути відсутні у клієнта.
  * Раніше вони не потрапляли в білий список saveDb і мовчки не зберігались.
  */
-const OPTIONAL_SETTINGS_KEYS = ['expenseCategories', 'expenseSources', 'rfmThresholds', 'currencyRates'];
+const OPTIONAL_SETTINGS_KEYS = ['expenseCategories', 'expenseSources', 'rfmThresholds', 'currencyRates', 'taskAutomations'];
 
 const DEFAULT_PAYROLL_SETTINGS = {
   labels: {
@@ -911,6 +921,172 @@ function setupPersonalNotificationCrons(settings: any) {
       }, { timezone: 'Europe/Kyiv' });
       console.log('📅 Idle project cron scheduled.');
     } catch (err) { console.error('❌ Invalid idle project cron:', err); }
+  }
+}
+
+// ── Автоматизації задач ──────────────────────────────────────────────────────
+
+/**
+ * Правило «створювати таку задачу за таким розкладом».
+ *
+ * Cron тут лише будильник: він приводить нас до потрібної години, а рішення
+ * ухвалює isRecurrenceDue() (див. src/lib/recurrence). Через це «31 числа» не
+ * зникає в лютому, а «кожні 3 дні» взагалі не виражається одним виразом cron.
+ */
+const automationCronTasks = new Map<string, any>();
+
+/**
+ * Записати список правил, не чіпаючи решту стану.
+ *
+ * saveDb() у режимі Firestore перезаписує всі атомарні колекції по одному
+ * документу — платити цим за оновлення поля lastRunAt раз на добу було б
+ * безглуздо. Правила живуть у документі налаштувань, тож туди й пишемо.
+ */
+async function persistAutomations(automations: TaskAutomation[]): Promise<void> {
+  const db = initFirebase();
+  if (db) {
+    await db.collection(CRM_COLLECTION).doc(SETTINGS_DOC).set({ taskAutomations: automations }, { merge: true });
+    return;
+  }
+  const state = await getDb();
+  state.taskAutomations = automations;
+  await saveDb(state);
+}
+
+/** Зберегти один запис колекції — той самий шлях, яким ходить /api/entity */
+async function persistRecord(type: string, item: any): Promise<void> {
+  const db = initFirebase();
+  if (db) {
+    await db.collection('crm_' + type).doc(item.id).set(item);
+    return;
+  }
+  const state = await getDb();
+  state[type] = [...(state[type] || []).filter((x: any) => x.id !== item.id), item];
+  await saveDb(state);
+}
+
+/** Дата у тому вигляді, в якому дедлайни лежать у базі (див. lib/gantt) */
+function storedDeadlineFromOffset(now: Date, offsetDays: number): string {
+  const { ymd } = calendarDayInTeamZone(now);
+  return `${addDaysToYmd(ymd, offsetDays)}T00:00:00.000Z`;
+}
+
+/**
+ * Створити картку за шаблоном правила.
+ *
+ * Повертає створену картку або причину, чому не вийшло: список могли видалити
+ * вже після того, як правило налаштували, і мовчазна відмова означала б, що
+ * задача просто перестала з'являтися й ніхто про це не дізнався.
+ */
+async function runTaskAutomation(
+  automation: TaskAutomation,
+  state: any,
+  now: Date = new Date(),
+): Promise<{ card?: any; error?: string }> {
+  const tpl = automation.template;
+  if (!tpl?.title?.trim()) return { error: 'empty_title' };
+
+  const list = (state.lists || []).find((l: any) => l.id === tpl.listId);
+  if (!list) return { error: 'list_not_found' };
+
+  const project = tpl.projectId ? (state.projects || []).find((p: any) => p.id === tpl.projectId) : null;
+  // Проєкт могли видалити — картка має з'явитись однаково, просто поза проєктом
+  const projectId = project ? project.id : null;
+
+  const listCards = (state.cards || []).filter((c: any) => c.listId === tpl.listId);
+  const minOrder = listCards.length > 0 ? Math.min(...listCards.map((c: any) => c.order ?? 0)) : 0;
+
+  const nowIso = now.toISOString();
+  const card = {
+    id: randomUUID(),
+    listId: tpl.listId,
+    title: tpl.title,
+    description: tpl.description || '',
+    startDate: null,
+    deadline: typeof tpl.deadlineOffsetDays === 'number'
+      ? storedDeadlineFromOffset(now, tpl.deadlineOffsetDays)
+      : null,
+    assigneeId: tpl.assigneeId || null,
+    tagIds: tpl.tagIds || [],
+    subtasks: (tpl.subtaskTitles || [])
+      .filter(t => t.trim())
+      .map(t => ({ id: randomUUID(), title: t, isCompleted: false })),
+    comments: [],
+    attachments: [],
+    order: minOrder - 1,
+    projectId,
+    phaseId: projectId ? (tpl.phaseId || null) : null,
+    updatedAt: nowIso,
+  };
+
+  await persistRecord('cards', card);
+  // Стан у пам'яті теж має знати про картку: notifyCardAssigned читає дедлайн
+  // і проєкт саме з нього
+  state.cards = [...(state.cards || []), card];
+
+  if (card.assigneeId) {
+    await persistRecord('notifications', {
+      id: randomUUID(),
+      userId: card.assigneeId,
+      title: 'Повторювана задача',
+      message: `Створено за розкладом: "${card.title}"`,
+      cardId: card.id,
+      read: false,
+      createdAt: nowIso,
+    });
+    await notifyCardAssigned(state, card.id, card.assigneeId);
+  }
+
+  await updateLastModified();
+  return { card };
+}
+
+/**
+ * Перезапустити будильники правил.
+ *
+ * Викликається щоразу, коли список правил змінюється: старі завдання cron не
+ * зникають самі, і без цього вимкнене правило продовжувало б створювати картки
+ * до перезапуску сервера.
+ */
+function setupTaskAutomationCrons(automations: TaskAutomation[] = []) {
+  automationCronTasks.forEach(task => task.stop());
+  automationCronTasks.clear();
+
+  for (const automation of automations) {
+    if (!automation.enabled) continue;
+    const invalid = validateRecurrence(automation.schedule);
+    if (invalid) {
+      console.error(`❌ Правило "${automation.label}" має некоректний розклад: ${invalid}`);
+      continue;
+    }
+    try {
+      const expr = recurrenceToCron(automation.schedule);
+      const task = cron.schedule(expr, async () => {
+        const now = new Date();
+        const state = await getDb();
+        const fresh = (state.taskAutomations || []).find((a: TaskAutomation) => a.id === automation.id);
+        // Правило могли вимкнути чи видалити між спрацюваннями cron
+        if (!fresh || !fresh.enabled) return;
+        if (!isRecurrenceDue(fresh.schedule, now, fresh.lastRunAt)) return;
+
+        const result = await runTaskAutomation(fresh, state, now);
+        if (result.error) {
+          console.error(`🤖 Правило "${fresh.label}" не спрацювало: ${result.error}`);
+          return;
+        }
+        const updated = (state.taskAutomations || []).map((a: TaskAutomation) =>
+          a.id === fresh.id
+            ? { ...a, lastRunAt: now.toISOString(), lastCardId: result.card.id, runCount: (a.runCount || 0) + 1 }
+            : a,
+        );
+        await persistAutomations(updated);
+        console.log(`🤖 Правило "${fresh.label}" створило картку "${result.card.title}"`);
+      }, { timezone: TEAM_TIMEZONE });
+      automationCronTasks.set(automation.id, task);
+      console.log(`🤖 Правило "${automation.label}" заплановано: ${describeRecurrence(automation.schedule)} (${expr})`);
+    } catch (err) {
+      console.error(`❌ Не вдалося запланувати правило "${automation.label}":`, err);
+    }
   }
 }
 
@@ -1766,6 +1942,7 @@ async function startServer() {
   setupTelegramCron(initialState.aiReportSchedule || '0 8 * * *');
   setupAnnouncementCrons(initialState.announcements || []);
   setupPersonalNotificationCrons(initialState.personalNotifications || DEFAULT_PERSONAL_NOTIFICATIONS);
+  setupTaskAutomationCrons(initialState.taskAutomations || []);
 
   // KeepInCRM: запускаємо cron + першу синхронізацію при старті сервера
   setupKeepInCRMCron();
@@ -1914,8 +2091,15 @@ async function startServer() {
 
   app.post('/api/state', requireAuth, async (req, res) => {
     const oldState = await getDb();
+    // Правила автоматизацій редагуються лише через /api/automations. Тут вони
+    // прийшли б такими, якими клієнт завантажив стан колись раніше, — і повний
+    // синк мовчки відкотив би щойно створене правило або поле lastRunAt.
+    // Підставляємо своє значення, а не видаляємо ключ: у файловому режимі
+    // saveDb перезаписує весь стан, тож відсутній ключ означав би не «не чіпай»,
+    // а «зітри».
+    req.body.taskAutomations = oldState.taskAutomations || [];
     await saveDb(req.body);
-    
+
     // Check if AI schedule changed
     if (req.body.aiReportSchedule && req.body.aiReportSchedule !== oldState.aiReportSchedule) {
       setupTelegramCron(req.body.aiReportSchedule);
@@ -2247,6 +2431,118 @@ async function startServer() {
       const result = await sendAnnouncementToTelegram(ann.text);
       if (result.success) res.json({ success: true });
       else res.status(500).json({ success: false, error: result.error });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Автоматизації задач ──────────────────────────────────────────────────────
+
+  /**
+   * Правила бачить уся команда, а змінює лише адмін: повторювана задача
+   * створюється комусь у роботу, і людині варто розуміти, звідки вона взялась.
+   */
+  app.get('/api/automations', requireAuth, async (_req, res) => {
+    try {
+      const state = await getDb();
+      res.json(state.taskAutomations || []);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/automations', requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const { label, schedule, template, enabled } = req.body || {};
+      if (!label?.trim()) { res.status(400).json({ error: 'Вкажіть назву правила' }); return; }
+      if (!template?.title?.trim()) { res.status(400).json({ error: 'Вкажіть назву задачі' }); return; }
+      if (!template?.listId) { res.status(400).json({ error: 'Оберіть список, у який лягатиме задача' }); return; }
+      const invalid = validateRecurrence(schedule);
+      if (invalid) { res.status(400).json({ error: invalid }); return; }
+
+      const state = await getDb();
+      const automation: TaskAutomation = {
+        id: `auto_${Date.now()}`,
+        label: label.trim(),
+        enabled: enabled !== false,
+        schedule,
+        template,
+        lastRunAt: null,
+        lastCardId: null,
+        runCount: 0,
+        createdAt: new Date().toISOString(),
+        createdBy: req.user?.userId || null,
+      };
+      const automations = [...(state.taskAutomations || []), automation];
+      await persistAutomations(automations);
+      setupTaskAutomationCrons(automations);
+      await updateLastModified();
+      res.json(automation);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.put('/api/automations/:id', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const state = await getDb();
+      const existing = (state.taskAutomations || []).find((a: TaskAutomation) => a.id === id);
+      if (!existing) { res.status(404).json({ error: 'Правило не знайдено' }); return; }
+
+      const next: TaskAutomation = { ...existing, ...req.body, id };
+      const invalid = validateRecurrence(next.schedule);
+      if (invalid) { res.status(400).json({ error: invalid }); return; }
+      if (!next.template?.title?.trim()) { res.status(400).json({ error: 'Вкажіть назву задачі' }); return; }
+      if (!next.template?.listId) { res.status(400).json({ error: 'Оберіть список, у який лягатиме задача' }); return; }
+
+      const automations = (state.taskAutomations || []).map((a: TaskAutomation) => a.id === id ? next : a);
+      await persistAutomations(automations);
+      setupTaskAutomationCrons(automations);
+      await updateLastModified();
+      res.json(next);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete('/api/automations/:id', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const state = await getDb();
+      const automations = (state.taskAutomations || []).filter((a: TaskAutomation) => a.id !== id);
+      await persistAutomations(automations);
+      const task = automationCronTasks.get(id);
+      if (task) { task.stop(); automationCronTasks.delete(id); }
+      await updateLastModified();
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  /**
+   * Створити картку просто зараз, не чекаючи розкладу.
+   *
+   * Це і перевірка «чи правильно я все налаштував», і спосіб надолужити день,
+   * коли сервер лежав. lastRunAt оновлюється навмисно: інакше «кожні N днів»
+   * після ручного запуску створило б другу таку саму картку наступного ранку.
+   */
+  app.post('/api/automations/:id/run', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const now = new Date();
+      const state = await getDb();
+      const automation = (state.taskAutomations || []).find((a: TaskAutomation) => a.id === id);
+      if (!automation) { res.status(404).json({ error: 'Правило не знайдено' }); return; }
+
+      const result = await runTaskAutomation(automation, state, now);
+      if (result.error) {
+        const message = result.error === 'list_not_found'
+          ? 'Списку з шаблона більше немає — оберіть інший'
+          : 'У шаблоні не заповнена назва задачі';
+        res.status(400).json({ error: message });
+        return;
+      }
+
+      const automations = (state.taskAutomations || []).map((a: TaskAutomation) =>
+        a.id === id
+          ? { ...a, lastRunAt: now.toISOString(), lastCardId: result.card.id, runCount: (a.runCount || 0) + 1 }
+          : a,
+      );
+      await persistAutomations(automations);
+      setupTaskAutomationCrons(automations);
+      res.json({ success: true, card: result.card });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

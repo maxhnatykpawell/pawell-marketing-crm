@@ -1,6 +1,7 @@
 import {
   AppState, Attachment, AuthUser, KeepInCRMSnapshot, KeepInCRMHistoryResponse,
   ChatConversation, ChatConversationView, ChatMessage,
+  Card, TaskAutomation,
 } from './types';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -339,6 +340,63 @@ export const testAnnouncement = async (id: string): Promise<void> => {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to send test');
   }
+};
+
+// ── Автоматизації задач ───────────────────────────────────────────────────────
+
+export const getAutomations = async (): Promise<TaskAutomation[]> => {
+  const res = await fetch('/api/automations', { headers: authHeaders() });
+  if (!res.ok) throw new Error('Не вдалося завантажити правила');
+  return res.json();
+};
+
+export const createAutomation = async (
+  data: Pick<TaskAutomation, 'label' | 'schedule' | 'template' | 'enabled'>,
+): Promise<TaskAutomation> => {
+  const res = await fetch('/api/automations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Не вдалося створити правило');
+  }
+  return res.json();
+};
+
+export const updateAutomation = async (id: string, data: Partial<TaskAutomation>): Promise<TaskAutomation> => {
+  const res = await fetch(`/api/automations/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Не вдалося зберегти правило');
+  }
+  return res.json();
+};
+
+export const deleteAutomation = async (id: string): Promise<void> => {
+  const res = await fetch(`/api/automations/${id}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error('Не вдалося видалити правило');
+};
+
+/** Створити картку просто зараз — перевірка налаштувань без очікування розкладу */
+export const runAutomation = async (id: string): Promise<{ card: Card }> => {
+  const res = await fetch(`/api/automations/${id}/run`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Не вдалося створити задачу');
+  }
+  return res.json();
 };
 
 // ── Personal Notifications ────────────────────────────────────────────────────

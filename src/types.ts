@@ -1,6 +1,8 @@
 import type { RfmThresholds } from './lib/clientAnalytics';
+import type { RecurrenceSchedule } from './lib/recurrence';
 
 export type { RfmThresholds };
+export type { RecurrenceSchedule, RecurrenceMode } from './lib/recurrence';
 
 export interface ScheduledAnnouncement {
   id: string;
@@ -10,6 +12,46 @@ export interface ScheduledAnnouncement {
   days: number[];
   enabled: boolean;
   createdAt: string;
+}
+
+// ── Автоматизації ─────────────────────────────────────────────────────────────
+
+/**
+ * Заготовка картки, яку правило створює щоразу.
+ *
+ * Дедлайн тут не дата, а зсув: правило живе роками, а «до 12 травня» правдиве
+ * рівно один раз. «+2 дні від створення» лишається правдивим завжди.
+ */
+export interface TaskTemplate {
+  title: string;
+  description?: string;
+  /** У який список дошки лягає картка */
+  listId: string;
+  projectId?: string | null;
+  phaseId?: string | null;
+  assigneeId?: string | null;
+  tagIds?: string[];
+  /** Через скільки днів після створення настає дедлайн; null — без дедлайну */
+  deadlineOffsetDays?: number | null;
+  /** Підзадачі-чеклист, що копіюються в кожну нову картку */
+  subtaskTitles?: string[];
+}
+
+/** Правило «створювати таку задачу за таким розкладом» */
+export interface TaskAutomation {
+  id: string;
+  /** Назва правила у списку — не плутати з назвою самої задачі */
+  label: string;
+  enabled: boolean;
+  schedule: RecurrenceSchedule;
+  template: TaskTemplate;
+  /** Коли правило спрацювало востаннє — з цього рахуються «кожні N днів» */
+  lastRunAt?: string | null;
+  /** Картка з останнього запуску — щоб було куди перейти зі списку правил */
+  lastCardId?: string | null;
+  runCount?: number;
+  createdAt: string;
+  createdBy?: string | null;
 }
 
 // ── Чат ───────────────────────────────────────────────────────────────────────
@@ -368,6 +410,7 @@ export interface AppState {
   processes?: Process[];
   aiReportSchedule?: string;
   announcements?: ScheduledAnnouncement[];
+  taskAutomations?: TaskAutomation[];
   personalNotifications?: PersonalNotificationSettings;
   notifications?: NotificationItem[];
   expenses?: Expense[];
