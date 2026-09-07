@@ -278,15 +278,7 @@ export default function ProjectsView() {
                         const projectCards = state.cards.filter(c => c.projectId === project.id);
                         const totalCards = projectCards.length;
 
-                        const completedCards = projectCards.filter(c => {
-                          const boardLists = state.lists.filter(l =>
-                            state.boards?.length
-                              ? l.boardId === (state.lists.find(x => x.id === c.listId)?.boardId || state.boards[0].id)
-                              : true
-                          ).sort((a, b) => a.order - b.order);
-                          const lastList = boardLists[boardLists.length - 1];
-                          return lastList && c.listId === lastList.id;
-                        }).length;
+                        const completedCards = projectCards.filter(c => c.isCompleted).length;
 
                         const progress = totalCards === 0 ? 0 : Math.round((completedCards / totalCards) * 100);
 

@@ -2,8 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAppContext } from '../App';
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, isToday, subDays } from 'date-fns';
 import { uk } from 'date-fns/locale';
-import { TrendingUp, TrendingDown, Target, Edit2, Check, Calendar as CalendarIcon, Send, Loader2, RefreshCw, Users, Zap, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
-import { Metric, KeepInCRMHistoryResponse, KeepInCRMSourceStat, KeepInCRMAgreementStat } from '../types';
+import { TrendingUp, TrendingDown, Target, Calendar as CalendarIcon, Send, Loader2, RefreshCw, Users, Zap, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { KeepInCRMHistoryResponse, KeepInCRMSourceStat, KeepInCRMAgreementStat } from '../types';
 import { getKeepInCRMHistory, triggerKeepInCRMSync, triggerKeepInCRMHistorySync, getKeepInCRMSyncStatus, getKeepInCRMLTV, triggerKeepInCRMSyncLTV } from '../api';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { DollarSign, Gem, ExternalLink, Wallet } from 'lucide-react';
@@ -34,10 +34,7 @@ function loadCacScope(): CacScope {
 }
 
 export default function DashboardView() {
-  const { state, updateMetric, setActiveView, setActiveEventId, currentUser, canView } = useAppContext();
-  
-  const [editingMetric, setEditingMetric] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<Partial<Metric>>({});
+  const { state, setActiveView, setActiveEventId, currentUser, canView } = useAppContext();
   const [isSendingReport, setIsSendingReport] = useState(false);
 
   // ── KeepInCRM State ──────────────────────────────────────────────────────────
@@ -269,17 +266,7 @@ export default function DashboardView() {
   const contents = state.contentPlans || [];
   const cards = state.cards || [];
 
-  const handleEditMetric = (metric: Metric) => {
-    setEditingMetric(metric.id);
-    setEditForm(metric);
-  };
 
-  const handleSaveMetric = () => {
-    if (editingMetric) {
-      updateMetric(editingMetric, editForm);
-      setEditingMetric(null);
-    }
-  };
 
   const handleTestNotification = async () => {
     setIsSendingReport(true);
@@ -321,76 +308,7 @@ export default function DashboardView() {
         </button>
       </div>
 
-      {/* Metrics Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 flex-shrink-0">
-        {(state.metrics || []).map(metric => (
-          <div key={metric.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 group relative transition hover:shadow-md h-[120px]">
-            {editingMetric === metric.id ? (
-              <div className="flex flex-col h-full justify-between">
-                <div className="flex space-x-2">
-                  <input 
-                    type="text" 
-                    value={editForm.title || ''} 
-                    onChange={e => setEditForm({...editForm, title: e.target.value})}
-                    className="w-1/2 text-sm font-medium text-gray-700 border-b border-gray-300 focus:border-blue-500 outline-none"
-                    placeholder="Назва"
-                  />
-                  <input 
-                    type="text" 
-                    value={editForm.value || ''} 
-                    onChange={e => setEditForm({...editForm, value: e.target.value})}
-                    className="w-1/2 text-sm font-bold text-gray-900 border-b border-gray-300 focus:border-blue-500 outline-none"
-                    placeholder="Значення"
-                  />
-                </div>
-                <div className="flex space-x-2 items-center mt-2">
-                  <input 
-                    type="text" 
-                    value={editForm.trend || ''} 
-                    onChange={e => setEditForm({...editForm, trend: e.target.value})}
-                    placeholder="Тренд (+5%)"
-                    className="w-2/3 text-xs border border-gray-300 rounded px-2 py-1 outline-none"
-                  />
-                  <label className="text-xs text-gray-500 flex items-center cursor-pointer">
-                    <input 
-                      type="checkbox" 
-                      checked={!!editForm.trendPositive} 
-                      onChange={e => setEditForm({...editForm, trendPositive: e.target.checked})}
-                      className="mr-1"
-                    />
-                    Додатній?
-                  </label>
-                </div>
-                <button onClick={handleSaveMetric} className="w-full mt-2 bg-blue-50 hover:bg-blue-100 text-blue-600 text-xs font-semibold py-1 rounded transition flex items-center justify-center">
-                  <Check className="w-3 h-3 mr-1" /> Зберегти
-                </button>
-              </div>
-            ) : (
-              <>
-                <button 
-                  onClick={() => handleEditMetric(metric)}
-                  className="absolute top-3 right-3 text-gray-300 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition p-1 bg-gray-50 rounded"
-                  title="Редагувати показник"
-                >
-                  <Edit2 className="w-4 h-4" />
-                </button>
-                <div className="flex flex-col h-full justify-between">
-                  <h3 className="text-sm font-medium text-gray-500">{metric.title}</h3>
-                  <div className="flex items-end justify-between">
-                    <span className="text-3xl font-bold text-gray-900 leading-tight">{metric.value}</span>
-                    {metric.trend && (
-                      <div className={`flex items-center text-xs font-semibold px-2 py-1 rounded-full ${metric.trendPositive ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-                        {metric.trendPositive ? <TrendingUp className="w-3 h-3 mr-1" /> : <TrendingDown className="w-3 h-3 mr-1" />}
-                        {metric.trend}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        ))}
-      </div>
+
 
       {/* KeepInCRM Block */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex-shrink-0">

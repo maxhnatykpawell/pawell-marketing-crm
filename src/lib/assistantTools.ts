@@ -364,7 +364,6 @@ export function runReadTool(name: string, args: Record<string, any>, ctx: ToolCo
     case 'get_key_metrics': {
       const k = state.keepincrm;
       return {
-        metrics: (state.metrics || []).map(m => ({ title: m.title, value: m.value, trend: m.trend ?? null })),
         keepincrm: k
           ? {
               date: k.date,

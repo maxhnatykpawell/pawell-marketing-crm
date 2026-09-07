@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
-import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Metric, Project, Phase, Process, UserGroup, AccessRights, NotificationItem, Expense } from './types';
+import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Project, Phase, Process, UserGroup, AccessRights, NotificationItem, Expense } from './types';
 import { fetchState, syncState, getMe, estimateTaskTime, createEntity, updateEntity, deleteEntity, processOfflineQueue, sendCardAssignedNotification } from './api';
 import { v4 as uuidv4 } from 'uuid';
 import Board from './components/Board';
@@ -88,7 +88,7 @@ interface AppContextType {
   setActiveProjectId: (id: string | null) => void;
   activeView: ActiveView;
   setActiveView: (view: ActiveView) => void;
-  updateMetric: (id: string, updates: Partial<Metric>) => void;
+
   importTrelloBoard: (trelloJson: string) => void;
   confirmAction: (message: string, onConfirm: () => void) => void;
   createNotification: (notification: NotificationItem) => void;
@@ -232,12 +232,6 @@ export default function App() {
       .then(data => {
         const stateWithDefaults = {
           ...data,
-          metrics: data.metrics || [
-            { id: 'm1', title: 'Охоплення аудиторії', value: '124.5K', trend: '+12%', trendPositive: true },
-            { id: 'm2', title: 'Лідів (MQL)', value: '840', trend: '+5%', trendPositive: true },
-            { id: 'm3', title: 'Бюджет використано', value: '$4,250', trend: '-2%', trendPositive: false },
-            { id: 'm4', title: 'Вартість ліда (CPA)', value: '$5.05', trend: '-8%', trendPositive: true }
-          ]
         };
         setState(stateWithDefaults);
         if (stateWithDefaults.boards && stateWithDefaults.boards.length > 0) {
@@ -295,12 +289,6 @@ export default function App() {
       .then(data => {
         const stateWithDefaults = {
           ...data,
-          metrics: data.metrics || [
-            { id: 'm1', title: 'Охоплення аудиторії', value: '124.5K', trend: '+12%', trendPositive: true },
-            { id: 'm2', title: 'Лідів (MQL)', value: '840', trend: '+5%', trendPositive: true },
-            { id: 'm3', title: 'Бюджет використано', value: '$4,250', trend: '-2%', trendPositive: false },
-            { id: 'm4', title: 'Вартість ліда (CPA)', value: '$5.05', trend: '-8%', trendPositive: true }
-          ]
         };
         setState(stateWithDefaults);
         if (stateWithDefaults.boards && stateWithDefaults.boards.length > 0) {
@@ -817,11 +805,7 @@ export default function App() {
     }
   }, [state, activeBoardId]);
 
-  const updateMetric = useCallback((id: string, updates: Partial<Metric>) => {
-    if (!state) return;
-    setState(prev => prev ? { ...prev, metrics: (prev.metrics || []).map(m => m.id === id ? { ...m, ...updates } : m) } : prev);
-    updateEntity('metrics', id, updates).catch(console.error);
-  }, [state]);
+
 
   const addExpense = useCallback((expense: Omit<Expense, 'id'>) => {
     const newExpense: Expense = { ...expense, id: uuidv4() };
@@ -988,7 +972,7 @@ export default function App() {
       addPhase, updatePhase, deletePhase,
       addProcess, updateProcess, deleteProcess, addBoard, deleteBoard,
       activeBoardId, setActiveBoardId, activeEventId, setActiveEventId, activeProjectId, setActiveProjectId,
-      activeView, setActiveView, updateMetric, importTrelloBoard, confirmAction,
+      activeView, setActiveView, importTrelloBoard, confirmAction,
       createNotification, markNotificationAsRead,
       openCardId, setOpenCardId,
       addExpense, updateExpense, deleteExpense,
