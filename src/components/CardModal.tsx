@@ -186,7 +186,7 @@ export default function CardModal({ card, onClose }: Props) {
   const [titleState, setTitleState] = useState<'idle' | 'loading' | 'missing'>('idle');
 
   // Which "add" panels are open
-  const [openPanel, setOpenPanel] = useState<'members' | 'date' | 'checklist' | 'attachment' | 'link' | null>(null);
+  const [openPanel, setOpenPanel] = useState<'members' | 'date' | 'checklist' | 'attachment' | 'link' | 'project' | null>(null);
 
   const handleReviewPlan = async () => {
     if (!card.title) return;
@@ -563,6 +563,19 @@ export default function CardModal({ card, onClose }: Props) {
                   <Link2 className="w-3.5 h-3.5" />
                   Посилання
                 </button>
+                <button
+                  onClick={() => setOpenPanel(openPanel === 'project' ? null : 'project')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition font-medium ${
+                    card.projectId
+                      ? 'text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200'
+                      : 'text-gray-600 bg-gray-100 hover:bg-gray-200'
+                  }`}
+                >
+                  <FolderKanban className="w-3.5 h-3.5" />
+                  {card.projectId
+                    ? (state.projects || []).find(p => p.id === card.projectId)?.title || 'Проєкт'
+                    : 'Проєкт'}
+                </button>
                 <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
 
                 {/* AI button */}
@@ -687,13 +700,22 @@ export default function CardModal({ card, onClose }: Props) {
                   onChange={e => handleUpdate({ estimatedMinutes: e.target.value ? parseInt(e.target.value, 10) : undefined })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
                 />
-                <div className="flex items-center gap-2 mt-1">
+
+              </div>
+            )}
+
+            {/* Project quick-panel */}
+            {openPanel === 'project' && (
+              <div className="ml-8 p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
+                <div className="flex items-center gap-2">
                   <FolderKanban className="w-4 h-4 text-gray-500" />
                   <span className="text-sm font-medium text-gray-700">Проєкт</span>
                 </div>
                 <select
                   value={card.projectId || ''}
-                  onChange={e => handleUpdate({ projectId: e.target.value || null })}
+                  onChange={e => {
+                    handleUpdate({ projectId: e.target.value || null });
+                  }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
                 >
                   <option value="">Без проєкту</option>
@@ -701,6 +723,30 @@ export default function CardModal({ card, onClose }: Props) {
                     <option key={p.id} value={p.id}>{p.title}</option>
                   ))}
                 </select>
+                {card.projectId && (() => {
+                  const proj = (state.projects || []).find(p => p.id === card.projectId);
+                  if (!proj) return null;
+                  const phases = (state.phases || []).filter(ph => ph.projectId === proj.id).sort((a, b) => a.order - b.order);
+                  if (phases.length === 0) return null;
+                  return (
+                    <>
+                      <div className="flex items-center gap-2 mt-1">
+                        <Layers className="w-4 h-4 text-gray-500" />
+                        <span className="text-sm font-medium text-gray-700">Етап</span>
+                      </div>
+                      <select
+                        value={card.phaseId || ''}
+                        onChange={e => handleUpdate({ phaseId: e.target.value || null })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                      >
+                        <option value="">Без етапу</option>
+                        {phases.map(ph => (
+                          <option key={ph.id} value={ph.id}>{ph.title}</option>
+                        ))}
+                      </select>
+                    </>
+                  );
+                })()}
               </div>
             )}
 
