@@ -1,7 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAppContext } from '../App';
 import { User } from '../types';
-import { Target, Activity, Shield, Save, Users, Edit2, Calendar, Clock, AlertCircle, Play, ChevronLeft, ChevronRight, Maximize2, Minimize2, X } from 'lucide-react';
+import { Target, Activity, Shield, Save, Users, Edit2, Calendar, Clock, AlertCircle, Play, ChevronLeft, ChevronRight, Maximize2, Minimize2, X, GanttChartSquare } from 'lucide-react';
+import UserWorkloadGantt from './UserWorkloadGantt';
+// todayKey тут уже зайнятий — у цьому компоненті так зветься день тижня регламенту
+import { dayKeysBetween, todayKey as currentDayKey, addDays, parseDayKey } from '../lib/gantt';
+import { toWorkloadTasks, dailyLoad, summarize, loadLevel, DEFAULT_DAILY_CAPACITY_MINUTES } from '../lib/workload';
 
 const DAYS = [
   { key: 'monday', label: 'Понеділок', short: 'Пн' },
@@ -59,6 +63,7 @@ export default function TeamRegulationsView() {
   const [timelineDayKey, setTimelineDayKey] = useState<string>(todayKey);
   const [viewDays, setViewDays] = useState<1 | 3 | 5>(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [userTab, setUserTab] = useState<'schedule' | 'tasks'>('schedule');
 
   // Close fullscreen on Escape
   useEffect(() => {
@@ -88,6 +93,33 @@ export default function TeamRegulationsView() {
   }, [state.users, selectedUserId]);
 
   const selectedUser = state.users.find(u => u.id === selectedUserId);
+
+  /**
+   * Навантаження кожного на поточний тиждень — для списку команди.
+   *
+   * Без нього, щоб зрозуміти, у кого є місце під нову задачу, довелось би
+   * відкрити всіх по черзі. Числа ті самі, що й на діаграмі, — рахуються тим
+   * самим кодом.
+   */
+  const weekLoadByUser = useMemo(() => {
+    const today = currentDayKey();
+    const weekday = parseDayKey(today).getUTCDay();
+    const monday = addDays(today, weekday === 0 ? -6 : 1 - weekday);
+    const week = dayKeysBetween(monday, addDays(monday, 6));
+    const validListIds = new Set((state.lists || []).map(l => l.id));
+
+    const byUser = new Map<string, { minutes: number; overloadedDays: number }>();
+    for (const user of state.users) {
+      const cards = (state.cards || []).filter(c =>
+        c.assigneeId === user.id && validListIds.has(c.listId) && !c.isCompleted,
+      );
+      const tasks = toWorkloadTasks(cards)
+        .filter(t => t.range.start <= week[6] && t.range.end >= week[0]);
+      const summary = summarize(tasks, dailyLoad(tasks, week));
+      byUser.set(user.id, { minutes: summary.totalMinutes, overloadedDays: summary.overloadedDays });
+    }
+    return byUser;
+  }, [state.users, state.cards, state.lists]);
 
   const handleSelectUser = (id: string) => {
     setSelectedUserId(id);
@@ -163,10 +195,30 @@ export default function TeamRegulationsView() {
               className={`w-full flex items-center px-3 py-2.5 rounded-lg transition ${selectedUserId === u.id ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
             >
               <img src={u.avatar} alt={u.name} className="w-8 h-8 rounded-full mr-3 shrink-0 bg-gray-100 object-cover" />
-              <div className="text-left overflow-hidden">
+              <div className="text-left overflow-hidden flex-1">
                 <span className="block truncate text-sm">{u.name}</span>
                 <span className="block text-[11px] opacity-70 truncate font-normal">{u.role || 'Роль не вказана'}</span>
               </div>
+              {(() => {
+                const load = weekLoadByUser.get(u.id);
+                if (!load || load.minutes <= 0) return null;
+                // Норма тижня — п'ять робочих днів по денній нормі
+                const level = loadLevel(load.minutes / 5);
+                const dotColor = level === 'over' ? 'bg-red-500' : level === 'tight' ? 'bg-amber-400' : 'bg-emerald-400';
+                return (
+                  <span
+                    className="shrink-0 flex items-center gap-1 ml-1.5"
+                    title={`Цього тижня: ${Math.round(load.minutes / 60)} год${
+                      load.overloadedDays > 0 ? `, днів понад норму — ${load.overloadedDays}` : ''
+                    }`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
+                    <span className="text-[10px] font-semibold text-gray-400 tabular-nums">
+                      {Math.round(load.minutes / 60)}г
+                    </span>
+                  </span>
+                );
+              })()}
             </button>
           ))}
         </div>
@@ -327,6 +379,34 @@ export default function TeamRegulationsView() {
                     </div>
                   )}
 
+                  {/* Дві відповіді про одну людину: як має бути влаштований її
+                      тиждень — і що на ній лежить насправді */}
+                  {/* z-40 — вище за заглушку порожнього регламенту: інакше з неї
+                      не було б як перейти на вкладку із завданнями */}
+                  <div className="relative z-40 flex items-center gap-1 mb-4 shrink-0 border-b border-gray-100">
+                    {([
+                      { key: 'schedule' as const, label: 'Регламент', Icon: Calendar },
+                      { key: 'tasks' as const, label: 'Завдання', Icon: GanttChartSquare },
+                    ]).map(({ key, label, Icon }) => (
+                      <button
+                        key={key}
+                        onClick={() => setUserTab(key)}
+                        className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition ${
+                          userTab === key
+                            ? 'border-blue-600 text-blue-700'
+                            : 'border-transparent text-gray-500 hover:text-gray-800'
+                        }`}
+                      >
+                        <Icon className="w-4 h-4" />
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {userTab === 'tasks' ? (
+                    <UserWorkloadGantt userId={selectedUser.id} />
+                  ) : (
+                  <>
                   {/* Calendar Toolbar */}
                   <div className="flex items-center justify-between mb-4 shrink-0">
                     <div className="flex items-center space-x-2">
@@ -460,6 +540,9 @@ export default function TeamRegulationsView() {
                     );
                   })()}
 
+                  </>
+                  )}
+
                   {/* ── FULLSCREEN OVERLAY ── */}
                   {isFullscreen && selectedUser && (() => {
                     const allBlocksFs = visibleDays.flatMap(day => parseScheduleText(selectedUser.weeklySchedule?.[day.key] || ''));
@@ -592,7 +675,9 @@ export default function TeamRegulationsView() {
                   })()}
 
                   
-                  {!selectedUser.operationalDuties && !selectedUser.goals && (!selectedUser.weeklySchedule || Object.values(selectedUser.weeklySchedule).every(v => !v)) && (
+                  {/* Заглушка стосується тільки регламенту: завдання людини існують
+                      незалежно від того, чи описано її типовий тиждень */}
+                  {userTab === 'schedule' && !selectedUser.operationalDuties && !selectedUser.goals && (!selectedUser.weeklySchedule || Object.values(selectedUser.weeklySchedule).every(v => !v)) && (
                     <div className="absolute inset-0 z-30 flex items-center justify-center bg-white/80 backdrop-blur-sm rounded-xl">
                       <div className="text-center p-8 bg-white border border-gray-200 rounded-2xl shadow-lg max-w-sm">
                         <Shield className="w-12 h-12 text-blue-100 mx-auto mb-4" />

@@ -12,6 +12,8 @@
  * нас до потрібної години, а рішення ухвалює isDue().
  */
 
+import { daysWord } from './plural';
+
 export type RecurrenceMode = 'daily' | 'weekly' | 'monthly' | 'interval';
 
 export interface RecurrenceSchedule {
@@ -208,14 +210,6 @@ export function nextRunAt(
 
 // ── Опис людською мовою ──────────────────────────────────────────────────────
 
-function pluralDays(n: number): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return 'день';
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'дні';
-  return 'днів';
-}
-
 /** Розклад одним рядком — те, що видно у списку правил */
 export function describeSchedule(s: RecurrenceSchedule): string {
   if (validateSchedule(s)) return 'розклад не налаштований';
@@ -234,7 +228,7 @@ export function describeSchedule(s: RecurrenceSchedule): string {
     case 'interval':
       return s.intervalDays === 1
         ? `щодня ${at}`
-        : `кожні ${s.intervalDays} ${pluralDays(s.intervalDays!)} ${at}`;
+        : `кожні ${s.intervalDays} ${daysWord(s.intervalDays!)} ${at}`;
     default:
       return 'розклад не налаштований';
   }
