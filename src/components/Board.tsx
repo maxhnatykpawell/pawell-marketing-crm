@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
 import BoardList from './BoardList';
 import CardModal from './CardModal';
-import { Plus, Trash2, DownloadCloud, FolderKanban, Filter, CalendarRange } from 'lucide-react';
+import { Plus, Trash2, DownloadCloud, FolderKanban, Filter, CalendarRange, Target, FileText, Info, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 import TrelloImportModal from './TrelloImportModal';
 import { DragDropContext, Droppable, DropResult } from '@hello-pangea/dnd';
 
@@ -17,6 +17,7 @@ export default function Board() {
   const [filterTagId, setFilterTagId] = useState<string | null>(null);
   const [filterOverdue, setFilterOverdue] = useState(false);
   const [notifCard, setNotifCard] = useState<typeof state.cards[0] | null>(null);
+  const [isProjectInfoOpen, setIsProjectInfoOpen] = useState(false);
 
   // When openCardId is set (from notification click), find the card and open its modal
   useEffect(() => {
@@ -210,6 +211,87 @@ export default function Board() {
           </button>
         </div>
       )}
+
+      {/* Project info panel — collapsible banner when a project is selected */}
+      {activeProjectId && (() => {
+        const activeProject = projects.find(p => p.id === activeProjectId);
+        if (!activeProject) return null;
+        const hasGoal = !!activeProject.goal?.trim();
+        const hasDescription = !!activeProject.description?.trim();
+        const hasFiles = (activeProject.infoFiles?.length ?? 0) > 0;
+        const hasAnyInfo = hasGoal || hasDescription || hasFiles;
+        if (!hasAnyInfo) return null;
+        return (
+          <div
+            className="mb-4 rounded-xl border overflow-hidden transition-all"
+            style={{
+              backgroundColor: activeProject.color + '0D',
+              borderColor: activeProject.color + '30',
+            }}
+          >
+            <button
+              onClick={() => setIsProjectInfoOpen(prev => !prev)}
+              className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold transition hover:opacity-80"
+              style={{ color: activeProject.color }}
+            >
+              <Info className="w-4 h-4 shrink-0" />
+              <span>Інфо про проєкт</span>
+              <span className="ml-auto">
+                {isProjectInfoOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </span>
+            </button>
+            {isProjectInfoOpen && (
+              <div className="px-4 pb-4 space-y-3 animate-in fade-in">
+                {hasGoal && (
+                  <div className="flex items-start gap-2">
+                    <Target className="w-4 h-4 mt-0.5 shrink-0" style={{ color: activeProject.color }} />
+                    <div>
+                      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-0.5">Мета</div>
+                      <p className="text-sm text-gray-800 font-medium">{activeProject.goal}</p>
+                    </div>
+                  </div>
+                )}
+                {hasDescription && (
+                  <div className="flex items-start gap-2">
+                    <FileText className="w-4 h-4 mt-0.5 shrink-0" style={{ color: activeProject.color }} />
+                    <div>
+                      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-0.5">Опис</div>
+                      <p className="text-sm text-gray-700 whitespace-pre-wrap">{activeProject.description}</p>
+                    </div>
+                  </div>
+                )}
+                {hasFiles && (
+                  <div className="flex items-start gap-2">
+                    <FileText className="w-4 h-4 mt-0.5 shrink-0" style={{ color: activeProject.color }} />
+                    <div>
+                      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Інфо-файли</div>
+                      <div className="flex flex-wrap gap-2">
+                        {activeProject.infoFiles!.map(file => (
+                          <a
+                            key={file.id}
+                            href={file.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border transition hover:shadow-sm"
+                            style={{
+                              color: activeProject.color,
+                              borderColor: activeProject.color + '40',
+                              backgroundColor: activeProject.color + '08',
+                            }}
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            {file.name}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 mb-4 w-full bg-white p-3 rounded-xl border border-gray-200 shadow-sm shrink-0">

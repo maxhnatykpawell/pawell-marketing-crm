@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Project, ProjectStatus } from '../types';
+import { Project, ProjectStatus, ProjectInfoFile } from '../types';
 import { useAppContext } from '../App';
-import { X, Calendar, Users, Palette, Check, FolderOpen, Lock, Globe, Crown, UserPlus, AlertTriangle } from 'lucide-react';
+import { X, Calendar, Users, Palette, Check, FolderOpen, Lock, Globe, Crown, UserPlus, AlertTriangle, Target, Plus, Trash2, FileText, ExternalLink } from 'lucide-react';
 import { canManageProjectAccess, projectAccessIds } from '../lib/projectAccess';
+import { v4 as uuidv4 } from 'uuid';
 
 interface Props {
   project?: Project;
@@ -34,6 +35,8 @@ export default function ProjectModal({ project, onClose }: Props) {
   
   const [title, setTitle] = useState(project?.title || '');
   const [description, setDescription] = useState(project?.description || '');
+  const [goal, setGoal] = useState(project?.goal || '');
+  const [infoFiles, setInfoFiles] = useState<ProjectInfoFile[]>(project?.infoFiles || []);
   const [color, setColor] = useState(project?.color || COLORS[5]); // Default blue
   const [status, setStatus] = useState<ProjectStatus>(project?.status || 'planning');
   const [managerIds, setManagerIds] = useState<string[]>(project?.managerIds || (currentUser ? [currentUser.userId] : []));
@@ -100,6 +103,8 @@ export default function ProjectModal({ project, onClose }: Props) {
     const data = {
       title: title.trim(),
       description: description.trim(),
+      goal: goal.trim() || undefined,
+      infoFiles: infoFiles.filter(f => f.name.trim() && f.url.trim()),
       color,
       status,
       managerIds,
@@ -189,6 +194,20 @@ export default function ProjectModal({ project, onClose }: Props) {
           </div>
 
           <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1.5">
+              <Target className="w-4 h-4 text-gray-400" />
+              Мета проєкту
+            </label>
+            <input
+              type="text"
+              className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition outline-none"
+              placeholder="Навіщо ми робимо цей проєкт?"
+              value={goal}
+              onChange={e => setGoal(e.target.value)}
+            />
+          </div>
+
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Опис (опціонально)</label>
             <textarea
               className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition outline-none min-h-[100px] resize-y"
@@ -196,6 +215,57 @@ export default function ProjectModal({ project, onClose }: Props) {
               value={description}
               onChange={e => setDescription(e.target.value)}
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
+              <FileText className="w-4 h-4 text-gray-400" />
+              Інфо-файли (посилання на документи)
+            </label>
+            <div className="space-y-2">
+              {infoFiles.map((file, idx) => (
+                <div key={file.id} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition outline-none text-sm"
+                    placeholder="Назва (Бриф, Контракт…)"
+                    value={file.name}
+                    onChange={e => {
+                      const updated = [...infoFiles];
+                      updated[idx] = { ...updated[idx], name: e.target.value };
+                      setInfoFiles(updated);
+                    }}
+                  />
+                  <input
+                    type="url"
+                    className="flex-[2] px-3 py-1.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition outline-none text-sm"
+                    placeholder="https://docs.google.com/…"
+                    value={file.url}
+                    onChange={e => {
+                      const updated = [...infoFiles];
+                      updated[idx] = { ...updated[idx], url: e.target.value };
+                      setInfoFiles(updated);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setInfoFiles(infoFiles.filter((_, i) => i !== idx))}
+                    className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition shrink-0"
+                    title="Видалити"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => setInfoFiles([...infoFiles, { id: uuidv4(), name: '', url: '' }])}
+                className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 font-medium transition px-1 py-1"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Додати файл
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-5">

@@ -5,7 +5,7 @@ import ProjectModal from './ProjectModal';
 import {
   FolderKanban, FolderOpen, Folder, Plus, Calendar, CalendarRange, CheckSquare,
   Trash2, Edit2, Play, Pause, CheckCircle2, ChevronDown, ChevronRight,
-  Pencil, Check, X, Lock
+  Pencil, Check, X, Lock, Target, FileText
 } from 'lucide-react';
 import { canManageProjectAccess, isProjectRestricted, projectAccessIds } from '../lib/projectAccess';
 import { format } from 'date-fns';
@@ -329,8 +329,20 @@ export default function ProjectsView() {
                               </div>
 
                               <h3 className="text-base font-bold text-gray-900 mb-1 leading-tight">{project.title}</h3>
+                              {project.goal && (
+                                <p className="text-sm text-blue-600 italic line-clamp-1 mb-1 flex items-center gap-1">
+                                  <Target className="w-3 h-3 shrink-0" />
+                                  {project.goal}
+                                </p>
+                              )}
                               {project.description && (
-                                <p className="text-sm text-gray-500 line-clamp-2 mb-3">{project.description}</p>
+                                <p className="text-sm text-gray-500 line-clamp-2 mb-1">{project.description}</p>
+                              )}
+                              {(project.infoFiles?.length ?? 0) > 0 && (
+                                <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
+                                  <FileText className="w-3 h-3" />
+                                  <span>{project.infoFiles!.length} {project.infoFiles!.length === 1 ? 'документ' : project.infoFiles!.length < 5 ? 'документи' : 'документів'}</span>
+                                </div>
                               )}
 
                               <div className="mt-auto space-y-3 pt-3">

@@ -317,10 +317,21 @@ export interface BoardItem {
 
 export type ProjectStatus = 'planning' | 'active' | 'on-hold' | 'completed';
 
+/** Посилання на важливий документ проєкту (бриф, бренд-бук, контракт…) */
+export interface ProjectInfoFile {
+  id: string;
+  name: string;
+  url: string;
+}
+
 export interface Project {
   id: string;
   title: string;
   description?: string;
+  /** Мета проєкту — короткий рядок «навіщо це робимо» */
+  goal?: string;
+  /** Інфо-файли — посилання на важливі документи проєкту */
+  infoFiles?: ProjectInfoFile[];
   color: string;
   status: ProjectStatus;
   /** Хто веде проєкт — показується на картці проєкту й має доступ */
