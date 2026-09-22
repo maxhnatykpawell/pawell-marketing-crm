@@ -21,16 +21,18 @@ import {
 import { loadView, saveView } from '../lib/analyticsViewState';
 import PeriodPicker, { PeriodKey, PeriodValue, describePeriod } from './PeriodPicker';
 import AnalyticsReport from './AnalyticsReport';
+import ContactFrequency from './analytics/ContactFrequency';
 
 /** Пресети періоду аналітики — усі місячної точності */
 const ANALYTICS_PRESETS: PeriodKey[] = ['all', 'month', 'ytd', 'year', 'custom'];
 
-type TabKey = 'clients' | 'funnel' | 'cohorts';
+type TabKey = 'clients' | 'funnel' | 'cohorts' | 'activity';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'clients', label: 'Клієнти · ARPU і тіри' },
   { key: 'funnel',  label: 'Швидкість воронки' },
   { key: 'cohorts', label: 'Утримання і когорти' },
+  { key: 'activity', label: 'Частота контакту' },
 ];
 
 /** Заголовок колонки, що керує сортуванням; напрямок показано стрілкою */
@@ -211,7 +213,7 @@ export default function AnalyticsView() {
   // робочого місця, а не разова дія.
   const saved = useMemo(() => loadView(), []);
 
-  const [activeTab, setActiveTab] = useState<'clients' | 'funnel' | 'cohorts'>(saved.tab);
+  const [activeTab, setActiveTab] = useState<TabKey>(saved.tab);
   const [filters, setFilters] = useState<ClientFilters>(saved.filters);
   const [period, setPeriod] = useState<PeriodValue>(saved.period as PeriodValue);
   const [sortKey, setSortKey] = useState<SortKey>(saved.sortKey);
@@ -1031,6 +1033,13 @@ export default function AnalyticsView() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Частота контакту живе окремо від решти вкладок: вона про дії сейлів,
+          а не про клієнтів у вибірці, тож фільтри по доходу й тірах на неї не
+          впливають — лише період. */}
+      {activeTab === 'activity' && (
+        <ContactFrequency from={period.from} to={period.to} />
       )}
 
     </div>

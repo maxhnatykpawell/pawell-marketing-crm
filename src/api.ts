@@ -1,5 +1,6 @@
 import {
   AppState, Attachment, AuthUser, KeepInCRMSnapshot, KeepInCRMHistoryResponse,
+  ContactActivityResponse,
   ChatConversation, ChatConversationView, ChatMessage,
   Card, TaskAutomation,
 } from './types';
@@ -549,6 +550,49 @@ export const triggerKeepInCRMSyncLTV = async (
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to sync LTV');
+  }
+  return res.json();
+};
+
+/**
+ * Частота контакту: активність сейлів за період.
+ *
+ * @param from YYYY-MM-DD; за замовчуванням 30 днів тому
+ * @param to   YYYY-MM-DD; за замовчуванням сьогодні
+ * @param compare true = додати попередній еквівалентний період для порівняння
+ */
+export const getKeepInCRMActivity = async (
+  from?: string | null,
+  to?: string | null,
+  compare = true,
+): Promise<ContactActivityResponse> => {
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to)   params.set('to', to);
+  if (compare) params.set('compare', '1');
+  const res = await fetch(`/api/keepincrm/activity?${params}`, { headers: authHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Не вдалось завантажити активність контактів');
+  }
+  return res.json();
+};
+
+/**
+ * Підтягнути завдання-контакти з KeepInCRM за останні N днів (тільки адмін).
+ * Дзвінки цим не добираються — їх приносить вебхук тригера KeepInCRM.
+ */
+export const triggerKeepInCRMContactsSync = async (
+  days = 30,
+): Promise<{ success: boolean; written: number; scanned: number; period: { from: string; to: string } }> => {
+  const res = await fetch('/api/keepincrm/sync-contacts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ days }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Не вдалось синхронізувати контакти');
   }
   return res.json();
 };

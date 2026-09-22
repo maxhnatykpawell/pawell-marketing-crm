@@ -637,3 +637,48 @@ export interface KeepInCRMHistoryResponse {
   aggregated: KeepInCRMPeriodAggregated;
   comparison: KeepInCRMComparison | null; // null якщо порівняння не запитувалось
 }
+// ── KeepInCRM Contact Activity ────────────────────────────────────────────────
+//
+// Частота контакту: скільки дотиків зробили сейли й наскільки свіжий останній
+// дотик до кожного клієнта. Дзвінки приходять вебхуком тригера KeepInCRM,
+// завдання-контакти — синхронізацією /tasks; у показниках вони вже злиті.
+//
+// Форми беремо з бібліотеки, де їх і рахують: два оголошення однієї відповіді
+// рано чи пізно розійшлися б, і розійшлися б тихо.
+
+export type {
+  ContactActivityUser,
+  ContactActivityClient,
+  ContactActivityDay,
+  ContactActivityTotals,
+} from './lib/contactActivity';
+
+import type {
+  ContactActivityUser, ContactActivityClient, ContactActivityDay, ContactActivityTotals,
+} from './lib/contactActivity';
+
+/** Відповідь /api/keepincrm/activity */
+export interface ContactActivityResponse {
+  period: { from: string; to: string };
+  totals: ContactActivityTotals;
+  byUser: ContactActivityUser[];
+  byClient: ContactActivityClient[];
+  daily: ContactActivityDay[];
+  /** Попередній рівний період — null, якщо порівняння не запитували */
+  comparison: {
+    period: { from: string; to: string };
+    totals: ContactActivityTotals;
+    contactsChange: number | null;
+    callsChange: number | null;
+    successRateChange: number | null;
+    perRepPerDayChange: number | null;
+    touchesPerClientChange: number | null;
+  } | null;
+  /** Період віддав більше подій, ніж ліміт запиту — числа неповні */
+  truncated: boolean;
+  /**
+   * Чи заданий KEEPINCRM_WEBHOOK_SECRET. Без нього дзвінків не буде взагалі —
+   * і це інша розмова, ніж «дзвінків за період не було».
+   */
+  webhookConfigured: boolean;
+}

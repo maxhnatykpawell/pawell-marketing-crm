@@ -19,6 +19,11 @@ import admin from 'firebase-admin';
 import { buildCohortLtv } from './src/lib/cohortLtv';
 import { chunkBySize } from './src/lib/clientAnalytics';
 import {
+  normalizeCallEvent, normalizeTaskEvent, aggregateContactEvents,
+  contactCategoryMatcher, asName, isValidYmd,
+  ContactEvent, TaskLookups,
+} from './src/lib/contactActivity';
+import {
   resolveRights, availableTools, runReadTool, prepareAction, isWriteTool,
   AssistantUser, ToolContext,
 } from './src/lib/assistantTools';
@@ -27,7 +32,7 @@ import {
 } from './src/lib/linkTitle';
 import { registerChatRoutes, chatStreamStats } from './chat-server';
 import { accessibleCards, scopeStateToUser } from './src/lib/projectAccess';
-import { randomUUID } from 'crypto';
+import { randomUUID, timingSafeEqual } from 'crypto';
 import { findIdleProjects, lastTouchedAt } from './src/lib/projectIdle';
 import {
   isDue as isRecurrenceDue,
@@ -1737,6 +1742,169 @@ async function loadEntriesForRange(from: string, to: string): Promise<any[]> {
 }
 
 
+// ── KeepInCRM Contact Activity ────────────────────────────────────────────────
+//
+// «Частота контакту»: скільки разів сейли доторкнулись до клієнтів і наскільки
+// свіжий останній дотик. Дзвінків у публічному API KeepInCRM немає, тож дотики
+// збираються з двох боків — вебхук тригера «Робота з дзвінками» (PUSH) і
+// завдання-контакти з /tasks (PULL). Нормалізація й розрахунки живуть у
+// src/lib/contactActivity.ts і покриті тестами; тут лишається введення-виведення.
+
+/** Колекція подій контакту — один документ на подію */
+const CONTACT_EVENTS_COLLECTION = 'crm_keepincrm_contacts';
+
+/**
+ * Скільки подій максимум віддаємо на один запит аналітики.
+ *
+ * Ліміт існує, щоб «за весь час» на великій базі не зʼїв пам'ять процесу.
+ * Коли він спрацював, відповідь несе truncated: true — UI мусить сказати, що
+ * числа неповні, а не показати їх як остаточні.
+ */
+const CONTACT_QUERY_CAP = 50000;
+
+/** Скільки подій тримає локальний JSON-фолбек (у Firestore ліміту немає) */
+const CONTACT_LOCAL_CAP = 20000;
+
+/** Порівняння секретів без залежності від місця розбіжності */
+function secretsMatch(supplied: string, expected: string): boolean {
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/**
+ * Записати події.
+ *
+ * Пишемо через set() за детермінованим id — саме тут і тримається захист від
+ * подвоєння: повторний вебхук і щогодинна ре-синхронізація завдань оновлюють
+ * подію, а не додають другу.
+ */
+async function writeContactEvents(events: ContactEvent[]): Promise<number> {
+  if (events.length === 0) return 0;
+
+  const db = initFirebase();
+  if (db) {
+    const col = db.collection(CONTACT_EVENTS_COLLECTION);
+    for (let i = 0; i < events.length; i += 400) {
+      const batch = db.batch();
+      for (const e of events.slice(i, i + 400)) batch.set(col.doc(e.id), e);
+      await batch.commit();
+    }
+    return events.length;
+  }
+
+  // Fallback: локальний JSON. Мапа за id повторює семантику set().
+  const state = await getDb();
+  const byId = new Map<string, ContactEvent>(
+    (state.keepincrmContacts || []).map((e: ContactEvent) => [e.id, e]),
+  );
+  for (const e of events) byId.set(e.id, e);
+  state.keepincrmContacts = [...byId.values()]
+    .sort((a, b) => a.at.localeCompare(b.at))
+    .slice(-CONTACT_LOCAL_CAP);
+  await saveDb(state);
+  return events.length;
+}
+
+/** Прочитати події за діапазон київських днів */
+async function loadContactEvents(
+  from: string,
+  to: string,
+): Promise<{ events: ContactEvent[]; truncated: boolean }> {
+  const db = initFirebase();
+  if (db) {
+    const snap = await db.collection(CONTACT_EVENTS_COLLECTION)
+      .where('date', '>=', from)
+      .where('date', '<=', to)
+      .limit(CONTACT_QUERY_CAP + 1)
+      .get();
+    const all = snap.docs.map(d => d.data() as ContactEvent);
+    return { events: all.slice(0, CONTACT_QUERY_CAP), truncated: all.length > CONTACT_QUERY_CAP };
+  }
+
+  const state = await getDb();
+  const all: ContactEvent[] = state.keepincrmContacts || [];
+  return { events: all.filter(e => e.date >= from && e.date <= to), truncated: false };
+}
+
+/**
+ * PULL-джерело: завдання-контакти з KeepInCRM за діапазон днів.
+ *
+ * Фільтруємо по created_at — єдиній даті, за якою API вміє шукати. День самої
+ * події визначає normalizeTaskEvent: у нього це день виконання, коли той відомий.
+ */
+async function syncKeepInCRMContactTasks(
+  from: string,
+  to: string,
+): Promise<{ ok: boolean; written: number; scanned: number; error?: string }> {
+  if (!KEEPINCRM_API_KEY()) {
+    console.log('⚠️ KeepInCRM контакти: синхронізація пропущена, KEEPINCRM_API_KEY не задано.');
+    return { ok: false, written: 0, scanned: 0, error: 'missing_api_key' };
+  }
+
+  console.log(`🔄 KeepInCRM контакти: завдання за ${from} — ${to}...`);
+  try {
+    // Довідники тягнемо паралельно й не валимо синхронізацію, якщо якогось
+    // немає: без категорій не буде жодної події, але це видно в логах,
+    // а не падінням усього прогону.
+    const [categories, statuses, users] = await Promise.all([
+      keepinFetchAll('/tasks/categories', {}).catch(() => [] as any[]),
+      keepinFetchAll('/tasks/statuses', {}).catch(() => [] as any[]),
+      keepinFetchAll('/users', {}).catch(() => [] as any[]),
+    ]);
+
+    const lookups: TaskLookups = {
+      categoryById: new Map(categories.map((c: any) => [String(c.id), asName(c)])),
+      statusById: new Map(statuses.map((s: any) => [String(s.id), s])),
+      userById: new Map(users.map((u: any) => [String(u.id), asName(u)])),
+    };
+
+    const isContact = contactCategoryMatcher(process.env.KEEPINCRM_CONTACT_TASK_CATEGORIES);
+    const today = todayKyiv();
+
+    const tasks = await keepinFetchAll('/tasks', {
+      'q[created_at_gteq]': `${from}T00:00:00.000+03:00`,
+      'q[created_at_lteq]': `${to}T23:59:59.999+03:00`,
+    });
+
+    const events = tasks
+      .map(t => normalizeTaskEvent(t, lookups, isContact, today))
+      .filter((e): e is ContactEvent => e !== null);
+
+    const written = await writeContactEvents(events);
+    console.log(`✅ KeepInCRM контакти: із ${tasks.length} завдань записано ${written} дотиків`);
+    return { ok: true, written, scanned: tasks.length };
+  } catch (err: any) {
+    const message = err.message || String(err);
+    console.error(`❌ KeepInCRM контакти помилка (${from} — ${to}):`, message);
+    return { ok: false, written: 0, scanned: 0, error: message };
+  }
+}
+
+let keepinCRMContactsCronTask: any = null;
+
+/**
+ * Завдання-контакти підтягуємо щогодини за сьогодні й учора.
+ *
+ * Вікно на два дні, бо завдання дозріває: створене ввечері, виконане наступного
+ * ранку — одного проходу за поточний день замало, щоб побачити результат.
+ */
+function setupKeepInCRMContactsCron() {
+  if (keepinCRMContactsCronTask) {
+    keepinCRMContactsCronTask.stop();
+    keepinCRMContactsCronTask = null;
+  }
+
+  keepinCRMContactsCronTask = cron.schedule('20 * * * *', async () => {
+    if (!KEEPINCRM_API_KEY()) return;
+    const to = todayKyiv();
+    await syncKeepInCRMContactTasks(addDaysToYmd(to, -1), to).catch(() => {});
+  }, { timezone: 'Europe/Kyiv' });
+
+  console.log('📞 KeepInCRM контакти (завдання): щогодини о :20, вікно 2 дн.');
+}
+
 let keepinCRMCronTask: any = null;
 
 function setupKeepInCRMCron() {
@@ -1948,8 +2116,10 @@ async function startServer() {
   setupKeepInCRMCron();
   setupKeepInCRMLTVCron();
   setupKeepInCRMCohortCron();
+  setupKeepInCRMContactsCron();
   syncKeepInCRM().catch(() => { /* помилка записується в снімок */ });
   syncKeepInCRMLTV().catch(() => {});
+  syncKeepInCRMContactTasks(addDaysToYmd(todayKyiv(), -1), todayKyiv()).catch(() => {});
 
   // ── Auth Routes ──────────────────────────────────────────────────────────────
 
@@ -2354,6 +2524,135 @@ async function startServer() {
       if (!res.headersSent) {
         res.status(500).json({ success: false, error: e.message });
       }
+    }
+  });
+
+  // ── KeepInCRM Contact Activity Routes ──────────────────────────────────────
+
+  /**
+   * POST /api/keepincrm/call-webhook
+   *
+   * Приймач тригера «Робота з дзвінками» → «Відправка Webhook» у KeepInCRM.
+   *
+   * Без requireAuth: KeepInCRM не має нашого JWT і не вміє його отримати. Замість
+   * токена користувача — спільний секрет KEEPINCRM_WEBHOOK_SECRET. Поки він не
+   * заданий, роут закритий: відкритий приймач дозволив би будь-кому накрутити
+   * статистику дзвінків, а її читають як показник роботи людей.
+   */
+  app.post('/api/keepincrm/call-webhook', async (req, res) => {
+    const secret = (process.env.KEEPINCRM_WEBHOOK_SECRET || '').trim();
+    if (!secret) {
+      console.warn('⚠️ call-webhook: KEEPINCRM_WEBHOOK_SECRET не заданий — запит відкинуто');
+      return res.status(503).json({ error: 'webhook_not_configured' });
+    }
+
+    const supplied = String(
+      req.headers['x-webhook-token'] ?? req.query.token ?? req.body?.token ?? '',
+    );
+    if (!secretsMatch(supplied, secret)) {
+      return res.status(401).json({ error: 'invalid_token' });
+    }
+
+    try {
+      // Тіло складає користувач у тригері, тож приймаємо і один дзвінок,
+      // і пакет: {...} | [{...}] | { calls: [{...}] }.
+      const payload = req.body;
+      const raw = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.calls) ? payload.calls : [payload];
+
+      const events = raw
+        // Стрілка, а не передача normalizeCallEvent напряму: map віддає другим
+        // аргументом індекс, і той підставився б замість моменту обробки.
+        .map((one: any) => normalizeCallEvent(one))
+        .filter((e: ContactEvent | null): e is ContactEvent => e !== null);
+
+      if (events.length === 0) {
+        return res.status(400).json({ error: 'empty_payload' });
+      }
+
+      const written = await writeContactEvents(events);
+      res.json({ success: true, written });
+    } catch (e: any) {
+      console.error('❌ call-webhook помилка:', e.message || e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/keepincrm/activity
+   * Query params:
+   *   from, to  YYYY-MM-DD (типово останні 30 днів)
+   *   compare   '1' | 'true' — додати попередній еквівалентний період
+   */
+  app.get('/api/keepincrm/activity', requireAuth, async (req, res) => {
+    try {
+      const today = todayKyiv();
+      const rawTo = (req.query.to as string) || today;
+      // isValidYmd, а не перевірка форми: «2026-13-99» формі відповідає, але
+      // такого дня немає, і з нього вийшов би сміттєвий період замість помилки.
+      const to = isValidYmd(rawTo) ? rawTo : today;
+      const fallbackFrom = addDaysToYmd(to, -29);
+      const rawFrom = (req.query.from as string) || fallbackFrom;
+      const from = isValidYmd(rawFrom) && rawFrom <= to ? rawFrom : fallbackFrom;
+      const compare = req.query.compare === '1' || req.query.compare === 'true';
+
+      const { events, truncated } = await loadContactEvents(from, to);
+      const current = aggregateContactEvents(events, from, to, today);
+
+      let comparison = null;
+      if (compare) {
+        const periodDays = dateRange(from, to).length;
+        const prevTo = addDaysToYmd(from, -1);
+        const prevFrom = addDaysToYmd(prevTo, -(periodDays - 1));
+        const prev = await loadContactEvents(prevFrom, prevTo);
+        const prevAgg = aggregateContactEvents(prev.events, prevFrom, prevTo, today);
+
+        comparison = {
+          period: { from: prevFrom, to: prevTo },
+          totals: prevAgg.totals,
+          contactsChange:    pctChange(current.totals.contacts,    prevAgg.totals.contacts),
+          callsChange:       pctChange(current.totals.calls,       prevAgg.totals.calls),
+          successRateChange: pctChange(current.totals.successRate, prevAgg.totals.successRate),
+          perRepPerDayChange: pctChange(current.totals.perRepPerDay, prevAgg.totals.perRepPerDay),
+          touchesPerClientChange: pctChange(
+            current.totals.touchesPerClient, prevAgg.totals.touchesPerClient,
+          ),
+        };
+      }
+
+      res.json({
+        period: { from, to },
+        ...current,
+        comparison,
+        truncated,
+        /**
+         * Чи налаштований PUSH-канал. UI мусить відрізняти «дзвінків не було»
+         * від «вебхук не підключений, дзвінків тут не буде взагалі».
+         */
+        webhookConfigured: !!(process.env.KEEPINCRM_WEBHOOK_SECRET || '').trim(),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/keepincrm/sync-contacts — підтягнути завдання-контакти за N днів.
+   * Дзвінки цим роутом не добираються: у API їх немає, вони приходять вебхуком.
+   */
+  app.post('/api/keepincrm/sync-contacts', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const days = Math.min(Math.max(Number(req.body?.days) || 30, 1), 90);
+      const to = todayKyiv();
+      const from = addDaysToYmd(to, -(days - 1));
+      const result = await syncKeepInCRMContactTasks(from, to);
+      if (!result.ok) {
+        return res.status(502).json({ success: false, error: result.error });
+      }
+      res.json({ success: true, ...result, period: { from, to } });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
     }
   });
 
