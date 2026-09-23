@@ -4,7 +4,7 @@ import { Card } from '../types';
 import CardModal from './CardModal';
 import {
   ChevronLeft, ChevronRight, CalendarRange, AlertTriangle, Eye, EyeOff,
-  CircleDot, Info,
+  CircleDot, Info, Maximize2
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
@@ -57,7 +57,7 @@ function weekStartOf(key: string): string {
   return addDays(key, weekday === 0 ? -6 : 1 - weekday);
 }
 
-export default function UserWorkloadGantt({ userId }: { userId: string }) {
+export default function UserWorkloadGantt({ userId, onFullscreen, isFullscreen }: { userId: string, onFullscreen?: () => void, isFullscreen?: boolean }) {
   const { state, setOpenCardId } = useAppContext();
   const today = todayKey();
 
@@ -135,7 +135,7 @@ export default function UserWorkloadGantt({ userId }: { userId: string }) {
     : null;
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col flex-1 h-full min-h-0">
       {/* ── Панель керування ─────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 mb-3 shrink-0 flex-wrap">
         <div className="flex items-center gap-2">
@@ -182,6 +182,15 @@ export default function UserWorkloadGantt({ userId }: { userId: string }) {
               </button>
             ))}
           </div>
+          {onFullscreen && !isFullscreen && (
+            <button
+              onClick={onFullscreen}
+              className="p-1.5 ml-1 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition"
+              title="На весь екран"
+            >
+              <Maximize2 className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 

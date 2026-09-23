@@ -404,7 +404,7 @@ export default function TeamRegulationsView() {
                   </div>
 
                   {userTab === 'tasks' ? (
-                    <UserWorkloadGantt userId={selectedUser.id} />
+                    <UserWorkloadGantt userId={selectedUser.id} onFullscreen={() => setIsFullscreen(true)} />
                   ) : (
                   <>
                   {/* Calendar Toolbar */}
@@ -544,7 +544,38 @@ export default function TeamRegulationsView() {
                   )}
 
                   {/* ── FULLSCREEN OVERLAY ── */}
-                  {isFullscreen && selectedUser && (() => {
+                  {isFullscreen && selectedUser && (userTab === 'tasks' ? (
+                    <div
+                      className="fixed inset-0 z-[200] bg-white flex flex-col"
+                      style={{ animation: 'fadeInScale 0.18s ease' }}
+                    >
+                      {/* Fullscreen header */}
+                      <div className="flex items-center justify-between px-6 py-3 border-b border-gray-100 bg-white shrink-0">
+                        <div className="flex items-center gap-4">
+                          <img src={selectedUser.avatar} alt={selectedUser.name} className="w-8 h-8 rounded-full" />
+                          <span className="text-base font-semibold text-gray-900">{selectedUser.name} — Задачі (Гант)</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => setIsFullscreen(false)}
+                            className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition"
+                            title="Закрити (Esc)"
+                          >
+                            <Minimize2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setIsFullscreen(false)}
+                            className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex-1 overflow-hidden flex flex-col px-6 pb-6 pt-4 bg-gray-50/30">
+                        <UserWorkloadGantt userId={selectedUser.id} isFullscreen={true} />
+                      </div>
+                    </div>
+                  ) : (() => {
                     const allBlocksFs = visibleDays.flatMap(day => parseScheduleText(selectedUser.weeklySchedule?.[day.key] || ''));
                     const startHourFs = Math.max(0, Math.min(8, ...allBlocksFs.map(b => Math.floor(b.startMinutes / 60))));
                     const endHourFs = Math.min(24, Math.max(20, ...allBlocksFs.map(b => Math.ceil(b.endMinutes / 60))));
@@ -672,7 +703,7 @@ export default function TeamRegulationsView() {
                         </div>
                       </div>
                     );
-                  })()}
+                  })())}
 
                   
                   {/* Заглушка стосується тільки регламенту: завдання людини існують
