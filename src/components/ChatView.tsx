@@ -11,6 +11,8 @@ import { useAppContext } from '../App';
 import { ChatConversationView, ChatMessage, User } from '../types';
 import { UseChat } from '../hooks/useChat';
 import { dayKey, dayLabel, startsNewGroup } from '../lib/chat';
+import { splitMentions, mentionQueryAt, applyMention, suggestMentions } from '../lib/mentions';
+import MentionSuggestions from './MentionSuggestions';
 import {
   MessageSquare, Hash, Lock, Plus, Send, Search, X, Check,
   Pencil, Trash2, Loader2, Users as UsersIcon, ChevronUp,
@@ -398,7 +400,16 @@ function MessageFeed({
   );
 }
 
-/** Підсвітка @-згадок; своє ім'я виділяється помітніше за чуже */
+/**
+ * Підсвітка @-згадок; своє ім'я виділяється помітніше за чуже.
+ *
+ * Шукаємо тим самим splitMentions, що й сервер, коли вирішує, кому слати
+ * сповіщення. Власний пошук тут колись підсвічував і те, що згадкою не є
+ * (пошту на кшталт max@Олег.com), — і людина чекала сповіщення, якого не буде.
+ *
+ * Список звужений до тих, кого сервер справді згадав: підсвічене й надіслане
+ * лишаються тим самим набором навіть після перейменування когось у команді.
+ */
 function HighlightedText({
   text, mentions, myId, userById,
 }: {
@@ -409,41 +420,28 @@ function HighlightedText({
 }) {
   if (mentions.length === 0) return <>{text}</>;
 
-  const names = mentions
+  const mentioned = mentions
     .map(id => ({ id, name: userById.get(id)?.name ?? '' }))
-    .filter(x => x.name)
-    .sort((a, b) => b.name.length - a.name.length);
+    .filter(u => u.name);
 
-  const parts: React.ReactNode[] = [];
-  let rest = text;
-  let guard = 0;
-
-  while (rest && guard++ < 200) {
-    let hit: { index: number; length: number; id: string } | null = null;
-    for (const n of names) {
-      const idx = rest.toLowerCase().indexOf('@' + n.name.toLowerCase());
-      if (idx !== -1 && (!hit || idx < hit.index)) {
-        hit = { index: idx, length: n.name.length + 1, id: n.id };
-      }
-    }
-    if (!hit) break;
-
-    if (hit.index > 0) parts.push(rest.slice(0, hit.index));
-    parts.push(
-      <span
-        key={parts.length}
-        className={`font-semibold px-1 rounded ${
-          hit.id === myId ? 'bg-amber-100 text-amber-800' : 'text-blue-600'
-        }`}
-      >
-        {rest.slice(hit.index, hit.index + hit.length)}
-      </span>,
-    );
-    rest = rest.slice(hit.index + hit.length);
-  }
-
-  if (rest) parts.push(rest);
-  return <>{parts}</>;
+  return (
+    <>
+      {splitMentions(text, mentioned).map((part, i) =>
+        part.userId === null ? (
+          <React.Fragment key={i}>{part.text}</React.Fragment>
+        ) : (
+          <span
+            key={i}
+            className={`font-semibold px-1 rounded ${
+              part.userId === myId ? 'bg-amber-100 text-amber-800' : 'text-blue-600'
+            }`}
+          >
+            {part.text}
+          </span>
+        ),
+      )}
+    </>
+  );
 }
 
 // ── Поле вводу ────────────────────────────────────────────────────────────────
@@ -461,11 +459,10 @@ function Composer({
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const suggestions = useMemo(() => {
-    if (mentionQuery === null) return [];
-    const q = mentionQuery.toLowerCase();
-    return users.filter(u => u.name.toLowerCase().includes(q)).slice(0, 5);
-  }, [mentionQuery, users]);
+  const suggestions = useMemo(
+    () => suggestMentions(users, mentionQuery),
+    [mentionQuery, users],
+  );
 
   const submit = async () => {
     const body = text.trim();
@@ -486,12 +483,11 @@ function Composer({
   const onChange = (v: string) => {
     setText(v);
     // Показуємо підказку лише поки людина друкує саме згадку в кінці рядка
-    const m = v.match(/@([^@\n]*)$/);
-    setMentionQuery(m ? m[1] : null);
+    setMentionQuery(mentionQueryAt(v));
   };
 
   const pickMention = (name: string) => {
-    setText(prev => prev.replace(/@([^@\n]*)$/, `@${name} `));
+    setText(prev => applyMention(prev, name));
     setMentionQuery(null);
     inputRef.current?.focus();
   };
@@ -500,20 +496,11 @@ function Composer({
     // pr-16 — під правим нижнім кутом висить плаваюча кнопка асистента, і без
     // відступу вона накриває собою кнопку «надіслати»
     <div className="border-t border-gray-200 pl-4 pr-16 py-3 bg-white shrink-0 relative">
-      {suggestions.length > 0 && (
-        <div className="absolute bottom-full left-4 mb-2 bg-white border border-gray-200 rounded-xl shadow-lg py-1 w-56 z-10">
-          {suggestions.map(u => (
-            <button
-              key={u.id}
-              onClick={() => pickMention(u.name)}
-              className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-blue-50 transition text-left"
-            >
-              <img src={u.avatar} alt={u.name} className="w-5 h-5 rounded-full object-cover" />
-              <span className="text-sm text-gray-700 truncate">{u.name}</span>
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Обгортка тримає ліві 16px відступу поля — сам список позиціонується
+          спільним компонентом, тим самим, що й у коментарях до картки. */}
+      <div className="absolute bottom-0 left-4 w-56">
+        <MentionSuggestions users={suggestions} onPick={pickMention} align="bottom" />
+      </div>
 
       {error && <p className="text-[11px] text-red-500 mb-1.5">{error}</p>}
 

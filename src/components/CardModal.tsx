@@ -21,6 +21,8 @@ import FileTypeIcon from './FileTypeIcon';
 import RichText from './RichText';
 import RichTextEditor from './RichTextEditor';
 import EmojiPicker from './EmojiPicker';
+import MentionSuggestions from './MentionSuggestions';
+import { mentionQueryAt, applyMention, suggestMentions } from '../lib/mentions';
 
 interface Props {
   card: Card;
@@ -168,6 +170,9 @@ export default function CardModal({ card, onClose }: Props) {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [showSubtaskInput, setShowSubtaskInput] = useState(false);
   const [newCommentText, setNewCommentText] = useState('');
+  /** Що зараз набирають після '@'; null — зараз не згадка, підказок не треба */
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const commentInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
@@ -341,8 +346,26 @@ export default function CardModal({ card, onClose }: Props) {
       text: newCommentText.trim(),
       createdAt: new Date().toISOString()
     };
+    // Згадки звідси нікуди не надсилаються: сервер сам бачить новий коментар
+    // при збереженні картки й розбирає @-імена з тексту. Так сповіщення не
+    // випереджає запис і не залежить від того, що надіслав браузер.
     handleUpdate({ comments: [...(card.comments || []), newComment] });
     setNewCommentText('');
+    setMentionQuery(null);
+  };
+
+  /** Підказки видно лише поки згадку набирають */
+  const mentionOptions = suggestMentions(state.users, mentionQuery);
+
+  const onCommentChange = (value: string) => {
+    setNewCommentText(value);
+    setMentionQuery(mentionQueryAt(value));
+  };
+
+  const pickMention = (name: string) => {
+    setNewCommentText(prev => applyMention(prev, name));
+    setMentionQuery(null);
+    commentInputRef.current?.focus();
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1289,11 +1312,20 @@ export default function CardModal({ card, onClose }: Props) {
                     : <AvatarFallback name={currentUserRecord?.name || 'U'} />}
                   <form onSubmit={handleAddComment} className="flex-1 min-w-0">
                     <div className="relative">
+                      {/* Список під полем, а не над ним: поле коментаря стоїть
+                          угорі стрічки, і місце для підказок є саме знизу. */}
+                      <MentionSuggestions
+                        users={mentionOptions}
+                        onPick={pickMention}
+                        align="top"
+                      />
                       <input
+                        ref={commentInputRef}
                         type="text"
                         value={newCommentText}
-                        onChange={e => setNewCommentText(e.target.value)}
-                        placeholder="Написати коментар..."
+                        onChange={e => onCommentChange(e.target.value)}
+                        onBlur={() => setMentionQuery(null)}
+                        placeholder="Написати коментар… @ — щоб покликати колегу"
                         className="w-full pl-3 pr-9 py-2 text-sm border border-gray-200 bg-white rounded-lg outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 transition"
                       />
                       <div className="absolute right-1 top-1/2 -translate-y-1/2">
@@ -1351,7 +1383,11 @@ export default function CardModal({ card, onClose }: Props) {
                           {' прокоментував(ла)'}
                         </p>
                         <div className={`mt-1 p-2.5 rounded-xl text-sm text-gray-700 shadow-sm border ${isAI ? 'bg-indigo-50 border-indigo-100' : 'bg-white border-gray-200'}`}>
-                          <RichText text={comment.text} />
+                          <RichText
+                            text={comment.text}
+                            mentionUsers={state.users}
+                            currentUserId={currentUserRecord?.id}
+                          />
                         </div>
                         <p className="text-xs text-blue-500 mt-1 hover:underline cursor-pointer">
                           {format(new Date(comment.createdAt), 'd MMM. yyyy р., HH:mm', { locale: uk })}

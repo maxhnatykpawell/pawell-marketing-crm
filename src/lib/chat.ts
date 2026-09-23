@@ -7,6 +7,13 @@
  * бачила своє ім'я виділеним.
  */
 
+/**
+ * Згадки переїхали в lib/mentions: тепер їх читають не лише в чаті, а й у
+ * коментарях до карток. Реекспорт лишає всі наявні імпорти на місці.
+ */
+export { parseMentions } from './mentions';
+export type { MentionUser } from './mentions';
+
 export type ChatConversationKind = 'channel' | 'dm';
 
 /** Мінімум полів розмови, потрібний цій логіці */
@@ -14,12 +21,6 @@ export interface ConversationLike {
   id: string;
   kind: ChatConversationKind;
   memberIds: string[] | null;
-}
-
-/** Мінімум полів користувача, потрібний для згадок */
-export interface MentionUser {
-  id: string;
-  name: string;
 }
 
 /**
@@ -54,40 +55,6 @@ export function canAccess(conv: ConversationLike, userId: string): boolean {
 /** Кому доставляти подію про нове повідомлення: null = всім підключеним */
 export function recipientsOf(conv: ConversationLike): string[] | null {
   return conv.memberIds === null ? null : [...conv.memberIds];
-}
-
-/**
- * Розбір @-згадок.
- *
- * Імена бувають із пробілом («Марія Коваль»), тому шукаємо не «слово після @»,
- * а найдовше ім'я зі списку команди, що збігається з текстом після @. Інакше
- * «@Марія Коваль» знаходило б неіснуючого користувача «Марія».
- */
-export function parseMentions(text: string, users: MentionUser[]): string[] {
-  if (!text || users.length === 0) return [];
-
-  // Довші імена перевіряємо першими, щоб «Марія Коваль» вигравала над «Марія»
-  const byLength = [...users].sort((a, b) => b.name.length - a.name.length);
-  const found = new Set<string>();
-  const lower = text.toLowerCase();
-
-  for (let i = 0; i < lower.length; i++) {
-    if (lower[i] !== '@') continue;
-    // Згадка починається на межі слова: пошта на кшталт mail@example.com — не згадка
-    if (i > 0 && /[\wа-яїієґ]/i.test(lower[i - 1])) continue;
-
-    for (const u of byLength) {
-      const name = u.name.toLowerCase();
-      if (!name) continue;
-      if (lower.startsWith(name, i + 1)) {
-        found.add(u.id);
-        i += name.length;
-        break;
-      }
-    }
-  }
-
-  return [...found];
 }
 
 /** Текст для списку розмов: один рядок без переносів і без хвоста */

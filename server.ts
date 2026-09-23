@@ -31,7 +31,9 @@ import {
   isFetchableUrl, isPrivateAddress, titleFromHtml, TITLE_FETCH_LIMIT,
 } from './src/lib/linkTitle';
 import { registerChatRoutes, chatStreamStats } from './chat-server';
-import { accessibleCards, scopeStateToUser } from './src/lib/projectAccess';
+import { parseMentions } from './src/lib/mentions';
+import { previewOf } from './src/lib/chat';
+import { accessibleCards, scopeStateToUser, canAccessProject } from './src/lib/projectAccess';
 import { randomUUID, timingSafeEqual } from 'crypto';
 import { findIdleProjects, lastTouchedAt } from './src/lib/projectIdle';
 import {
@@ -645,6 +647,29 @@ async function sendPersonalTelegramMessage(chatId: string, text: string): Promis
   }
 }
 
+/**
+ * Записати сповіщення в дзвіночок.
+ *
+ * Спільне для чату й коментарів: обидва кладуть однакові записи в те саме
+ * місце, і розходження тут означало б, що частина сповіщень не доїжджає.
+ */
+async function saveNotificationItem(item: {
+  id: string; userId: string; title: string; message: string;
+  cardId?: string; link?: string; read: boolean; createdAt: string;
+}): Promise<void> {
+  const db = initFirebase();
+  if (db) {
+    await db.collection('crm_notifications').doc(item.id).set(item);
+    // Дзвіночок живе в загальному стані — його оновлення клієнт побачить
+    // звичайним шляхом, і саме тут це доречно
+    await updateLastModified();
+    return;
+  }
+  const state = await getDb();
+  state.notifications = [...(state.notifications || []), item];
+  await saveDb(state);
+}
+
 async function notifyCardAssigned(state: any, cardId: string, assigneeId: string): Promise<void> {
   const settings = state.personalNotifications || DEFAULT_PERSONAL_NOTIFICATIONS;
   if (!settings.enabled || !settings.notifyOnAssign) {
@@ -670,6 +695,80 @@ async function notifyCardAssigned(state: any, cardId: string, assigneeId: string
 
   await sendPersonalTelegramMessage(assignee.telegramChatId, text);
   console.log(`📨 Assigned notification sent to ${assignee.name} (chatId: ${assignee.telegramChatId})`);
+}
+
+/**
+ * Сповістити тих, кого згадали у свіжих коментарях до картки.
+ *
+ * Згадки розбирає сервер, а не клієнт: список отримувачів не має залежати від
+ * того, що надіслав браузер. Розбір при цьому спільний із чатом і з підсвіткою
+ * (lib/mentions), тож людина отримує сповіщення рівно там, де бачить своє ім'я
+ * виділеним.
+ *
+ * @param fresh лише ті коментарі, яких у картці ще не було — інакше кожне
+ *        наступне збереження картки слало б сповіщення про старі згадки знову.
+ */
+async function notifyCommentMentions(
+  state: any,
+  card: any,
+  fresh: any[],
+  authorId: string,
+): Promise<number> {
+  if (fresh.length === 0) return 0;
+
+  const users: any[] = state.users || [];
+  if (users.length === 0) return 0;
+
+  const mentionUsers = users.map(u => ({ id: u.id, name: u.name }));
+  const project = card.projectId
+    ? (state.projects || []).find((p: any) => p.id === card.projectId)
+    : null;
+
+  let sent = 0;
+
+  for (const comment of fresh) {
+    if (!comment?.text) continue;
+
+    // Автором вважаємо того, хто підписаний у коментарі: картку може зберегти
+    // одна людина, а коментар у ній лишити інша (наприклад, ШІ-помічник).
+    const commentAuthorId = comment.authorId || authorId;
+    const author = users.find(u => u.id === commentAuthorId);
+
+    const mentioned = parseMentions(comment.text, mentionUsers)
+      // Згадати себе можна, сповіщати себе — ні
+      .filter(id => id !== commentAuthorId);
+
+    for (const userId of mentioned) {
+      const user = users.find(u => u.id === userId);
+      if (!user) continue;
+
+      // Згадка в закритому проєкті не має витікати тому, хто його не бачить:
+      // текст коментаря їде в сповіщенні цілком.
+      if (project && !canAccessProject(project, { userId, role: user.role })) continue;
+
+      await saveNotificationItem({
+        id: randomUUID(),
+        userId,
+        title: `${author?.name || 'Колега'} згадав(ла) вас у коментарі`,
+        message: previewOf(comment.text, 140),
+        cardId: card.id,
+        read: false,
+        createdAt: new Date().toISOString(),
+      });
+
+      if (user.telegramChatId) {
+        const where = project?.title ? ` (${project.title})` : '';
+        const text = `💬 *${author?.name || 'Колега'}* згадав(ла) вас у коментарі`
+          + `\n\n📋 ${card.title || 'Без назви'}${where}\n\n${previewOf(comment.text, 300)}`;
+        await sendPersonalTelegramMessage(user.telegramChatId, text);
+      }
+
+      sent++;
+    }
+  }
+
+  if (sent > 0) console.log(`📨 Згадки в коментарях: картка ${card.id}, сповіщень ${sent}`);
+  return sent;
 }
 
 async function sendDailyPersonalDigests(state: any): Promise<void> {
@@ -2975,18 +3074,47 @@ Reply ONLY with a number representing the estimated minutes. Do not include any 
     try {
       const { type, id } = req.params;
       const updates = req.body;
+
+      // Сповіщення про згадки живуть тут, а не в окремому виклику з браузера:
+      // сервер має спершу побачити збережений коментар, інакше це гонка. Ціна —
+      // одне зайве читання, і тільки тоді, коли коментарі справді змінились.
+      const touchesComments = type === 'cards' && Array.isArray(updates.comments);
+      let previousComments: any[] = [];
+
       const db = initFirebase();
       if (db) {
+        if (touchesComments) {
+          const before = await db.collection('crm_cards').doc(id).get();
+          previousComments = before.exists ? (before.data()?.comments ?? []) : [];
+        }
         await db.collection('crm_' + type).doc(id).set(updates, { merge: true });
       } else {
         const state = await getDb();
         if (state[type]) {
+          if (touchesComments) {
+            previousComments = state[type].find((item: any) => item.id === id)?.comments ?? [];
+          }
           state[type] = state[type].map((item: any) => item.id === id ? { ...item, ...updates } : item);
           await saveDb(state);
         }
       }
       await updateLastModified();
       res.json({ success: true });
+
+      // Відповідь уже пішла: доставка сповіщень не має затримувати збереження.
+      if (touchesComments) {
+        const seen = new Set(previousComments.map((c: any) => c.id));
+        const fresh = updates.comments.filter((c: any) => c?.id && !seen.has(c.id));
+        if (fresh.length > 0) {
+          const actor = (req as any).user as JWTPayload;
+          getDb()
+            .then(state => {
+              const card = (state.cards || []).find((c: any) => c.id === id) ?? { id, ...updates };
+              return notifyCommentMentions(state, card, fresh, actor.userId);
+            })
+            .catch(err => console.error('❌ Згадки в коментарях:', err.message || err));
+        }
+      }
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -3026,19 +3154,7 @@ Reply ONLY with a number representing the estimated minutes. Do not include any 
       }));
     },
     sendTelegram: sendPersonalTelegramMessage,
-    saveNotification: async (item) => {
-      const db = initFirebase();
-      if (db) {
-        await db.collection('crm_notifications').doc(item.id).set(item);
-        // Дзвіночок живе в загальному стані — його оновлення клієнт побачить
-        // звичайним шляхом, і саме тут це доречно
-        await updateLastModified();
-        return;
-      }
-      const state = await getDb();
-      state.notifications = [...(state.notifications || []), item];
-      await saveDb(state);
-    },
+    saveNotification: saveNotificationItem,
     localDir: DATA_DIR,
   });
 
@@ -3110,6 +3226,7 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
+
 
   // Send test personal notification to a specific user
   app.post('/api/notify/test-personal/:userId', requireAuth, requireAdmin, async (req, res) => {
