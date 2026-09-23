@@ -295,7 +295,7 @@ export default function TeamRegulationsView() {
               );
             })()}
 
-            <div className={`p-6 flex-1 flex flex-col min-h-0 relative ${userTab === 'tasks' && !isEditing ? 'overflow-hidden' : 'overflow-y-auto hidden-scrollbar'}`}>
+            <div className="p-6 flex-1 flex flex-col min-h-0 relative overflow-y-auto hidden-scrollbar">
               {isEditing ? (
                 /* EDIT MODE */
                 <div className="max-w-3xl mx-auto w-full space-y-8 pb-10">

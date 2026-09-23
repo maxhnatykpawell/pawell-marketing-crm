@@ -135,7 +135,7 @@ export default function UserWorkloadGantt({ userId, onFullscreen, isFullscreen }
     : null;
 
   return (
-    <div className={`flex flex-col flex-1 min-h-0 ${isFullscreen ? 'h-full' : 'min-h-[500px]'}`}>
+    <div className={`flex flex-col ${isFullscreen ? 'h-full min-h-0' : ''}`}>
       {/* ── Панель керування ─────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 mb-3 shrink-0 flex-wrap">
         <div className="flex items-center gap-2">
@@ -224,7 +224,7 @@ export default function UserWorkloadGantt({ userId, onFullscreen, isFullscreen }
       )}
 
       {/* ── Діаграма ─────────────────────────────────────────── */}
-      <div className="border border-gray-200/60 rounded-xl bg-white shadow-sm flex-1 min-h-0 overflow-auto hidden-scrollbar">
+      <div className="border border-gray-200/60 rounded-xl bg-white shadow-sm overflow-auto hidden-scrollbar" style={{ minHeight: isFullscreen ? 0 : 300 }}>
         <div style={{ width: LEFT_PANE + gridWidth }} className="select-none">
 
           {/* Заголовок шкали */}
