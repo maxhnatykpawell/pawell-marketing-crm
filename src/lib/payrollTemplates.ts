@@ -294,8 +294,26 @@ export function legacyValues(doc: PayrollDocument, template: PayrollTemplate): R
 
 // ── Доступ із компонентів ───────────────────────────────────────────────────
 
+export function migrateTemplate(template: PayrollTemplate): PayrollTemplate {
+  return {
+    ...template,
+    modules: template.modules.map((m) => {
+      if (m.key === 'overtimeHours' && m.kind === 'input') {
+        return { ...m, kind: 'rate', role: 'income', rateSource: 'salaryPerHour' };
+      }
+      if (m.key === 'vacationDays' && m.kind === 'input') {
+        return { ...m, kind: 'rate', role: 'income', rateSource: 'salaryPerDay' };
+      }
+      if (m.key === 'tripDays' && m.kind === 'input') {
+        return { ...m, kind: 'rate', role: 'income', rateSource: 'salaryPerDay' };
+      }
+      return m;
+    }),
+  };
+}
+
 export function getTemplates(settings: PayrollSettings | undefined): PayrollTemplate[] {
-  return (settings?.templates || []).filter((t) => !t.archived);
+  return (settings?.templates || []).filter((t) => !t.archived).map(migrateTemplate);
 }
 
 export function getAssignment(
@@ -316,7 +334,7 @@ export function templateForUser(
   const assignment = getAssignment(settings, userId);
   const assigned = assignment && (settings.templates || []).find((t) => t.id === assignment.templateId);
   if (assigned) {
-    return { template: resolveTemplate(assigned, assignment) as PayrollTemplate, isLegacy: false };
+    return { template: resolveTemplate(migrateTemplate(assigned), assignment) as PayrollTemplate, isLegacy: false };
   }
   return { template: legacyTemplate(settings, userId), isLegacy: true };
 }
@@ -332,7 +350,7 @@ export function documentView(
   settings: PayrollSettings
 ): { template: PayrollTemplate; values: Record<string, number> } {
   if (doc.templateSnapshot) {
-    return { template: doc.templateSnapshot, values: doc.values || {} };
+    return { template: migrateTemplate(doc.templateSnapshot), values: doc.values || {} };
   }
   const template = legacyTemplate(settings, doc.userId);
   return { template, values: legacyValues(doc, template) };
