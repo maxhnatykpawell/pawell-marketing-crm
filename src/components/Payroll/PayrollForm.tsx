@@ -126,8 +126,9 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
     const amount = result.amounts[m.key] || 0;
     const issue = result.issues.find((i) => i.key === m.key);
     const showsInput = hasOwnInput(m);
-    // У «input» введене число і є сумою — другий раз його показувати нема сенсу
-    const showsAmount = m.kind !== 'input';
+    // У «input» введене число і є сумою, але для наочності (якщо це дохід/відрахування)
+    // краще виводити його і в колонці підсумків, щоб воно візуально додавалося до загальної суми секції.
+    const showsAmount = m.kind !== 'input' || m.role !== 'info';
     // Формула може рахувати не гроші (відсоток виконання, коефіцієнт) — тоді
     // одиниця в модулі підказує, що ₴ дописувати не треба
     const isMoney = m.kind !== 'formula' || !m.unit || m.unit === '₴';
@@ -146,24 +147,24 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
           )}
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-4 shrink-0">
           {showsInput ? (
-            <div className="relative w-24">
+            <div className="relative w-28">
               <input
                 type="number"
                 step="any"
                 disabled={readOnly}
                 value={values[m.key] ?? ''}
                 onChange={(e) => setValue(m.key, e.target.value)}
-                className="w-full pl-3 pr-7 py-1.5 text-right border border-gray-300 rounded-lg bg-white disabled:bg-gray-50 disabled:text-gray-500"
+                className="w-full pl-3 pr-11 py-1.5 text-right border border-gray-300 rounded-lg bg-white disabled:bg-gray-50 disabled:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-shadow"
                 placeholder="0"
               />
-              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none">
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none">
                 {m.kind === 'percent' ? '%' : m.unit || ''}
               </span>
             </div>
           ) : (
-            <div className="w-24" />
+            <div className="w-28" />
           )}
 
           <span className={`w-28 text-right font-medium ${amount < 0 ? 'text-red-600' : 'text-gray-700'}`}>

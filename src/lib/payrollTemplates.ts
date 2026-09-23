@@ -88,15 +88,18 @@ export function baseModules(labels: Partial<Labels> = {}): PayrollModule[] {
     },
     {
       id: 'mod-vacation-days', key: 'vacationDays', label: L.paidVacationDays,
-      kind: 'input', role: 'info', sectionId: SECTION_INCOME, order: 11, unit: 'днів',
+      kind: 'rate', role: 'income', sectionId: SECTION_INCOME, order: 11,
+      rateSource: 'salaryPerDay', unit: 'день',
     },
     {
       id: 'mod-overtime-hours', key: 'overtimeHours', label: L.overtimeHours,
-      kind: 'input', role: 'info', sectionId: SECTION_INCOME, order: 12, unit: 'год',
+      kind: 'rate', role: 'income', sectionId: SECTION_INCOME, order: 12,
+      rateSource: 'salaryPerHour', unit: 'год',
     },
     {
       id: 'mod-trip-days', key: 'tripDays', label: L.businessTripDays,
-      kind: 'input', role: 'info', sectionId: SECTION_INCOME, order: 13, unit: 'днів',
+      kind: 'rate', role: 'income', sectionId: SECTION_INCOME, order: 13,
+      rateSource: 'salaryPerDay', unit: 'день',
     },
     {
       id: 'mod-team-bonus', key: 'teamBonus', label: L.teamBonus,
