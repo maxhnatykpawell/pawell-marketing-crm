@@ -135,7 +135,7 @@ export default function UserWorkloadGantt({ userId, onFullscreen, isFullscreen }
     : null;
 
   return (
-    <div className="flex flex-col flex-1 h-full min-h-0">
+    <div className={`flex flex-col flex-1 min-h-0 ${isFullscreen ? 'h-full' : 'min-h-[500px]'}`}>
       {/* ── Панель керування ─────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 mb-3 shrink-0 flex-wrap">
         <div className="flex items-center gap-2">
