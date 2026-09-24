@@ -181,16 +181,22 @@ export const ModuleEditor: React.FC<ModuleEditorProps> = ({ module: m, siblings,
         {KIND_HINTS[m.kind]}
       </p>
 
-      {/* ── Налаштування за типом ── */}
-
-      {m.kind === 'input' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {/*
+        Поле, яке заповнюють у документі. Раніше одиницю можна було задати лише
+        для «числа» й «ставки», тож у порогів і формул закінчення «год» чи
+        «днів» узагалі не було де змінити. Тепер це одне місце для всіх типів,
+        що мають власне поле — відсоток виняток, там підпис завжди «%».
+      */}
+      {hasOwnInput(m) && m.kind !== 'percent' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-white border border-gray-200 rounded-lg p-3">
           <label className="space-y-1">
-            <span className="text-xs font-medium text-gray-500">Одиниця (підказка біля поля)</span>
+            <span className="text-xs font-medium text-gray-500">
+              Одиниця — підпис у полі документа
+            </span>
             <input
               className={`${inputCls} w-full`}
               value={m.unit || ''}
-              placeholder="₴ / днів / год"
+              placeholder="год / днів / лідів / ₴"
               onChange={(e) => onChange({ unit: e.target.value })}
             />
           </label>
@@ -200,6 +206,7 @@ export const ModuleEditor: React.FC<ModuleEditorProps> = ({ module: m, siblings,
               type="number"
               className={`${inputCls} w-full`}
               value={m.defaultValue ?? ''}
+              placeholder="порожньо"
               onChange={(e) =>
                 onChange({ defaultValue: e.target.value === '' ? undefined : Number(e.target.value) })
               }
@@ -207,6 +214,8 @@ export const ModuleEditor: React.FC<ModuleEditorProps> = ({ module: m, siblings,
           </label>
         </div>
       )}
+
+      {/* ── Налаштування за типом ── */}
 
       {m.kind === 'constant' && (
         <label className="space-y-1 block max-w-xs">
@@ -264,15 +273,6 @@ export const ModuleEditor: React.FC<ModuleEditorProps> = ({ module: m, siblings,
                 </select>
               </label>
             )}
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-gray-500">Назва одиниці</span>
-              <input
-                className={`${inputCls} w-full`}
-                value={m.unit || ''}
-                placeholder="лід / день / клієнт"
-                onChange={(e) => onChange({ unit: e.target.value })}
-              />
-            </label>
           </div>
           <label className="space-y-1 block">
             <span className="text-xs font-medium text-gray-500">Кількість</span>
@@ -394,6 +394,28 @@ export const ModuleEditor: React.FC<ModuleEditorProps> = ({ module: m, siblings,
 
       {m.kind === 'formula' && (
         <div className="space-y-2">
+          {/*
+            Формула без власного поля рахує лише з чужих чисел. Але «понаднормові
+            × 1.5» — це один рядок документа, у який вписують години, тож формулі
+            треба вміти мати своє число. У самій формулі воно доступне як `ключ.n`.
+          */}
+          <label className="flex items-start gap-2 bg-white border border-gray-200 rounded-lg p-3 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={!!m.hasInput}
+              onChange={(e) => onChange({ hasInput: e.target.checked || undefined })}
+            />
+            <span className="text-xs text-gray-600 leading-snug">
+              <span className="font-medium text-gray-700">Своє поле для числа в документі</span>
+              <span className="block text-gray-400">
+                Введене число доступне у формулі як{' '}
+                <code className="px-1 py-0.5 bg-gray-100 rounded font-mono">{m.key || 'ключ'}.n</code>
+                {' '}— у списку кроків це «Це поле: введене число».
+              </span>
+            </span>
+          </label>
+
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-medium text-gray-500">
               {builderMode ? 'Кроки обчислення' : 'Вираз'}
@@ -419,6 +441,7 @@ export const ModuleEditor: React.FC<ModuleEditorProps> = ({ module: m, siblings,
               key={m.id}
               initialSteps={steps || []}
               modules={others}
+              self={m}
               onChange={(formula) => onChange({ formula })}
             />
           ) : (

@@ -130,8 +130,10 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
     // краще виводити його і в колонці підсумків, щоб воно візуально додавалося до загальної суми секції.
     const showsAmount = m.kind !== 'input' || m.role !== 'info';
     // Формула може рахувати не гроші (відсоток виконання, коефіцієнт) — тоді
-    // одиниця в модулі підказує, що ₴ дописувати не треба
-    const isMoney = m.kind !== 'formula' || !m.unit || m.unit === '₴';
+    // одиниця в модулі підказує, що ₴ дописувати не треба.
+    // Але коли у формули є власне поле, одиниця описує саме те, що вводять
+    // (години), а порахований результат — усе одно гроші.
+    const isMoney = m.kind !== 'formula' || showsInput || !m.unit || m.unit === '₴';
 
     return (
       <div key={m.id} className="flex items-start gap-3">

@@ -47,10 +47,16 @@ export interface FormulaBuilderProps {
   initialSteps: PayrollStep[];
   /** Інші модулі шаблону — з них складається список вибору */
   modules: PayrollModule[];
+  /**
+   * Сам модуль — потрібен, коли в нього є власне поле: введене в документі
+   * число доступне у формулі як `ключ.n`, і без цього пункту ввімкнене поле
+   * не було б як використати.
+   */
+  self?: PayrollModule;
   onChange: (formula: string) => void;
 }
 
-const FormulaBuilder: React.FC<FormulaBuilderProps> = ({ initialSteps, modules, onChange }) => {
+const FormulaBuilder: React.FC<FormulaBuilderProps> = ({ initialSteps, modules, self, onChange }) => {
   const [steps, setSteps] = useState<PayrollStep[]>(initialSteps);
 
   const apply = (next: PayrollStep[]) => {
@@ -78,6 +84,9 @@ const FormulaBuilder: React.FC<FormulaBuilderProps> = ({ initialSteps, modules, 
 
   /** Модулі з власним полем вводу мають ще й «кількість» — це `ключ.n` */
   const countable = modules.filter(hasOwnInput);
+
+  /** Власне поле цього ж модуля, якщо воно ввімкнене */
+  const selfInputKey = self && hasOwnInput(self) && self.key ? `${self.key}.n` : null;
 
   const formula = stepsToFormula(steps);
 
@@ -123,6 +132,11 @@ const FormulaBuilder: React.FC<FormulaBuilderProps> = ({ initialSteps, modules, 
               }}
             >
               <option value="">— оберіть —</option>
+              {selfInputKey && (
+                <optgroup label="Це поле">
+                  <option value={selfInputKey}>Це поле: введене число</option>
+                </optgroup>
+              )}
               {modules.length > 0 && (
                 <optgroup label="Модулі">
                   {modules.map((mod) => (

@@ -3,6 +3,7 @@ import {
   evaluateModules,
   formulaVars,
   hasOwnInput,
+  initialValues,
   isValidKey,
   parseFormula,
   formulaToSteps,
@@ -485,6 +486,87 @@ console.log('\nКонструктор і текст узгоджені');
   const after = evaluateModules(rebuilt, { leads: 40 });
   check('перезбирання не міняє суму', after.amounts.total, before.amounts.total);
   check('сума саме така, як очікуємо', before.amounts.total, (40 + 2000) * 0.15);
+}
+
+// ── Формула з власним полем ─────────────────────────────────────────────────
+
+console.log('\nФормула з власним полем');
+check('без прапорця поля немає',
+  hasOwnInput({ id: '1', key: 'f', label: 'F', kind: 'formula', role: 'income', sectionId: 's', order: 0 }), false);
+check('з прапорцем поле зʼявляється',
+  hasOwnInput({ id: '1', key: 'f', label: 'F', kind: 'formula', role: 'income', sectionId: 's', order: 0, hasInput: true }), true);
+
+{
+  // Випадок, з якого все почалось: понаднормові годин × вартість години × 1.5
+  const mods: PayrollModule[] = [
+    { id: '1', key: 'salaryPerHour', label: 'Оклад за годину', kind: 'constant',
+      role: 'info', sectionId: 's', order: 0, value: 200 },
+    { id: '2', key: 'overtime', label: 'Понаднормові', kind: 'formula', role: 'income',
+      sectionId: 's', order: 1, hasInput: true, unit: 'год',
+      formula: '((overtime.n * salaryPerHour) * 1.5)' },
+  ];
+  const r = evaluateModules(mods, { overtime: 10 });
+  check('години перетворились на гроші', r.amounts.overtime, 10 * 200 * 1.5);
+  // Введене число мусить лишитись доступним як `ключ.n`, інакше формула
+  // рахувала б сама з себе по колу
+  check('введене число лишилось у raw', r.raw.overtime, 10);
+  check('модуль не вважається циклом', r.issues.length, 0);
+
+  const empty = evaluateModules(mods, {});
+  check('порожнє поле — нуль, не помилка', empty.amounts.overtime, 0);
+
+  // Сусідній модуль теж має бачити введені години
+  const withNeighbour: PayrollModule[] = [
+    ...mods,
+    { id: '3', key: 'bonus', label: 'Доплата за годину', kind: 'formula', role: 'income',
+      sectionId: 's', order: 2, formula: '(overtime.n * 50)' },
+  ];
+  const rn = evaluateModules(withNeighbour, { overtime: 10 });
+  check('сусід читає введені години', rn.amounts.bonus, 500);
+  check('сусід читає суму, а не години', evaluateModules([
+    ...withNeighbour,
+    { id: '4', key: 'tax', label: 'Податок', kind: 'formula', role: 'deduction',
+      sectionId: 's', order: 3, formula: '(overtime * 0.1)' },
+  ], { overtime: 10 }).amounts.tax, 300);
+}
+
+{
+  // Стара поведінка не змінилась: без власного поля `ключ.n` — це результат
+  const mods: PayrollModule[] = [
+    { id: '1', key: 'a', label: 'A', kind: 'constant', role: 'info', sectionId: 's', order: 0, value: 7 },
+    { id: '2', key: 'calc', label: 'Обчислення', kind: 'formula', role: 'info',
+      sectionId: 's', order: 1, formula: '(a * 2)' },
+    { id: '3', key: 'uses', label: 'Використання', kind: 'formula', role: 'income',
+      sectionId: 's', order: 2, formula: '(calc.n + 1)' },
+  ];
+  const r = evaluateModules(mods, {});
+  check('без власного поля raw лишається результатом', r.raw.calc, 14);
+  check('посилання на .n не зламалось', r.amounts.uses, 15);
+}
+
+{
+  // Зламана формула не має стирати те, що людина вже ввела
+  const mods: PayrollModule[] = [
+    { id: '1', key: 'ot', label: 'Понаднормові', kind: 'formula', role: 'income',
+      sectionId: 's', order: 0, hasInput: true, formula: 'ot.n * * 2' },
+  ];
+  const r = evaluateModules(mods, { ot: 8 });
+  check('введене число переживає помилку формули', r.raw.ot, 8);
+  check('сума при помилці — нуль', r.amounts.ot, 0);
+  check('помилку показано', r.issues.length > 0, true);
+}
+
+{
+  // Значення за замовчуванням працює для формули так само, як для інших типів
+  const mods: PayrollModule[] = [
+    { id: '1', key: 'ot', label: 'Понаднормові', kind: 'formula', role: 'income',
+      sectionId: 's', order: 0, hasInput: true, defaultValue: 8, formula: '(ot.n * 100)' },
+    { id: '2', key: 'plain', label: 'Без поля', kind: 'formula', role: 'income',
+      sectionId: 's', order: 1, defaultValue: 5, formula: '1' },
+  ];
+  const init = initialValues(mods);
+  check('формула з полем отримує початкове значення', init.ot, 8);
+  check('формула без поля — ні', init.plain, undefined);
 }
 
 console.log(failures === 0 ? '\nВсі перевірки пройдено\n' : `\n${failures} перевірок не пройдено\n`);

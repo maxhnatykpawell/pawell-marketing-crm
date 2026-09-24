@@ -86,6 +86,16 @@ export interface PayrollModule {
 
   /** formula: вираз, напр. `(leadsBonus + planBonus) * 0.15` */
   formula?: string;
+
+  /**
+   * formula: дати модулю власне поле для числа в документі.
+   *
+   * Введене число доступне у самій формулі як `ключ.n` — так «понаднормові»
+   * лишаються одним рядком: у нього вписують години, а формула перетворює їх
+   * на гроші. Без цього довелося б заводити окремий модуль під години й
+   * окремий під множення, хоча в документі це одна позиція.
+   */
+  hasInput?: boolean;
 }
 
 export type PayrollSectionTone = 'neutral' | 'income' | 'deduction';
@@ -520,6 +530,8 @@ export function hasOwnInput(m: PayrollModule): boolean {
       return !m.source;
     case 'percent':
       return !m.fixedPercent;
+    case 'formula':
+      return !!m.hasInput;
     default:
       return false;
   }
@@ -723,16 +735,23 @@ export function evaluateModules(
         break;
       }
       case 'formula': {
+        // Своє поле кладемо в raw ДО обчислення: формула читає його як `ключ.n`,
+        // тож число має бути на місці раніше, ніж почнеться розрахунок.
+        // Без власного поля raw лишається результатом — так було завжди, і
+        // чужі формули, що посилаються на `ключ.n`, від цього не змінюються.
         const src = (m.formula || '').trim();
+        if (m.hasInput) raw[key] = own;
         if (!src) {
-          raw[key] = 0;
+          if (!m.hasInput) raw[key] = 0;
           amounts[key] = 0;
           break;
         }
         const { node, error } = parseFormula(src);
         if (!node) {
           issues.push({ key, message: `«${m.label}»: ${error}` });
-          raw[key] = 0;
+          // Введене число переживає зламану формулу: людина набрала години,
+          // помилка в шаблоні — не привід стерти їх із документа.
+          if (!m.hasInput) raw[key] = 0;
           amounts[key] = 0;
           break;
         }
@@ -747,8 +766,11 @@ export function evaluateModules(
           });
         }
         const v = evalNode(node, scope);
-        raw[key] = Number.isFinite(v) ? v : 0;
-        amounts[key] = raw[key];
+        const value = Number.isFinite(v) ? v : 0;
+        // З власним полем raw — це введене число (години), а amounts — гроші.
+        // Рівно як у «ставка × кількість», тож `ключ.n` всюди означає те саме.
+        if (!m.hasInput) raw[key] = value;
+        amounts[key] = value;
         break;
       }
       default: {
