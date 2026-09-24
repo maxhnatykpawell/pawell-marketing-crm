@@ -138,6 +138,16 @@ export const ModuleEditor: React.FC<ModuleEditorProps> = ({ module: m, siblings,
         </label>
       </div>
 
+      <label className="space-y-1 block">
+        <span className="text-xs font-medium text-gray-500">Підказка до поля (необов'язково)</span>
+        <input
+          className={`${inputCls} w-full`}
+          placeholder="Текст, що з'явиться дрібним шрифтом під назвою"
+          value={m.hint || ''}
+          onChange={(e) => onChange({ hint: e.target.value || undefined })}
+        />
+      </label>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <label className="space-y-1">
           <span className="text-xs font-medium text-gray-500">Тип модуля</span>

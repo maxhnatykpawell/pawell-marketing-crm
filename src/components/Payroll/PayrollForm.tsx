@@ -174,7 +174,10 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
                   transition-all"
                 placeholder="0"
               />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none">
+              <span 
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none max-w-[45px] truncate text-right"
+                title={m.kind === 'percent' ? '%' : m.unit || ''}
+              >
                 {m.kind === 'percent' ? '%' : m.unit || ''}
               </span>
             </div>
