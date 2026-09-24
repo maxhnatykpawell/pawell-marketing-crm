@@ -408,6 +408,101 @@ function evalNode(node: Node, scope: (name: string) => number): number {
   }
 }
 
+// ── Конструктор формул ──────────────────────────────────────────────────────
+//
+// Формулу можна не писати, а зібрати: взяти модуль, додати другий, помножити на
+// число. Кроки виконуються один за одним, згори вниз — без правил старшинства,
+// які в зарплаті нікому не потрібні й тільки дають тихо помилитись.
+//
+// Кроки НЕ зберігаються: єдиним джерелом правди лишається рядок `formula`, а
+// конструктор — це його прочитання. Тому старі шаблони працюють без міграції,
+// перейменування ключів і далі править формули одним місцем, а складніший
+// вираз завжди можна дописати руками.
+
+/** Операція, якою крок приєднується до вже порахованого */
+export type PayrollStepOp = '+' | '-' | '*' | '/';
+
+export type PayrollOperand =
+  /** Модуль (`leads`), його введене число (`leads.n`) або підсумок (`INCOME`) */
+  | { kind: 'ref'; key: string }
+  | { kind: 'number'; value: number };
+
+export interface PayrollStep {
+  /** null лише в першого кроку — з нього ланцюжок починається */
+  op: PayrollStepOp | null;
+  operand: PayrollOperand;
+}
+
+const STEP_OPS: PayrollStepOp[] = ['+', '-', '*', '/'];
+
+function operandToText(operand: PayrollOperand): string {
+  if (operand.kind === 'ref') return operand.key;
+  // Відʼємне число в дужки: інакше «... - -5» стає незрозумілим і рушієві, і людині
+  return operand.value < 0 ? `(${operand.value})` : String(operand.value);
+}
+
+/**
+ * Зібрати рядок формули з кроків.
+ *
+ * Кожен крок беремо в дужки разом із усім попереднім: так порядок обчислення
+ * читається з тексту й не залежить від того, чи памʼятає читач, що множення
+ * старше за додавання.
+ */
+export function stepsToFormula(steps: PayrollStep[]): string {
+  const usable = steps.filter((s) => s.operand.kind === 'number' || !!s.operand.key);
+  if (usable.length === 0) return '';
+
+  let acc = operandToText(usable[0].operand);
+  for (const step of usable.slice(1)) {
+    const op = step.op && STEP_OPS.includes(step.op) ? step.op : '+';
+    acc = `(${acc} ${op} ${operandToText(step.operand)})`;
+  }
+  return acc;
+}
+
+/** Вузол, який може бути операндом кроку: число, зміннна або мінус перед числом */
+function leafOperand(node: Node): PayrollOperand | null {
+  if (node.t === 'num') return { kind: 'number', value: node.v };
+  if (node.t === 'var') return { kind: 'ref', key: node.name };
+  if (node.t === 'un' && node.op === '-' && node.a.t === 'num') {
+    return { kind: 'number', value: -node.a.v };
+  }
+  return null;
+}
+
+function nodeToSteps(node: Node): PayrollStep[] | null {
+  const leaf = leafOperand(node);
+  if (leaf) return [{ op: null, operand: leaf }];
+
+  if (node.t !== 'bin' || !STEP_OPS.includes(node.op as PayrollStepOp)) return null;
+
+  // Ланцюжок росте вліво: праворуч від операції має стояти один операнд.
+  // Якщо там ціле піддерево, це вже не послідовність кроків, і показати його
+  // кроками означало б показати не ту математику.
+  const right = leafOperand(node.b);
+  if (!right) return null;
+
+  const left = nodeToSteps(node.a);
+  if (!left) return null;
+
+  return [...left, { op: node.op as PayrollStepOp, operand: right }];
+}
+
+/**
+ * Прочитати формулу як кроки конструктора.
+ *
+ * null — вираз кроками не виражається (умова, функція, власне групування на
+ * кшталт `a + b * c`). Тоді показуємо текстовий режим: підмінити такий вираз
+ * ланцюжком означало б порахувати зарплату інакше, ніж просив автор.
+ */
+export function formulaToSteps(src: string): PayrollStep[] | null {
+  const trimmed = (src || '').trim();
+  if (!trimmed) return [];
+  const { node } = parseFormula(trimmed);
+  if (!node) return null;
+  return nodeToSteps(node);
+}
+
 // ── Модулі ──────────────────────────────────────────────────────────────────
 
 const num = (v: unknown): number => {

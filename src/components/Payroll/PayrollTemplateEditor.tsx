@@ -15,9 +15,11 @@ import {
   hasOwnInput,
   isValidKey,
   parseFormula,
+  formulaToSteps,
   suggestKey,
 } from '../../lib/payrollEngine';
 import { PAYROLL_PRESETS, SECTION_DEDUCTIONS, SECTION_INCOME, newId } from '../../lib/payrollTemplates';
+import FormulaBuilder from './FormulaBuilder';
 
 const KIND_LABELS: Record<PayrollModuleKind, string> = {
   input: 'Число з документа',
@@ -91,6 +93,12 @@ export const ModuleEditor: React.FC<ModuleEditorProps> = ({ module: m, siblings,
   const keyTaken = others.some((s) => s.key === m.key);
   const keyBad = !isValidKey(m.key);
   const formulaError = m.kind === 'formula' && m.formula ? parseFormula(m.formula).error : undefined;
+
+  /** Кроки поточної формули; null — виражається лише текстом */
+  const steps = m.kind === 'formula' ? formulaToSteps(m.formula || '') : null;
+  const [textMode, setTextMode] = useState(false);
+  // Конструктор показуємо, коли формула ним виражається і людина не пішла в текст
+  const builderMode = !!steps && !textMode;
 
   const refOptions = (extra: Array<[string, string]> = []) => (
     <>
@@ -386,18 +394,58 @@ export const ModuleEditor: React.FC<ModuleEditorProps> = ({ module: m, siblings,
 
       {m.kind === 'formula' && (
         <div className="space-y-2">
-          <textarea
-            className={`${inputCls} w-full font-mono ${formulaError ? 'border-red-400 bg-red-50' : ''}`}
-            rows={2}
-            value={m.formula || ''}
-            placeholder="(leads + planBonus) * 0.15"
-            onChange={(e) => onChange({ formula: e.target.value })}
-          />
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-gray-500">
+              {builderMode ? 'Кроки обчислення' : 'Вираз'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setTextMode((v) => !v)}
+              // Вираз, який кроками не виражається, лишає кнопку недоступною в
+              // обох режимах: інакше в текстовому вона натискалась би, нічого
+              // не змінюючи, і читалася б як поламана.
+              disabled={!steps}
+              title={steps ? undefined : 'Цей вираз кроками не збирається'}
+              className="text-xs font-medium text-blue-600 hover:underline disabled:text-gray-300 disabled:no-underline disabled:cursor-not-allowed"
+            >
+              {builderMode ? 'Ввести текстом' : 'Зібрати кроками'}
+            </button>
+          </div>
+
+          {builderMode ? (
+            /* key — щоб при переході на інший модуль кроки перечитались із його
+               формули, а не лишились від попереднього */
+            <FormulaBuilder
+              key={m.id}
+              initialSteps={steps || []}
+              modules={others}
+              onChange={(formula) => onChange({ formula })}
+            />
+          ) : (
+            <textarea
+              className={`${inputCls} w-full font-mono ${formulaError ? 'border-red-400 bg-red-50' : ''}`}
+              rows={2}
+              value={m.formula || ''}
+              placeholder="(leads + planBonus) * 0.15"
+              onChange={(e) => onChange({ formula: e.target.value })}
+            />
+          )}
+
           {formulaError && (
             <div className="text-xs text-red-600 flex items-center gap-1">
               <AlertTriangle size={12} /> {formulaError}
             </div>
           )}
+
+          {/* Кажемо прямо, чому конструктор недоступний: мовчазна кнопка,
+              яка не натискається, читається як поламана. */}
+          {!steps && !formulaError && m.formula && (
+            <div className="text-xs text-gray-500">
+              Тут умова, функція або власне групування — кроками такий вираз не збирається,
+              тож він лишається текстом.
+            </div>
+          )}
+
           <div className="text-xs text-gray-500 space-y-1">
             <div>
               <span className="font-medium">Модулі:</span>{' '}

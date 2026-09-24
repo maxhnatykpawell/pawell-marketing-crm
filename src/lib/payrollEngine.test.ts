@@ -5,6 +5,9 @@ import {
   hasOwnInput,
   isValidKey,
   parseFormula,
+  formulaToSteps,
+  stepsToFormula,
+  PayrollStep,
   resolveModules,
   suggestKey,
   tierAmount,
@@ -413,6 +416,76 @@ const zeroDays = evaluateModules(
   legacyValues({ ...legacyDoc, workingDaysInMonth: 0 }, migrated)
 );
 check('нуль робочих днів не дає NaN', Number.isFinite(zeroDays.balance), true);
+
+// ── Конструктор формул ──────────────────────────────────────────────────────
+
+console.log('\nstepsToFormula');
+const ref = (key: string): PayrollStep => ({ op: null, operand: { kind: 'ref', key } });
+const add = (op: '+' | '-' | '*' | '/', key: string): PayrollStep => ({ op, operand: { kind: 'ref', key } });
+const numStep = (op: '+' | '-' | '*' | '/', value: number): PayrollStep => ({ op, operand: { kind: 'number', value } });
+
+check('один операнд — без дужок', stepsToFormula([ref('leads')]), 'leads');
+check('два кроки', stepsToFormula([ref('leads'), add('+', 'planBonus')]), '(leads + planBonus)');
+// Дужки наростають зліва: порядок читається з тексту, а не зі старшинства операцій
+check('три кроки рахуються згори вниз',
+  stepsToFormula([ref('leads'), add('+', 'planBonus'), numStep('*', 0.15)]),
+  '((leads + planBonus) * 0.15)');
+check('множення й ділення',
+  stepsToFormula([ref('salary'), numStep('/', 21), numStep('*', 5)]),
+  '((salary / 21) * 5)');
+check('підсумок як операнд', stepsToFormula([ref('INCOME'), numStep('*', 0.195)]), '(INCOME * 0.195)');
+check('введене число модуля', stepsToFormula([ref('leads.n'), numStep('*', 150)]), '(leads.n * 150)');
+check('відʼємне число в дужках', stepsToFormula([ref('base'), numStep('+', -500)]), '(base + (-500))');
+check('порожні кроки — порожня формула', stepsToFormula([]), '');
+check('порожній ключ пропускається',
+  stepsToFormula([ref('leads'), { op: '+', operand: { kind: 'ref', key: '' } }]), 'leads');
+
+console.log('\nformulaToSteps');
+check('порожня формула — порожні кроки', formulaToSteps(''), []);
+check('один модуль', formulaToSteps('leads'), [ref('leads')]);
+check('проста сума', formulaToSteps('leads + planBonus'), [ref('leads'), add('+', 'planBonus')]);
+check('ланцюжок із дужками',
+  formulaToSteps('((leads + planBonus) * 0.15)'),
+  [ref('leads'), add('+', 'planBonus'), numStep('*', 0.15)]);
+// Без дужок «a + b * c» — це НЕ послідовність кроків: множення виконається першим,
+// тож показати його ланцюжком означало б показати не ту математику
+check('своє групування кроками не виражається', formulaToSteps('leads + planBonus * 0.15'), null);
+check('умова кроками не виражається', formulaToSteps('days > 0 ? salary : 0'), null);
+check('функція кроками не виражається', formulaToSteps('min(leads, 100)'), null);
+check('зіпсований вираз', formulaToSteps('leads +'), null);
+check('відʼємне число читається', formulaToSteps('(base + (-500))'), [ref('base'), numStep('+', -500)]);
+
+console.log('\nКонструктор і текст узгоджені');
+{
+  // Головна вимога: зібране кроками й прочитане назад має лишитись тим самим
+  const cases: PayrollStep[][] = [
+    [ref('leads')],
+    [ref('leads'), add('+', 'planBonus')],
+    [ref('leads'), add('+', 'planBonus'), numStep('*', 0.15)],
+    [ref('salary'), numStep('/', 21), numStep('*', 5), add('-', 'fines')],
+    [ref('INCOME'), numStep('*', 0.195)],
+  ];
+  cases.forEach((steps, i) => {
+    const text = stepsToFormula(steps);
+    check(`кроки → текст → кроки (#${i + 1}: ${text})`, formulaToSteps(text), steps);
+    check(`текст розбирається рушієм (#${i + 1})`, parseFormula(text).error, undefined);
+  });
+}
+{
+  // І навпаки: формула, прочитана кроками, після збирання рахує те саме число
+  const mods: PayrollModule[] = [
+    { id: '1', key: 'leads', label: 'Ліди', kind: 'input', role: 'info', sectionId: 's', order: 0 },
+    { id: '2', key: 'planBonus', label: 'Бонус', kind: 'constant', role: 'income', sectionId: 's', order: 1, value: 2000 },
+    { id: '3', key: 'total', label: 'Разом', kind: 'formula', role: 'income', sectionId: 's', order: 2,
+      formula: '((leads + planBonus) * 0.15)' },
+  ];
+  const before = evaluateModules(mods, { leads: 40 });
+  const steps = formulaToSteps(mods[2].formula!)!;
+  const rebuilt = mods.map((m) => (m.key === 'total' ? { ...m, formula: stepsToFormula(steps) } : m));
+  const after = evaluateModules(rebuilt, { leads: 40 });
+  check('перезбирання не міняє суму', after.amounts.total, before.amounts.total);
+  check('сума саме така, як очікуємо', before.amounts.total, (40 + 2000) * 0.15);
+}
 
 console.log(failures === 0 ? '\nВсі перевірки пройдено\n' : `\n${failures} перевірок не пройдено\n`);
 if (failures > 0) process.exit(1);
