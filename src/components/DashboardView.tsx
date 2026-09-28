@@ -11,16 +11,9 @@ import PeriodPicker, { PeriodKey, PeriodValue, makePeriod, describePeriod } from
 import LtvSyncDialog from './LtvSyncDialog';
 import {
   sumSpend, computeCac, cacBySource, previousRange,
-  DEFAULT_CURRENCY_RATES, AD_SPEND_CATEGORY,
+  DEFAULT_CURRENCY_RATES, AD_SPEND_CATEGORY, COHORT_MATURITY_DAYS,
   CacScope, CacResult, SourceCacResult, SpendBreakdown,
 } from '../lib/cac';
-
-/**
- * Скільки днів когорта «дозріває», перш ніж її конверсію можна вважати усталеною.
- * Лід, залучений сьогодні, ще не встиг стати клієнтом, тому свіжі дні завжди
- * занижують конверсію. Підберіть під реальний цикл угоди у вашому відділі.
- */
-const COHORT_MATURITY_DAYS = 14;
 
 /** Що кладемо в чисельник CAC — вибір зберігається між сеансами */
 const CAC_SCOPE_KEY = 'pawell_cac_scope';

@@ -3,6 +3,7 @@ import {
   firstActiveMonth, availableMonths, hasMonthlyStats,
   computeMonthTotals, buildTrend, computeMovements, topClients,
   delta, formatPct, computeMonthSpend, monthlyReportToCsv, buildMonthlyReport, summarizeMonth,
+  computeRetention, computeAcquisition, computeChannels, groupChannels, judgeLtvToCac, ChannelStat,
 } from './monthlyReport';
 import { ClientRecord } from './clientAnalytics';
 
@@ -170,7 +171,11 @@ console.log('\nГроші місяця');
   const rates = { USD: 40, EUR: 45 };
   const aug = computeMonthTotals(DATA, '2026-08');
   const jul = computeMonthTotals(DATA, '2026-07');
-  const s = computeMonthSpend(expenses, '2026-08', aug, jul, rates);
+  /** Знаменник без агрегатів CRM — нові клієнти з помісячних сум */
+  const basis = {
+    newClients: aug.newClients, prevNewClients: jul.newClients, revenue: aug.revenue,
+  };
+  const s = computeMonthSpend(expenses, '2026-08', basis, rates);
 
   check('усі витрати місяця', s.total, 12000);
   check('лише реклама', s.ads, 10000);
@@ -186,7 +191,7 @@ console.log('\nГроші місяця');
   check('ДРВ', s.adShare, 185.2);
   check('валюта лише гривня', s.hasForeign, false);
 
-  const empty = computeMonthSpend([], '2026-08', aug, jul, rates);
+  const empty = computeMonthSpend([], '2026-08', basis, rates);
   check('без витрат — нуль записів', empty.count, 0);
   check('без витрат CAC невідомий', empty.cac, null);
   check('без витрат дохід на гривню не рахується', empty.revenuePerSpend, null);
@@ -229,6 +234,124 @@ console.log('\nЗвіт');
   );
   check('старий формат: звіт неможливий', oldFormat.hasMonthlyStats, false);
   check('старий формат: нулі, а не помилка', oldFormat.totals.revenue, 0);
+}
+
+console.log('\nУтримання');
+{
+  const r = computeRetention(DATA, '2026-08');
+  // База — активні в липні: «Тримається» і «Відпав». Новачок і Повернувся в неї не входять
+  check('база — активні минулого місяця', r.base, 2);
+  check('утримали', r.kept, 1);
+  check('втратили', r.lost, 1);
+  check('повернувся не входить у базу', r.reactivated, 1);
+  check('рівень утримання', r.rate, 50);
+  check('відтік — те саме з іншого боку', r.churn, 50);
+  // Гроші: 3 000 ₴ від того, хто лишився, проти 2 800 ₴ доходу липня
+  check('утримання в грошах може бути > 100 %', r.revenueRetention, 107.1);
+  check('частка доходу від постійних', r.repeatRevenueShare, 72.2);
+
+  const noBase = computeRetention(DATA, '2026-05');
+  check('без активних минулого місяця рівня немає', noBase.rate, null);
+  check('без бази і грошового рівня немає', noBase.revenueRetention, null);
+}
+
+console.log('\nЗалучення, MQA і конверсія');
+{
+  const aug = {
+    totalAcquired: 100, totalLeads: 80, totalClients: 20,
+    totalAgreements: 24, totalAgreementsSum: 5400,
+    acquiredBySource: [{ source: 'Meta Ads', count: 60 }, { source: 'Google Ads', count: 40 }],
+    clientsBySource: [{ source: 'Meta Ads', count: 14 }, { source: 'Google Ads', count: 6 }],
+    agreementsBySource: [
+      { source: 'meta_ads', count: 16, totalSum: 4000 },
+      { source: 'Google Ads', count: 8, totalSum: 1400 },
+    ],
+  };
+  const jul = { totalAcquired: 80, totalLeads: 68, totalClients: 12 };
+
+  const a = computeAcquisition(aug, jul, '2026-08', {
+    maturityDays: 14, now: new Date('2026-09-20T12:00:00Z'),
+  });
+
+  check('MQA — це клієнти когорти', a.mqa, 20);
+  check('усі залучені', a.acquired, 100);
+  check('конверсія в клієнта', a.conversion, 20);
+  check('конверсія минулого місяця', a.prevConversion, 15);
+  check('зміна конверсії', a.conversionChange, 33.3);
+  check('зміна MQA', a.mqaChange, 66.7);
+  check('угоди з CRM', [a.agreements, a.agreementsSum], [24, 5400]);
+  check('місяць дозрів', a.mature, true);
+
+  // 'meta_ads' і 'Meta Ads' — один канал: без нормалізації розпалось би на два
+  check('канали зведено за нормалізованою назвою', a.channels.length, 2);
+  check('канали за доходом', a.channels.map(c => c.source), ['Meta Ads', 'Google Ads']);
+  check('дохід каналу', a.channels[0].revenue, 4000);
+  check('частка каналу', a.channels[0].revenueShare, 74.1);
+  check('клієнти каналу', a.channels[0].clients, 14);
+  check('конверсія каналу', a.channels[0].conversion, 23.3);
+  check('сума по каналах', a.channelsRevenue, 5400);
+
+  // Знімки старого формату не мають totalAcquired — добудовуємо з лідів і клієнтів
+  const old = computeAcquisition(
+    { totalLeads: 90, totalClients: 10 }, null, '2026-08',
+    { maturityDays: 14, now: new Date('2026-09-20T12:00:00Z') },
+  );
+  check('залучені без totalAcquired', old.acquired, 100);
+  check('без минулого місяця зміни немає', old.mqaChange, null);
+
+  // Щойно закритий місяць ще дозріває — MQA і конверсія занижені
+  const fresh = computeAcquisition(aug, jul, '2026-08', {
+    maturityDays: 14, now: new Date('2026-09-05T12:00:00Z'),
+  });
+  check('свіжий місяць не дозрів', fresh.mature, false);
+}
+
+console.log('\nГрупування каналів для кільця');
+{
+  const ch = (source: string, revenue: number): ChannelStat => ({
+    source, revenue, deals: 1, clients: 1, acquired: 2, revenueShare: revenue / 100, conversion: 50,
+  });
+  const many = [ch('a', 1000), ch('b', 900), ch('c', 800), ch('d', 700), ch('e', 600), ch('f', 500), ch('g', 400)];
+
+  const grouped = groupChannels(many, 5);
+  check('п\'ять каналів і «Інші»', grouped.map(c => c.source), ['a', 'b', 'c', 'd', 'e', 'Інші']);
+  check('хвіст складено', grouped[5].revenue, 900);
+  check('нічого не загублено', grouped.reduce((s, c) => s + c.revenue, 0), 4900);
+  // Шість каналів у кільце влазять — згортати нічого
+  check('рівно шість лишаються як є', groupChannels(many.slice(0, 6), 5).length, 6);
+  check('канали без доходу в кільце не йдуть', groupChannels([ch('a', 100), ch('b', 0)], 5).length, 1);
+}
+
+console.log('\nLTV/CAC');
+{
+  const expenses = [{ amount: 20000, currency: 'UAH', category: 'Реклама', date: '2026-08-05' }];
+  const rates = { USD: 40, EUR: 45 };
+  const basis = {
+    newClients: 10, prevNewClients: 8, acquired: 50, revenue: 300000,
+    ltv: 30000, ltvBasis: 'LTV 12 міс' as const,
+    clientsBySource: [{ source: 'Meta Ads', count: 10 }],
+  };
+  const s = computeMonthSpend(expenses, '2026-08', basis, rates);
+
+  check('CAC на знаменнику ззовні', s.cac, 2000);
+  check('CPL на всіх залучених', s.cpl, 400);
+  check('LTV/CAC', s.ltvToCac, 15);
+  check('підпис основи LTV', s.ltvBasis, 'LTV 12 міс');
+  check('оцінка: недоінвестовано', judgeLtvToCac(s.ltvToCac), 'underinvested');
+  check('оцінка: здорово', judgeLtvToCac(3.4), 'healthy');
+  check('оцінка: тонко', judgeLtvToCac(1.9), 'thin');
+  check('без співвідношення немає й оцінки', judgeLtvToCac(null), null);
+
+  // Витрати є, але джерело в них не збігається з жодним каналом CRM
+  const unmatched = computeMonthSpend(
+    [{ amount: 5000, currency: 'UAH', category: 'Реклама', source: 'Білборд', date: '2026-08-05' }],
+    '2026-08', basis, rates,
+  );
+  check('невідповідні витрати видно окремо', unmatched.bySource?.unmatchedSpend, 5000);
+
+  const noLtv = computeMonthSpend(expenses, '2026-08', { ...basis, ltv: null }, rates);
+  check('без LTV співвідношення порожнє', noLtv.ltvToCac, null);
+  check('без LTV немає й підпису основи', noLtv.ltvBasis, null);
 }
 
 console.log('\nВивантаження CSV');

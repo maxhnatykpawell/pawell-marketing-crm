@@ -19,7 +19,8 @@
 
 import { ClientRecord, MonthStats, getPurchaseMonths } from './clientAnalytics';
 import {
-  pctChange, sumSpend, computeCac, CacExpenseInput, CurrencyRates,
+  pctChange, sumSpend, computeCac, cacBySource, normalizeSource,
+  CacExpenseInput, CurrencyRates, SourceCacResult,
 } from './cac';
 import { pluralUk } from './plural';
 
@@ -363,6 +364,97 @@ function topOf(prepared: PreparedClient[], month: string, limit: number): Client
     .slice(0, limit);
 }
 
+// ── Утримання ─────────────────────────────────────────────────────────────────
+
+/**
+ * Рівень утримання клієнтів за місяць.
+ *
+ * База — ті, хто був активний МИНУЛОГО місяця: утримати можна лише того, хто
+ * вже був. Нових цього місяця в базі немає навмисно, інакше кожен добрий місяць
+ * залучення тихо підвищував би «утримання», не утримавши нікого.
+ *
+ * Два рівні, бо вони відповідають на різні питання:
+ *  - по клієнтах (`rate`) — скільком людям ми лишились потрібні;
+ *  - по грошах (`revenueRetention`) — скільки з минулого доходу лишилось у цьому
+ *    місяці. Може бути більшим за 100 %: ті самі клієнти купили більше.
+ */
+export interface RetentionStats {
+  month: string;
+  /** Активні минулого місяця — база утримання */
+  base: number;
+  /** З них купували й цього місяця */
+  kept: number;
+  /** З них цього місяця не купували */
+  lost: number;
+  /** Повернулись після паузи — у базу не входять, бо минулого місяця їх не було */
+  reactivated: number;
+  /** kept ÷ base, % ; null — минулого місяця активних не було */
+  rate: number | null;
+  /** lost ÷ base, % — те саме число з іншого боку */
+  churn: number | null;
+  /**
+   * Дохід цього місяця від клієнтів, активних минулого, ділений на весь дохід
+   * минулого місяця, %. Грошовий аналог утримання (NRR).
+   */
+  revenueRetention: number | null;
+  /** Частка доходу місяця від постійних клієнтів, % — «дохід, що повторюється» */
+  repeatRevenueShare: number;
+}
+
+function retentionOf(prepared: PreparedClient[], month: string): RetentionStats {
+  const prev = shiftMonth(month, -1);
+
+  let base = 0, kept = 0, lost = 0, reactivated = 0;
+  let prevRevenue = 0, keptRevenue = 0;
+  let revenue = 0, returningRevenue = 0;
+
+  for (const c of prepared) {
+    const cur = c.stats[month];
+    const pre = c.stats[prev];
+    const curActive = isActive(cur);
+    const preActive = isActive(pre);
+
+    if (curActive) {
+      revenue += cur.revenue;
+      if (c.first !== null && c.first < month) returningRevenue += cur.revenue;
+    }
+
+    if (!preActive) {
+      // Активний зараз, але не минулого місяця — це або новий, або повернення
+      if (curActive && c.first !== null && c.first < month) reactivated += 1;
+      continue;
+    }
+
+    base += 1;
+    prevRevenue += pre.revenue;
+    if (curActive) {
+      kept += 1;
+      keptRevenue += cur.revenue;
+    } else {
+      lost += 1;
+    }
+  }
+
+  const share = (part: number, whole: number) =>
+    whole > 0 ? Math.round((part / whole) * 1000) / 10 : null;
+
+  return {
+    month,
+    base,
+    kept,
+    lost,
+    reactivated,
+    rate: share(kept, base),
+    churn: share(lost, base),
+    revenueRetention: share(keptRevenue, prevRevenue),
+    repeatRevenueShare: share(returningRevenue, revenue) ?? 0,
+  };
+}
+
+export function computeRetention(clients: ClientRecord[], month: string): RetentionStats {
+  return retentionOf(prepareClients(clients), month);
+}
+
 // ── Звіт ──────────────────────────────────────────────────────────────────────
 
 /** Зміна показника між звітним місяцем і базовим */
@@ -405,6 +497,10 @@ export interface MonthlyReport {
   /** Останні N місяців, що закінчуються звітним */
   trend: MonthTotals[];
   movements: MovementGroups;
+  /** Утримання за місяць — по клієнтах і по грошах */
+  retention: RetentionStats;
+  /** Утримання попереднього місяця — щоб було видно, куда воно рухається */
+  prevRetention: RetentionStats;
   top: ClientMovement[];
   /** Чи є в даних суми по місяцях; false — звіт порахувати неможливо */
   hasMonthlyStats: boolean;
@@ -434,10 +530,222 @@ export function buildMonthlyReport(
     hasYearAgo: yearAgoTotals.clients > 0,
     trend: trendOf(prepared, month, trendMonths),
     movements: movementsOf(prepared, month),
+    retention: retentionOf(prepared, month),
+    prevRetention: retentionOf(prepared, prevMonth),
     top: topOf(prepared, month, topLimit),
     hasMonthlyStats: hasMonthlyStats(clients),
     totalClients: clients.length,
   };
+}
+
+// ── Залучення: MQA, конверсія, канали ─────────────────────────────────────────
+
+/**
+ * Агрегати залучення за місяць — те, що віддає /api/keepincrm/history.
+ *
+ * Описані тут локально, а не взяті з types.ts, з тієї ж причини, з якої cac.ts
+ * описує свій `CacExpenseInput`: модуль лишається чистою математикою, яку можна
+ * викликати з тесту одним літералом, не тягнучи за собою тип усього застосунку.
+ * Поля структурно збігаються з `KeepInCRMPeriodAggregated`.
+ */
+export interface SourceCount {
+  source: string;
+  count: number;
+}
+
+export interface SourceAgreements {
+  source: string;
+  count: number;
+  totalSum: number;
+}
+
+export interface AcquisitionInput {
+  /** Усі залучені записи місяця (ліди + клієнти) — знаменник конверсії */
+  totalAcquired?: number;
+  totalLeads: number;
+  /** Скільки із залучених стали клієнтами — це і є MQA */
+  totalClients: number;
+  totalAgreements?: number;
+  totalAgreementsSum?: number;
+  acquiredBySource?: SourceCount[];
+  clientsBySource?: SourceCount[];
+  agreementsBySource?: SourceAgreements[];
+}
+
+/**
+ * Канал: скільки приніс і скільки привів.
+ *
+ * Дохід — сума угод каналу за місяць (з CRM), а не дохід клієнтів каналу за весь
+ * час: місячний звіт говорить про місяць. Клієнти — когортні: залучені цього
+ * місяця й уже конвертовані, тобто той самий набір, на який рахується CAC.
+ */
+export interface ChannelStat {
+  source: string;
+  /** Сума угод каналу за місяць, грн */
+  revenue: number;
+  /** Кількість угод */
+  deals: number;
+  /** Клієнти когорти місяця з цього каналу (MQA каналу) */
+  clients: number;
+  /** Усі залучені записи каналу */
+  acquired: number;
+  /** Частка в доході місяця, % */
+  revenueShare: number;
+  /** Конверсія каналу: clients ÷ acquired, %; null — залучених не було */
+  conversion: number | null;
+}
+
+export interface AcquisitionStats {
+  month: string;
+  /** MQA — клієнти, залучені цього місяця (когорта місяця) */
+  mqa: number;
+  prevMqa: number;
+  mqaChange: number | null;
+  /** Усі залучені записи */
+  acquired: number;
+  prevAcquired: number;
+  /** Конверсія залученого в клієнта, % */
+  conversion: number | null;
+  prevConversion: number | null;
+  conversionChange: number | null;
+  /** Угоди місяця з CRM — окреме число від угод у помісячних сумах LTV */
+  agreements: number | null;
+  agreementsSum: number | null;
+  channels: ChannelStat[];
+  /** Сума по каналах — база для часток у кільцевій діаграмі */
+  channelsRevenue: number;
+  /**
+   * Чи дозріла когорта місяця. Свіжі ліди не встигли конвертнутись, тому в
+   * недозрілому місяці і MQA, і конверсія занижені, а CAC завищений.
+   */
+  mature: boolean;
+}
+
+/**
+ * З двох написань того самого каналу лишаємо людське.
+ *
+ * В угодах джерело приходить машинним («meta_ads»), у клієнтах — таким, як його
+ * пишуть люди («Meta Ads»). Зводяться вони в один канал, але в таблицю й на
+ * кільце має піти те написання, яке читач бачить у CRM і в витратах.
+ */
+function nicerSourceName(a: string, b: string): string {
+  const human = (s: string) => /[\sА-ЯІЇЄҐA-Z]/.test(s);
+  if (human(a) && !human(b)) return a;
+  if (human(b) && !human(a)) return b;
+  return a;
+}
+
+/** Зводить назви каналів до порівнюваного вигляду й складає три джерела в одне */
+export function computeChannels(agg: AcquisitionInput): ChannelStat[] {
+  const byKey = new Map<string, ChannelStat>();
+
+  const touch = (source: string): ChannelStat => {
+    const key = normalizeSource(source) || source;
+    let hit = byKey.get(key);
+    if (!hit) {
+      hit = { source, revenue: 0, deals: 0, clients: 0, acquired: 0, revenueShare: 0, conversion: null };
+      byKey.set(key, hit);
+    } else {
+      hit.source = nicerSourceName(hit.source, source);
+    }
+    return hit;
+  };
+
+  for (const a of agg.agreementsBySource ?? []) {
+    const c = touch(a.source);
+    c.revenue += a.totalSum;
+    c.deals += a.count;
+  }
+  for (const s of agg.clientsBySource ?? []) touch(s.source).clients += s.count;
+  for (const s of agg.acquiredBySource ?? []) touch(s.source).acquired += s.count;
+
+  const total = [...byKey.values()].reduce((sum, c) => sum + c.revenue, 0);
+
+  return [...byKey.values()]
+    .map(c => ({
+      ...c,
+      revenue: Math.round(c.revenue),
+      revenueShare: total > 0 ? Math.round((c.revenue / total) * 1000) / 10 : 0,
+      conversion: c.acquired > 0 ? Math.round((c.clients / c.acquired) * 1000) / 10 : null,
+    }))
+    // За доходом: питання до цієї таблиці завжди «хто приніс більше»
+    .sort((a, b) => b.revenue - a.revenue || b.clients - a.clients);
+}
+
+/**
+ * Скільки днів когорта «дозріває», перш ніж її конверсію можна вважати усталеною.
+ * Те саме число, що на дашборді — див. COHORT_MATURITY_DAYS у cac.ts.
+ */
+export function isMonthMature(month: string, maturityDays: number, now: Date = new Date()): boolean {
+  const end = new Date(`${monthBounds(month).to}T00:00:00Z`);
+  const today = new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
+  return (today.getTime() - end.getTime()) / 86_400_000 >= maturityDays;
+}
+
+export function computeAcquisition(
+  current: AcquisitionInput,
+  prev: AcquisitionInput | null,
+  month: string,
+  opts: { maturityDays: number; now?: Date },
+): AcquisitionStats {
+  /** Знімки, зняті до переходу на когортну модель, не мають totalAcquired */
+  const acquiredOf = (a: AcquisitionInput) => a.totalAcquired ?? a.totalLeads + a.totalClients;
+  const convOf = (a: AcquisitionInput) => {
+    const acquired = acquiredOf(a);
+    return acquired > 0 ? Math.round((a.totalClients / acquired) * 1000) / 10 : null;
+  };
+
+  const acquired = acquiredOf(current);
+  const conversion = convOf(current);
+  const prevConversion = prev ? convOf(prev) : null;
+  const channels = computeChannels(current);
+
+  return {
+    month,
+    mqa: current.totalClients,
+    prevMqa: prev?.totalClients ?? 0,
+    mqaChange: prev ? pctChange(current.totalClients, prev.totalClients) : null,
+    acquired,
+    prevAcquired: prev ? acquiredOf(prev) : 0,
+    conversion,
+    prevConversion,
+    conversionChange:
+      conversion !== null && prevConversion !== null ? pctChange(conversion, prevConversion) : null,
+    agreements: current.totalAgreements ?? null,
+    agreementsSum: current.totalAgreementsSum ?? null,
+    channels,
+    channelsRevenue: channels.reduce((s, c) => s + c.revenue, 0),
+    mature: isMonthMature(month, opts.maturityDays, opts.now),
+  };
+}
+
+/**
+ * Канали для кільцевої діаграми: найбільші окремо, решта — одним сегментом.
+ *
+ * Шість сегментів — межа, за якою частки на кільці перестають читатись, а сьомий
+ * колір довелось би вигадувати. Тому хвіст згортається в «Інші», а точні числа
+ * лишаються в таблиці поруч.
+ */
+export const OTHER_CHANNEL = 'Інші';
+
+export function groupChannels(channels: ChannelStat[], limit = 5): ChannelStat[] {
+  const withRevenue = channels.filter(c => c.revenue > 0);
+  if (withRevenue.length <= limit + 1) return withRevenue;
+
+  const head = withRevenue.slice(0, limit);
+  const tail = withRevenue.slice(limit);
+
+  const other: ChannelStat = {
+    source: OTHER_CHANNEL,
+    revenue: tail.reduce((s, c) => s + c.revenue, 0),
+    deals: tail.reduce((s, c) => s + c.deals, 0),
+    clients: tail.reduce((s, c) => s + c.clients, 0),
+    acquired: tail.reduce((s, c) => s + c.acquired, 0),
+    revenueShare: Math.round(tail.reduce((s, c) => s + c.revenueShare, 0) * 10) / 10,
+    conversion: null,
+  };
+
+  return [...head, other];
 }
 
 // ── Вивантаження ──────────────────────────────────────────────────────────────
@@ -519,13 +827,50 @@ export interface MonthSpend {
   revenuePerSpend: number | null;
   /** ДРВ — частка рекламного бюджету в доході місяця, % */
   adShare: number | null;
+  /** Вартість одного залученого запису (ліда) — реклама ÷ залучені */
+  cpl: number | null;
+  /**
+   * LTV ÷ CAC. Здоровий бенчмарк — від 3: клієнт має приносити щонайменше втричі
+   * більше, ніж коштував. null, коли невідомий будь-який з двох множників.
+   */
+  ltvToCac: number | null;
+  /** Який саме LTV узято в співвідношення — щоб число можна було перевірити */
+  ltvBasis: 'LTV 12 міс' | 'ARPU' | null;
+  ltv: number | null;
+  /** CAC по каналах — лише там, де зійшлись і витрати, і клієнти */
+  bySource: SourceCacResult | null;
+}
+
+/**
+ * На що ділити витрати.
+ *
+ * Знаменник приходить ЗЗОВНІ, а не рахується з помісячних сум: на дашборді CAC
+ * рахується на когортних клієнтів з CRM (`aggregated.totalClients`), і якщо тут
+ * узяти інший знаменник, два екрани покажуть різний CAC за той самий місяць —
+ * а вибирати, якому з них вірити, доведеться людям на зустрічі.
+ *
+ * Коли агрегатів CRM немає, викликач передає нових клієнтів з помісячних сум і
+ * каже про це в підписі (`basisLabel`).
+ */
+export interface SpendBasis {
+  /** Клієнти, залучені в місяці — знаменник CAC */
+  newClients: number;
+  prevNewClients: number;
+  /** Усі залучені записи (ліди + клієнти) — знаменник CPL */
+  acquired?: number;
+  /** Дохід місяця — для ДРВ і доходу на гривню витрат */
+  revenue: number;
+  /** LTV клієнта для співвідношення LTV/CAC */
+  ltv?: number | null;
+  ltvBasis?: MonthSpend['ltvBasis'];
+  /** Клієнти по каналах — щоб порахувати CAC по кожному */
+  clientsBySource?: SourceCount[];
 }
 
 export function computeMonthSpend(
   expenses: CacExpenseInput[],
   month: string,
-  totals: MonthTotals,
-  prevTotals: MonthTotals,
+  basis: SpendBasis,
   rates: CurrencyRates,
 ): MonthSpend {
   const now = monthBounds(month);
@@ -536,14 +881,13 @@ export function computeMonthSpend(
   const prevAll = sumSpend(expenses, before.from, before.to, 'all', rates);
   const prevAds = sumSpend(expenses, before.from, before.to, 'ads', rates);
 
-  // Знаменник — нові клієнти місяця: саме їх купував бюджет цього місяця.
-  // `acquired` тут те саме, бо лідів у помісячному знімку немає, і CPL не рахуємо.
   const cac = computeCac({
     spend: ads.total,
-    newClients: totals.newClients,
-    acquired: totals.newClients,
+    newClients: basis.newClients,
+    acquired: basis.acquired ?? basis.newClients,
     prevSpend: prevAds.total,
-    prevClients: prevTotals.newClients,
+    prevClients: basis.prevNewClients,
+    ltv: basis.ltv ?? null,
   });
 
   /*
@@ -552,8 +896,9 @@ export function computeMonthSpend(
     насправді за місяць просто не внесли витрат. Тому без бюджету CAC порожній,
     а скільки витрат у місяці взагалі — видно з `count` і `total`.
   */
-  const perClient = (spend: number) =>
-    spend > 0 && totals.newClients > 0 ? Math.round(spend / totals.newClients) : null;
+  const hasAds = ads.total > 0;
+  const hasPrevAds = prevAds.total > 0;
+  const paidCac = hasAds ? cac.cac : null;
 
   return {
     month,
@@ -564,15 +909,47 @@ export function computeMonthSpend(
     count: all.count,
     byCategory: all.byCategory,
     hasForeign: all.hasForeign,
-    cac: ads.total > 0 ? cac.cac : null,
-    prevCac: prevAds.total > 0 ? cac.prevCac : null,
-    cacChange: ads.total > 0 && prevAds.total > 0 ? cac.cacChange : null,
-    cacImproved: ads.total > 0 && prevAds.total > 0 ? cac.cacImproved : null,
-    blendedCac: perClient(all.total),
-    revenuePerSpend: all.total > 0 ? Math.round((totals.revenue / all.total) * 10) / 10 : null,
-    adShare: totals.revenue > 0 ? Math.round((ads.total / totals.revenue) * 1000) / 10 : null,
+    cac: paidCac,
+    prevCac: hasPrevAds ? cac.prevCac : null,
+    cacChange: hasAds && hasPrevAds ? cac.cacChange : null,
+    cacImproved: hasAds && hasPrevAds ? cac.cacImproved : null,
+    blendedCac: all.total > 0 && basis.newClients > 0
+      ? Math.round(all.total / basis.newClients)
+      : null,
+    revenuePerSpend: all.total > 0 ? Math.round((basis.revenue / all.total) * 10) / 10 : null,
+    adShare: basis.revenue > 0 ? Math.round((ads.total / basis.revenue) * 1000) / 10 : null,
+    cpl: hasAds ? cac.cpl : null,
+    // Співвідношення рахуємо від ПЛАТНОГО CAC: саме його порівнюють із ринком
+    ltvToCac: paidCac !== null && paidCac > 0 && basis.ltv ? Math.round((basis.ltv / paidCac) * 10) / 10 : null,
+    ltvBasis: basis.ltv ? basis.ltvBasis ?? null : null,
+    ltv: basis.ltv ?? null,
+    bySource: basis.clientsBySource
+      ? cacBySource(ads.bySource, basis.clientsBySource)
+      : null,
   };
 }
+
+/**
+ * Здоров'я співвідношення LTV/CAC.
+ *
+ * Три — не наша вигадка, а загальноприйнятий поріг: нижче маркетинг з'їдає
+ * маржу, значно вище — швидше за все, недоінвестовано в залучення. Повертаємо
+ * саме оцінку, а не колір: колір вибирає той, хто малює.
+ */
+export type LtvToCacVerdict = 'thin' | 'healthy' | 'underinvested';
+
+export function judgeLtvToCac(ratio: number | null): LtvToCacVerdict | null {
+  if (ratio === null) return null;
+  if (ratio < 3) return 'thin';
+  if (ratio > 6) return 'underinvested';
+  return 'healthy';
+}
+
+export const LTV_TO_CAC_HINTS: Record<LtvToCacVerdict, string> = {
+  thin: 'менше 3 — залучення з\'їдає маржу',
+  healthy: 'від 3 до 6 — здоровий діапазон',
+  underinvested: 'більше 6 — можливо, недоінвестовано в залучення',
+};
 
 // ── Підсумок словами ──────────────────────────────────────────────────────────
 
@@ -585,6 +962,8 @@ const share = (part: number, whole: number) =>
 /** «1 клієнт» / «2 клієнти» / «5 клієнтів» — інакше кожен звіт читається як чернетка */
 const clientsWord = (n: number) => `${num(n)} ${pluralUk(n, 'клієнт', 'клієнти', 'клієнтів')}`;
 const dealsWord = (n: number) => `${num(n)} ${pluralUk(n, 'угода', 'угоди', 'угод')}`;
+/** Родовий відмінок — для зворотів «з 2 клієнтів», «із 5 клієнтів» */
+const clientsGen = (n: number) => `${num(n)} ${pluralUk(n, 'клієнта', 'клієнтів', 'клієнтів')}`;
 
 /**
  * Звіт словами — те саме, що в таблицях, але прочитане вголос.
@@ -596,7 +975,10 @@ const dealsWord = (n: number) => `${num(n)} ${pluralUk(n, 'угода', 'уго�
  * Жодного оцінювання («добре», «погано»): звіт повідомляє, що сталось, а що з
  * цим робити — вирішують люди, які знають контекст місяця.
  */
-export function summarizeMonth(r: MonthlyReport): string[] {
+export function summarizeMonth(
+  r: MonthlyReport,
+  extra: { acquisition?: AcquisitionStats | null; spend?: MonthSpend | null } = {},
+): string[] {
   const t = r.totals;
   const p = r.prevTotals;
   const out: string[] = [];
@@ -644,6 +1026,51 @@ export function summarizeMonth(r: MonthlyReport): string[] {
   }
   if (movement.length > 0) {
     out.push(`Рух клієнтів: ${movement.join('; ')}.`);
+  }
+
+  /*
+    Утримання — окремим рядком і обома мовами: у клієнтах і в грошах. Ці два
+    числа розходяться постійно (пішли троє дрібних — утримання впало, дохід ні),
+    і саме розходження зазвичай і є новиною.
+  */
+  const ret = r.retention;
+  if (ret.rate !== null) {
+    const money = ret.revenueRetention !== null
+      ? ` У грошах — ${pct(ret.revenueRetention)} від доходу за ${monthLabel(r.prevMonth).toLowerCase()}.`
+      : '';
+    out.push(
+      `Утримання ${pct(ret.rate)}: з ${clientsGen(ret.base)}, активних у ${monthLabelIn(r.prevMonth)}, ` +
+      `купували й цього місяця ${num(ret.kept)}.${money}`,
+    );
+  }
+
+  // Залучення: MQA, конверсія й найсильніший канал — якщо агрегати CRM приїхали
+  const acq = extra.acquisition;
+  if (acq && acq.acquired > 0) {
+    const conv = acq.conversion !== null ? `, конверсія в клієнта ${pct(acq.conversion)}` : '';
+    const notMature = acq.mature ? '' : ' Когорта місяця ще дозріває, тож обидва числа занижені.';
+    out.push(
+      `Залучено ${num(acq.acquired)} записів, з них стали клієнтами ${num(acq.mqa)} (MQA)${conv}.` +
+      notMature,
+    );
+    const top = acq.channels.find(c => c.revenue > 0);
+    if (top) {
+      out.push(
+        `Найбільше приніс канал «${top.source}» — ${uah(top.revenue)} ` +
+        `(${top.revenueShare} % від суми угод по каналах).`,
+      );
+    }
+  }
+
+  // LTV/CAC — одним рядком із порогом, бо саме за поріг його й читають
+  const sp = extra.spend;
+  if (sp?.ltvToCac !== null && sp?.ltvToCac !== undefined) {
+    const verdict = judgeLtvToCac(sp.ltvToCac);
+    out.push(
+      `LTV/CAC — ${sp.ltvToCac}` +
+      `${sp.ltvBasis ? ` (${sp.ltvBasis} ${uah(sp.ltv ?? 0)} на CAC ${uah(sp.cac ?? 0)})` : ''}` +
+      `${verdict ? `: ${LTV_TO_CAC_HINTS[verdict]}` : ''}.`,
+    );
   }
 
   const first = r.top[0];

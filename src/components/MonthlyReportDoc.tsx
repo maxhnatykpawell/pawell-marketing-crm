@@ -1,10 +1,13 @@
 import React from 'react';
 import {
   MonthlyReport, MonthSpend, MonthTotals, MovementKind, MOVEMENT_LABELS,
+  AcquisitionStats, ChannelStat,
   monthLabel, monthLabelIn, delta, formatPct, summarizeMonth,
+  judgeLtvToCac, LTV_TO_CAC_HINTS,
 } from '../lib/monthlyReport';
 import { pluralUk } from '../lib/plural';
 import { Section, TH, TD, Kpi, uah, num } from './report/primitives';
+import Donut, { channelColor } from './report/Donut';
 
 /**
  * Друкований місячний звіт.
@@ -39,13 +42,19 @@ const MOVEMENT_HINTS: Record<MovementKind, string> = {
 
 export interface MonthlyReportDocProps {
   report: MonthlyReport;
-  /** Витрати місяця; null — витрат у застосунку немає, розділ «Гроші» пропускаємо */
+  /** Витрати місяця; null — витрат немає або немає доступу, розділ «Гроші» пропускаємо */
   spend: MonthSpend | null;
+  /** Залучення з CRM: MQA, конверсія, канали; null — дані не приїхали */
+  acquisition: AcquisitionStats | null;
+  /** Канали, вже згорнуті до шести — ті самі, що на екрані */
+  channels: ChannelStat[];
   /** Чи звітний місяць ще не закінчився — тоді числа неповні, і це має бути написано */
   incomplete: boolean;
 }
 
-export default function MonthlyReportDoc({ report: r, spend, incomplete }: MonthlyReportDocProps) {
+export default function MonthlyReportDoc({
+  report: r, spend, acquisition, channels, incomplete,
+}: MonthlyReportDocProps) {
   const generatedAt = new Date().toLocaleString('uk-UA', {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
   });
@@ -106,7 +115,7 @@ export default function MonthlyReportDoc({ report: r, spend, incomplete }: Month
       {/* ── Підсумок ──────────────────────────────────────────────────────── */}
       <Section title="Коротко про місяць">
         <ul className="list-disc pl-4 space-y-0.5">
-          {summarizeMonth(r).map((line, i) => (
+          {summarizeMonth(r, { acquisition, spend }).map((line, i) => (
             <li key={i} className="text-[10px] text-gray-800 leading-snug">{line}</li>
           ))}
         </ul>
@@ -125,6 +134,52 @@ export default function MonthlyReportDoc({ report: r, spend, incomplete }: Month
           <Kpi label="Активних клієнтів" value={num(t.clients)} note={changeNote(t.clients, p.clients, num)} />
           <Kpi label="Середній чек" value={uah(t.avgCheck)} note={changeNote(t.avgCheck, p.avgCheck, uah)} />
           <Kpi label="Дохід на клієнта" value={uah(t.arpu)} note={changeNote(t.arpu, p.arpu, uah)} />
+        </div>
+      </Section>
+
+      {/* ── Залучення і утримання ─────────────────────────────────────────── */}
+      <Section
+        title="Залучення і утримання"
+        hint={<>MQA — залучені цього місяця записи, які вже стали клієнтами (когорта місяця з CRM);
+          конверсія — їхня частка від усіх залучених. Утримання рахується від клієнтів, активних
+          у {prevIn}: утримати можна лише того, хто вже був.
+          {acquisition && !acquisition.mature &&
+            ' Когорта місяця ще дозріває, тож MQA й конверсія занижені.'}</>}
+      >
+        <div className="grid grid-cols-5 gap-2">
+          <Kpi
+            label="MQA · клієнти за місяць"
+            value={acquisition ? num(acquisition.mqa) : '—'}
+            note={acquisition
+              ? `із ${num(acquisition.acquired)} залучених · ${formatPct(acquisition.mqaChange)} до ${prevIn}`
+              : 'дані CRM недоступні'}
+          />
+          <Kpi
+            label="Конверсія в клієнта"
+            value={acquisition?.conversion != null ? `${acquisition.conversion} %` : '—'}
+            note={acquisition?.prevConversion != null
+              ? `було ${acquisition.prevConversion} % · ${formatPct(acquisition.conversionChange)}`
+              : 'порівнювати нема з чим'}
+          />
+          <Kpi
+            label="LTV / CAC"
+            value={spend?.ltvToCac != null ? `${spend.ltvToCac}` : '—'}
+            note={spend?.ltvToCac != null
+              ? LTV_TO_CAC_HINTS[judgeLtvToCac(spend.ltvToCac)!]
+              : 'потрібні витрати місяця й LTV'}
+          />
+          <Kpi
+            label="Утримання клієнтів"
+            value={r.retention.rate !== null ? `${r.retention.rate} %` : '—'}
+            note={r.retention.rate !== null
+              ? `${num(r.retention.kept)} з ${num(r.retention.base)}; відтік ${r.retention.churn} %`
+              : `у ${prevIn} активних не було`}
+          />
+          <Kpi
+            label="Утримання доходу"
+            value={r.retention.revenueRetention !== null ? `${r.retention.revenueRetention} %` : '—'}
+            note={`від доходу ${prevIn}; дохід від постійних — ${r.retention.repeatRevenueShare} %`}
+          />
         </div>
       </Section>
 
@@ -248,12 +303,92 @@ export default function MonthlyReportDoc({ report: r, spend, incomplete }: Month
         </table>
       </Section>
 
+      {/* ── Канали ────────────────────────────────────────────────────────── */}
+      {acquisition && (
+        <Section
+          title="Який канал скільки приніс"
+          hint={<>Сума угод місяця по джерелах з CRM. У кільці п'ять найбільших каналів,
+            решта — «Інші»; повний перелік у таблиці.</>}
+        >
+          {channels.length === 0 ? (
+            <p className="text-[10px] text-gray-500 italic">
+              За {monthLabelIn(r.month)} CRM не повернула угод по джерелах.
+            </p>
+          ) : (
+            <div className="flex gap-4 items-start">
+              <div className="flex-shrink-0 flex flex-col items-center gap-1">
+                <Donut
+                  slices={channels.map((c, i) => ({
+                    label: c.source,
+                    value: c.revenue,
+                    color: channelColor(i, c.source),
+                  }))}
+                  centerValue={uah(acquisition.channelsRevenue)}
+                  centerLabel="сума угод"
+                  size={150}
+                  thickness={20}
+                />
+                {/* Легенда під кільцем: у документі підказок немає, тож колір без
+                    підпису лишився б загадкою */}
+                <div className="flex flex-col gap-0.5">
+                  {channels.map((c, i) => (
+                    <span key={c.source} className="flex items-center gap-1 text-[7.5px] text-gray-700 whitespace-nowrap">
+                      <span
+                        className="inline-block w-1.5 h-1.5 rounded-sm"
+                        style={{ backgroundColor: channelColor(i, c.source) }}
+                      />
+                      {c.source} · {c.revenueShare} %
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr>
+                    <TH>Канал</TH>
+                    <TH align="right">Сума угод</TH>
+                    <TH align="right">Частка</TH>
+                    <TH align="right">Угод</TH>
+                    <TH align="right">Клієнтів (MQA)</TH>
+                    <TH align="right">Залучено</TH>
+                    <TH align="right">Конверсія</TH>
+                    {spend && <TH align="right">CAC</TH>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {acquisition.channels.map(c => {
+                    const sourceCac = spend?.bySource?.matched.find(
+                      m => m.source.toLowerCase() === c.source.toLowerCase(),
+                    );
+                    return (
+                      <tr key={c.source}>
+                        <TD bold>{c.source}</TD>
+                        <TD align="right" bold>{uah(c.revenue)}</TD>
+                        <TD align="right">{c.revenueShare} %</TD>
+                        <TD align="right">{num(c.deals)}</TD>
+                        <TD align="right">{num(c.clients)}</TD>
+                        <TD align="right">{num(c.acquired)}</TD>
+                        <TD align="right">{c.conversion !== null ? `${c.conversion} %` : '—'}</TD>
+                        {spend && <TD align="right">{sourceCac?.cac != null ? uah(sourceCac.cac) : '—'}</TD>}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Section>
+      )}
+
       {/* ── Гроші ─────────────────────────────────────────────────────────── */}
       {spend && (
         <Section
           title="Гроші: витрати й вартість клієнта"
           hint={<>Витрати беруться з розділу «Витрати» за дати цього місяця й зводяться до
-            гривні. CAC рахується на нових клієнтів місяця ({num(t.newClients)}).
+            гривні. У знаменнику CAC — {acquisition
+              ? <>клієнти когорти місяця з CRM: {num(acquisition.mqa)}</>
+              : <>нові клієнти з помісячних сум: {num(t.newClients)}</>}.
             {spend.hasForeign && ' Частина витрат не в гривні — сума залежить від курсу в налаштуваннях.'}</>}
         >
           {spend.count === 0 ? (
@@ -262,7 +397,7 @@ export default function MonthlyReportDoc({ report: r, spend, incomplete }: Month
             </p>
           ) : (
             <>
-              <div className="grid grid-cols-5 gap-2 mb-3">
+              <div className="grid grid-cols-6 gap-2 mb-3">
                 <Kpi label="Витрати за місяць" value={uah(spend.total)} note={changeNote(spend.total, spend.prevTotal, uah)} />
                 <Kpi label="З них реклама" value={uah(spend.ads)} note={changeNote(spend.ads, spend.prevAds, uah)} />
                 <Kpi
@@ -275,12 +410,22 @@ export default function MonthlyReportDoc({ report: r, spend, incomplete }: Month
                 <Kpi
                   label="CAC за всіма витратами"
                   value={spend.blendedCac !== null ? uah(spend.blendedCac) : '—'}
-                  note="усі витрати відділу ÷ нові клієнти"
+                  note="усі витрати відділу ÷ залучені клієнти"
+                />
+                <Kpi
+                  label="LTV / CAC"
+                  value={spend.ltvToCac != null ? `${spend.ltvToCac}` : '—'}
+                  note={spend.ltvToCac != null && spend.ltvBasis
+                    ? `${spend.ltvBasis} ${uah(spend.ltv ?? 0)} ÷ CAC ${uah(spend.cac ?? 0)}`
+                    : 'потрібні рекламний бюджет і LTV'}
                 />
                 <Kpi
                   label="Дохід на 1 ₴ витрат"
                   value={spend.revenuePerSpend !== null ? `${spend.revenuePerSpend}` : '—'}
-                  note={spend.adShare !== null ? `частка реклами в доході — ${spend.adShare} %` : undefined}
+                  note={<>
+                    {spend.adShare !== null && <>ДРВ — {spend.adShare} %. </>}
+                    {spend.cpl !== null && <>CPL — {uah(spend.cpl)}</>}
+                  </>}
                 />
               </div>
 

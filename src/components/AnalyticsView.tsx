@@ -1071,7 +1071,7 @@ export default function AnalyticsView() {
       {/* Місячний звіт теж живе окремо: у нього власний вибір місяця, і рахується
           він по всій базі — саме тому фільтри на цій вкладці приховані. */}
       {activeTab === 'monthly' && (
-        <MonthlyReportView clients={allClients} loading={clientsLoading} />
+        <MonthlyReportView clients={allClients} loading={clientsLoading} snapshot={snapshot} />
       )}
 
     </div>

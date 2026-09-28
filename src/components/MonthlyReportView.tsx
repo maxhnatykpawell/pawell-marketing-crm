@@ -5,16 +5,21 @@ import {
 } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import { useAppContext } from '../App';
+import { getKeepInCRMHistory } from '../api';
 import { ClientRecord } from '../lib/clientAnalytics';
-import { DEFAULT_CURRENCY_RATES } from '../lib/cac';
+import { LtvSnapshot } from '../lib/ltvSnapshot';
+import { DEFAULT_CURRENCY_RATES, COHORT_MATURITY_DAYS } from '../lib/cac';
 import { pluralUk } from '../lib/plural';
 import {
   MonthlyReport, MonthSpend, MonthTotals, MovementKind, MOVEMENT_LABELS,
-  buildMonthlyReport, computeMonthSpend, monthlyReportToCsv, summarizeMonth,
-  monthLabel, monthLabelIn, shiftMonth, currentMonth, lastClosedMonth,
+  AcquisitionInput, AcquisitionStats, ChannelStat,
+  buildMonthlyReport, computeMonthSpend, computeAcquisition, groupChannels,
+  monthlyReportToCsv, summarizeMonth, judgeLtvToCac, LTV_TO_CAC_HINTS,
+  monthLabel, monthLabelIn, monthBounds, shiftMonth, currentMonth, lastClosedMonth,
   availableMonths, delta, formatPct,
 } from '../lib/monthlyReport';
 import MonthlyReportDoc from './MonthlyReportDoc';
+import Donut, { channelColor } from './report/Donut';
 
 /**
  * Місячний звіт — окрема вкладка аналітики.
@@ -128,9 +133,11 @@ interface Props {
   /** Уся база клієнтів — звіт навмисно не бере відфільтровану вибірку */
   clients: ClientRecord[];
   loading: boolean;
+  /** Знімок LTV — з нього беремо LTV для співвідношення LTV/CAC */
+  snapshot: LtvSnapshot | null;
 }
 
-export default function MonthlyReportView({ clients, loading }: Props) {
+export default function MonthlyReportView({ clients, loading, snapshot }: Props) {
   const { state, canView } = useAppContext();
 
   /**
@@ -165,21 +172,6 @@ export default function MonthlyReportView({ clients, loading }: Props) {
     [clients, month],
   );
 
-  // Витрати живуть у спільному стані застосунку, а не в знімку CRM — звідси й
-  // беруться, тією ж функцією, що на дашборді, щоб суми за місяць сходились.
-  const spend = useMemo<MonthSpend | null>(() => {
-    if (!canSeeMoney) return null;
-    const expenses = state.expenses ?? [];
-    if (expenses.length === 0) return null;
-    return computeMonthSpend(
-      expenses,
-      month,
-      report.totals,
-      report.prevTotals,
-      state.currencyRates ?? DEFAULT_CURRENCY_RATES,
-    );
-  }, [canSeeMoney, state.expenses, state.currencyRates, month, report]);
-
   /** Місяці з даними — щоб стрілки не гуляли по порожнечі */
   const months = useMemo(() => availableMonths(clients), [clients]);
   /** Межі даних; null — даних немає взагалі, і тоді стрілки нічим не обмежені */
@@ -191,6 +183,101 @@ export default function MonthlyReportView({ clients, loading }: Props) {
 
   const t = report.totals;
   const p = report.prevTotals;
+
+  /*
+    Залучення приходить не зі знімка LTV, а з добових зрізів CRM: MQA, конверсія
+    й канали — це когорта місяця, якої в помісячних сумах немає. Тягнемо два
+    місяці окремими запитами, а не одним із `compare`: порівняння на сервері
+    рахується «стільки ж днів поспіль», і для 30-денного місяця базою став би
+    хвіст попереднього, а не сам попередній місяць.
+  */
+  const [acqRaw, setAcqRaw] = useState<{ month: string; current: AcquisitionInput; prev: AcquisitionInput | null } | null>(null);
+  const [acqLoading, setAcqLoading] = useState(true);
+  const [acqError, setAcqError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const bounds = monthBounds(month);
+    const prevBounds = monthBounds(shiftMonth(month, -1));
+
+    setAcqLoading(true);
+    setAcqError(null);
+    (async () => {
+      try {
+        const [cur, prev] = await Promise.all([
+          getKeepInCRMHistory(bounds.from, bounds.to, false),
+          getKeepInCRMHistory(prevBounds.from, prevBounds.to, false),
+        ]);
+        if (cancelled) return;
+        setAcqRaw({ month, current: cur.aggregated, prev: prev.aggregated });
+      } catch (e: any) {
+        if (!cancelled) setAcqError(e.message || 'Не вдалось завантажити дані залучення');
+      } finally {
+        if (!cancelled) setAcqLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [month]);
+
+  const acquisition = useMemo<AcquisitionStats | null>(() => {
+    // Дані попереднього місяця ще на льоту — не показуємо чужі числа під новою назвою
+    if (!acqRaw || acqRaw.month !== month) return null;
+    return computeAcquisition(acqRaw.current, acqRaw.prev, month, { maturityDays: COHORT_MATURITY_DAYS });
+  }, [acqRaw, month]);
+
+  /** Канали для кільця: п'ять найбільших і «Інші» */
+  const donutChannels = useMemo(
+    () => (acquisition ? groupChannels(acquisition.channels, 5) : []),
+    [acquisition],
+  );
+
+  /**
+   * LTV для співвідношення LTV/CAC.
+   *
+   * Когортний на 12 місяців, поки він є; інакше ARPU за весь час — те саме
+   * число, що показує аналітика поруч, і та сама послідовність, що на дашборді.
+   * Інакше LTV/CAC у двох місцях відрізнялось би без жодного пояснення.
+   */
+  const ltv = useMemo(() => {
+    const ltv12 = snapshot?.cohortLtv?.horizons?.[12]?.ltv ?? null;
+    if (ltv12) return { value: ltv12, basis: 'LTV 12 міс' as const };
+    if (snapshot?.ltv) return { value: snapshot.ltv, basis: 'ARPU' as const };
+    return null;
+  }, [snapshot]);
+
+  // Витрати живуть у спільному стані застосунку, а не в знімку CRM — звідси й
+  // беруться, тією ж функцією, що на дашборді, щоб суми за місяць сходились.
+  const spend = useMemo<MonthSpend | null>(() => {
+    if (!canSeeMoney) return null;
+    const expenses = state.expenses ?? [];
+    if (expenses.length === 0) return null;
+
+    /*
+      Знаменник CAC — когортні клієнти з CRM (MQA), як на дашборді. Помісячні
+      суми LTV беремо лише тоді, коли агрегати CRM недоступні: вони рахують
+      «новий» інакше (перша покупка), і змішувати два визначення в одному числі
+      не можна — про підміну сказано в підписі під карткою.
+    */
+    const fromCrm = acquisition !== null;
+    return computeMonthSpend(
+      expenses,
+      month,
+      {
+        newClients: fromCrm ? acquisition!.mqa : report.totals.newClients,
+        prevNewClients: fromCrm ? acquisition!.prevMqa : report.prevTotals.newClients,
+        acquired: fromCrm ? acquisition!.acquired : undefined,
+        revenue: report.totals.revenue,
+        ltv: ltv?.value ?? null,
+        ltvBasis: ltv?.basis,
+        clientsBySource: fromCrm ? acqRaw?.current.clientsBySource : undefined,
+      },
+      state.currencyRates ?? DEFAULT_CURRENCY_RATES,
+    );
+  }, [canSeeMoney, state.expenses, state.currencyRates, month, report, acquisition, acqRaw, ltv]);
+
+  /** На чому саме порахований CAC — читач має знати, що в знаменнику */
+  const cacBasisLabel = acquisition ? 'клієнти когорти місяця з CRM (MQA)' : 'нові клієнти з помісячних сум LTV';
+
 
   // ── Вивантаження ───────────────────────────────────────────────────────────
   const exportCsv = useCallback(() => {
@@ -368,7 +455,7 @@ export default function MonthlyReportView({ clients, loading }: Props) {
             hint="Ті самі числа, що в таблицях нижче, прочитані вголос — щоб усі читали їх однаково."
           >
             <ul className="space-y-1.5">
-              {summarizeMonth(report).map((line, i) => (
+              {summarizeMonth(report, { acquisition, spend }).map((line, i) => (
                 <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
                   <span className="text-purple-400 font-bold flex-shrink-0">•</span>
                   {line}
@@ -389,6 +476,75 @@ export default function MonthlyReportView({ clients, loading }: Props) {
               <Metric key={m.label} label={m.label} value={m.value} pct={m.d.pct} note={m.note} />
             ))}
           </div>
+
+          {/* ── Залучення і утримання ────────────────────────────────────
+              Другий ряд показників, а не шість карток у першому: дохід — це
+              результат, а MQA, конверсія, LTV/CAC і утримання — те, з чого він
+              вийшов. Мішати їх в один ряд означало б ставити наслідок поруч із
+              причиною без жодної позначки. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+            <Metric
+              label="MQA · клієнти за місяць"
+              value={acquisition ? num(acquisition.mqa) : acqLoading ? '…' : '—'}
+              pct={acquisition?.mqaChange ?? null}
+              note={acquisition
+                ? `із ${num(acquisition.acquired)} залучених · було ${num(acquisition.prevMqa)}`
+                : acqError ? 'дані CRM недоступні' : 'когорта місяця з CRM'}
+            />
+            <Metric
+              label="Конверсія в клієнта"
+              value={acquisition?.conversion !== null && acquisition !== null ? `${acquisition.conversion} %` : acqLoading ? '…' : '—'}
+              pct={acquisition?.conversionChange ?? null}
+              note={acquisition?.prevConversion !== null && acquisition !== null
+                ? `було ${acquisition.prevConversion} % · залучений → клієнт`
+                : 'частка залучених, що стали клієнтами'}
+            />
+            <Metric
+              label="LTV / CAC"
+              value={spend?.ltvToCac != null ? `${spend.ltvToCac}` : canSeeMoney ? '—' : 'закрито'}
+              pct={null}
+              note={spend?.ltvToCac != null
+                ? LTV_TO_CAC_HINTS[judgeLtvToCac(spend.ltvToCac)!]
+                : canSeeMoney ? 'потрібні витрати за місяць і LTV' : 'потрібен доступ до витрат'}
+            />
+            <Metric
+              label="Утримання клієнтів"
+              value={report.retention.rate !== null ? `${report.retention.rate} %` : '—'}
+              pct={report.retention.rate !== null && report.prevRetention.rate !== null
+                ? delta(report.retention.rate, report.prevRetention.rate).pct
+                : null}
+              note={report.retention.rate !== null
+                ? `${num(report.retention.kept)} з ${num(report.retention.base)} клієнтів ${monthLabelIn(report.prevMonth)}`
+                : `у ${monthLabelIn(report.prevMonth)} активних не було`}
+            />
+            <Metric
+              label="Утримання доходу"
+              value={report.retention.revenueRetention !== null ? `${report.retention.revenueRetention} %` : '—'}
+              pct={null}
+              note={`дохід тих самих клієнтів проти всього доходу ${monthLabelIn(report.prevMonth)}`}
+            />
+          </div>
+
+          {acqError && (
+            <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-2.5 flex items-start gap-2 text-xs text-amber-800">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>
+                Дані залучення з CRM не завантажились ({acqError}). MQA, конверсія й канали
+                недоступні — решта звіту рахується з помісячних сум і не залежить від них.
+              </span>
+            </div>
+          )}
+
+          {acquisition && !acquisition.mature && (
+            <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-2.5 flex items-start gap-2 text-xs text-amber-800">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>
+                Когорта {monthLabelIn(month)} ще дозріває: лідам з останніх днів місяця треба
+                час, щоб стати клієнтами. Тому MQA й конверсія поки занижені, а CAC завищений —
+                через {COHORT_MATURITY_DAYS} дн. після закриття місяця числа усталяться.
+              </span>
+            </div>
+          )}
 
           {/* Рік тому — окремим рядком, а не шостою карткою: це інша база
               порівняння, і мішати її з «до минулого місяця» не можна. */}
@@ -439,6 +595,44 @@ export default function MonthlyReportView({ clients, loading }: Props) {
                   </div>
                 );
               })}
+            </div>
+
+            {/* Утримання — під самими групами: воно з них і складається, тож
+                показувати його окремою карткою означало б змусити читача
+                складати ці числа в голові. */}
+            <div className="mt-4 pt-4 border-t border-gray-100 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-gray-600">
+              <span>
+                Утримання клієнтів:{' '}
+                <strong className="text-gray-900">
+                  {report.retention.rate !== null ? `${report.retention.rate} %` : '—'}
+                </strong>
+                {report.retention.rate !== null && (
+                  <span className="text-gray-400">
+                    {' '}({num(report.retention.kept)} з {num(report.retention.base)})
+                  </span>
+                )}
+              </span>
+              <span>
+                Відтік:{' '}
+                <strong className="text-gray-900">
+                  {report.retention.churn !== null ? `${report.retention.churn} %` : '—'}
+                </strong>
+              </span>
+              <span title={`Дохід цього місяця від клієнтів, активних у ${monthLabelIn(report.prevMonth)}, проти всього доходу того місяця`}>
+                Утримання доходу:{' '}
+                <strong className="text-gray-900">
+                  {report.retention.revenueRetention !== null ? `${report.retention.revenueRetention} %` : '—'}
+                </strong>
+              </span>
+              <span>
+                Дохід від постійних:{' '}
+                <strong className="text-gray-900">{report.retention.repeatRevenueShare} %</strong>
+              </span>
+              {report.prevRetention.rate !== null && report.retention.rate !== null && (
+                <span className="text-gray-400">
+                  у {monthLabelIn(report.prevMonth)} утримання було {report.prevRetention.rate} %
+                </span>
+              )}
             </div>
           </Card>
 
@@ -569,12 +763,123 @@ export default function MonthlyReportView({ clients, loading }: Props) {
             </div>
           </Card>
 
+          {/* ── Канали ───────────────────────────────────────────────────── */}
+          <Card
+            title="Який канал скільки приніс"
+            hint={<>Сума угод місяця по джерелах з CRM. Кільце — частки, точні числа в таблиці:
+              на кільці їх не читають, і воно не для цього.
+              {acquisition && acquisition.channels.length > donutChannels.length &&
+                ` Каналів ${num(acquisition.channels.length)}; у кільці п'ять найбільших, решта — «Інші».`}</>}
+          >
+            {acqLoading ? (
+              <div className="flex items-center gap-2 text-sm text-gray-400">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Завантаження даних по каналах…
+              </div>
+            ) : !acquisition || donutChannels.length === 0 ? (
+              <p className="text-sm text-gray-400">
+                {acqError
+                  ? 'Дані по каналах недоступні — CRM не відповіла.'
+                  : `За ${monthLabelIn(month)} CRM не повернула угод по джерелах.`}
+              </p>
+            ) : (
+              <div className="flex flex-col xl:flex-row gap-6 xl:items-start">
+                <div className="flex-shrink-0 flex flex-col items-center gap-3">
+                  <Donut
+                    slices={donutChannels.map((c, i) => ({
+                      label: c.source,
+                      value: c.revenue,
+                      color: channelColor(i, c.source),
+                      hint: `${c.source}: ${uah(c.revenue)} · ${c.revenueShare} % · ${num(c.deals)} ${pluralUk(c.deals, 'угода', 'угоди', 'угод')}`,
+                    }))}
+                    centerValue={uah(acquisition.channelsRevenue)}
+                    centerLabel="сума угод місяця"
+                    size={220}
+                  />
+                  {/* Легенда обов'язкова: колір сам по собі ніколи не має
+                      залишатись єдиним носієм того, який це канал. */}
+                  <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 max-w-[260px]">
+                    {donutChannels.map((c, i) => (
+                      <span key={c.source} className="inline-flex items-center gap-1.5 text-[11px] text-gray-600">
+                        <span
+                          className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
+                          style={{ backgroundColor: channelColor(i, c.source) }}
+                        />
+                        {c.source} · {c.revenueShare} %
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex-1 min-w-0 overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-gray-200">
+                        <Th>Канал</Th>
+                        <Th align="right">Сума угод</Th>
+                        <Th align="right">Частка</Th>
+                        <Th align="right">Угод</Th>
+                        <Th align="right">Клієнтів (MQA)</Th>
+                        <Th align="right">Залучено</Th>
+                        <Th align="right">Конверсія</Th>
+                        {canSeeMoney && <Th align="right">CAC</Th>}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {acquisition.channels.map((c: ChannelStat, i) => {
+                        // CAC по каналу є лише там, де зійшлись і витрати, і клієнти
+                        const sourceCac = spend?.bySource?.matched.find(
+                          m => m.source.toLowerCase() === c.source.toLowerCase(),
+                        );
+                        return (
+                          <tr key={c.source} className="hover:bg-gray-50/50 transition">
+                            <td className="py-2 px-3 text-sm font-semibold text-gray-800">
+                              <span className="inline-flex items-center gap-2">
+                                <span
+                                  className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
+                                  style={{ backgroundColor: i < 5 ? channelColor(i) : '#9ca3af' }}
+                                />
+                                {c.source}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 text-sm text-right font-bold text-gray-900 whitespace-nowrap">{uah(c.revenue)}</td>
+                            <td className="py-2 px-3 text-sm text-right text-gray-700">{c.revenueShare} %</td>
+                            <td className="py-2 px-3 text-sm text-right text-gray-700">{num(c.deals)}</td>
+                            <td className="py-2 px-3 text-sm text-right text-gray-700">{num(c.clients)}</td>
+                            <td className="py-2 px-3 text-sm text-right text-gray-500">{num(c.acquired)}</td>
+                            <td className="py-2 px-3 text-sm text-right text-gray-700">
+                              {c.conversion !== null ? `${c.conversion} %` : '—'}
+                            </td>
+                            {canSeeMoney && (
+                              <td className="py-2 px-3 text-sm text-right text-gray-700 whitespace-nowrap">
+                                {sourceCac?.cac != null ? uah(sourceCac.cac) : <span className="text-gray-300">—</span>}
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+
+                  {canSeeMoney && spend?.bySource && spend.bySource.unmatchedSpend > 0 && (
+                    <p className="text-[11px] text-gray-400 mt-2 leading-snug">
+                      {uah(spend.bySource.unmatchedSpend)} рекламних витрат заведено на джерела,
+                      яких немає в CRM — CAC по них порахувати неможливо. Назви джерел у витратах
+                      і в CRM мають збігатись.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </Card>
+
           {/* ── Гроші ────────────────────────────────────────────────────── */}
           {canSeeMoney && (
           <Card
             title="Гроші: витрати й вартість клієнта"
             hint={<>Витрати за дати цього місяця з розділу «Витрати», зведені до гривні.
-              CAC рахується на нових клієнтів місяця ({num(t.newClients)}).
+              У знаменнику CAC — {cacBasisLabel}
+              {acquisition ? `: ${num(acquisition.mqa)}` : `: ${num(t.newClients)}`}.
               {spend?.hasForeign && ' Частина витрат не в гривні — сума залежить від курсу в налаштуваннях витрат.'}</>}
           >
             {!spend || spend.count === 0 ? (
@@ -611,15 +916,41 @@ export default function MonthlyReportView({ clients, loading }: Props) {
                     label="CAC за всіма витратами"
                     value={spend.blendedCac !== null ? uah(spend.blendedCac) : '—'}
                     pct={null}
-                    note="усі витрати відділу ÷ нові клієнти"
+                    note="усі витрати відділу ÷ залучені клієнти"
                     good="down"
                   />
                   <Metric
-                    label="Дохід на 1 ₴ витрат"
-                    value={spend.revenuePerSpend !== null ? `${spend.revenuePerSpend} ₴` : '—'}
+                    label="LTV / CAC"
+                    value={spend.ltvToCac != null ? `${spend.ltvToCac}` : '—'}
                     pct={null}
-                    note={spend.adShare !== null ? `реклама — ${spend.adShare} % доходу` : undefined}
+                    note={spend.ltvToCac != null && spend.ltvBasis
+                      ? `${spend.ltvBasis} ${uah(spend.ltv ?? 0)} ÷ CAC ${uah(spend.cac ?? 0)}`
+                      : 'потрібні рекламний бюджет і LTV'}
                   />
+                </div>
+
+                {/* Другий ряд — довідкові числа поруч, а не ще п'ять карток:
+                    їх читають рідше, ніж CAC, але без них CAC не перевірити. */}
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mt-4 text-xs text-gray-600">
+                  <span>
+                    Дохід на 1 ₴ витрат:{' '}
+                    <strong className="text-gray-900">
+                      {spend.revenuePerSpend !== null ? `${spend.revenuePerSpend} ₴` : '—'}
+                    </strong>
+                  </span>
+                  <span>
+                    ДРВ (частка реклами в доході):{' '}
+                    <strong className="text-gray-900">{spend.adShare !== null ? `${spend.adShare} %` : '—'}</strong>
+                  </span>
+                  <span title="Вартість одного залученого записа — ліда, який ще не став клієнтом">
+                    CPL (вартість залученого):{' '}
+                    <strong className="text-gray-900">{spend.cpl !== null ? uah(spend.cpl) : '—'}</strong>
+                  </span>
+                  {spend.ltvToCac != null && judgeLtvToCac(spend.ltvToCac) === 'thin' && (
+                    <span className="text-red-700 font-semibold">
+                      LTV/CAC нижче 3 — клієнт приносить менше ніж утричі більше, ніж коштував
+                    </span>
+                  )}
                 </div>
 
                 <div className="overflow-x-auto mt-4">
@@ -762,7 +1093,13 @@ export default function MonthlyReportView({ clients, loading }: Props) {
     */}
     {preparingPdf && (
       <div ref={docRef} className="hidden print:block">
-        <MonthlyReportDoc report={report} spend={spend} incomplete={incomplete} />
+        <MonthlyReportDoc
+          report={report}
+          spend={spend}
+          acquisition={acquisition}
+          channels={donutChannels}
+          incomplete={incomplete}
+        />
       </div>
     )}
     </>
