@@ -86,6 +86,71 @@ export function lastClosedMonth(now: Date = new Date()): string {
   return shiftMonth(currentMonth(now), -1);
 }
 
+const MONTH_NAMES_UK_GEN = [
+  'січня', 'лютого', 'березня', 'квітня', 'травня', 'червня',
+  'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня',
+] as const;
+
+/** 'YYYY-MM-DD' → '28 вересня 2026' — для підпису «станом на» */
+export function dayLabel(date: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!m) return date;
+  const idx = Number(m[2]) - 1;
+  if (idx < 0 || idx > 11) return date;
+  return `${Number(m[3])} ${MONTH_NAMES_UK_GEN[idx]} ${m[1]}`;
+}
+
+/**
+ * Де саме зараз місяць: закінчився чи триває, і станом на яке число.
+ *
+ * Звіт за місяць, що триває, — це нормальний запит: його дивляться 28-го, щоб
+ * зрозуміти, з чим закриваються. Ненормально інше — мовчати про те, що місяць
+ * неповний, або, навпаки, ховати числа під написом «місяць не закінчився».
+ * Тому звіт малюється завжди, але з датою: «станом на 28 вересня».
+ */
+export interface MonthProgress {
+  month: string;
+  /** Останній день, за який є сенс рахувати: кінець місяця або сьогодні */
+  asOf: string;
+  /** Скільки днів місяця вже минуло, включно з сьогоднішнім */
+  daysElapsed: number;
+  daysInMonth: number;
+  /** Місяць ще триває — числа неповні за визначенням */
+  partial: boolean;
+}
+
+export function monthProgress(month: string, now: Date = new Date()): MonthProgress {
+  const { to } = monthBounds(month);
+  const today = now.toISOString().slice(0, 10);
+  const daysInMonth = Number(to.slice(8, 10));
+
+  // Майбутній місяць теж можливий (стрілка вперед на межі доби) — тоді нуль днів
+  if (today < `${month}-01`) {
+    return { month, asOf: `${month}-01`, daysElapsed: 0, daysInMonth, partial: true };
+  }
+  if (today >= to) {
+    return { month, asOf: to, daysElapsed: daysInMonth, daysInMonth, partial: false };
+  }
+  return { month, asOf: today, daysElapsed: Number(today.slice(8, 10)), daysInMonth, partial: true };
+}
+
+/**
+ * Той самий відрізок попереднього місяця.
+ *
+ * Для неповного місяця це єдина чесна база: 28 днів вересня треба порівнювати
+ * з 28 днями серпня, а не з усім серпнем — інакше кожен звіт, зроблений до
+ * кінця місяця, показує падіння, якого немає.
+ *
+ * Якщо в попередньому місяці менше днів (31 березня → лютий), відрізок
+ * обрізається його довжиною.
+ */
+export function sameSpanPrevMonth(month: string, asOf: string): { from: string; to: string } {
+  const prev = shiftMonth(month, -1);
+  const prevEnd = monthBounds(prev).to;
+  const day = Math.min(Number(asOf.slice(8, 10)), Number(prevEnd.slice(8, 10)));
+  return { from: `${prev}-01`, to: `${prev}-${String(day).padStart(2, '0')}` };
+}
+
 /** Межі місяця як YYYY-MM-DD — для вибірки витрат, що лежать по днях */
 export function monthBounds(month: string): { from: string; to: string } {
   const m = /^(\d{4})-(\d{2})$/.exec(month);
@@ -673,6 +738,71 @@ export function computeSources(agg: AcquisitionInput): SourceStat[] {
 }
 
 /**
+ * Наскільки повно місяць покритий добовими знімками CRM.
+ *
+ * Історія KeepInCRM зберігається по одному документу на день, а сервер, збираючи
+ * період, мовчки пропускає дні, яких немає (`docs.filter(d => d.exists)`). Через
+ * це місяць, у якому синхронізація не працювала частину днів, дає суму, меншу за
+ * фактичну — і жодного сліду про це в числах не лишається.
+ *
+ * На дашборді це майже не помітно: там дивляться сьогодні й останні дні, які
+ * синхронізувались щойно. У місячному звіті — навпаки: чим старіший місяць, тим
+ * більше шансів, що частина днів так і не приїхала, а звіт при цьому виглядає
+ * як повний. Тому покриття рахується явно й показується поруч із сумами.
+ */
+export interface MonthCoverage {
+  month: string;
+  /** Скільки днів місяця мали б мати знімок (для поточного місяця — до сьогодні) */
+  expectedDays: number;
+  /** Скільки знімків реально є */
+  presentDays: number;
+  /** Яких дат бракує */
+  missingDays: string[];
+  /** Найсвіжіша синхронізація серед знімків місяця */
+  lastSyncedAt: string | null;
+  /** Частка покриття, % */
+  percent: number;
+  complete: boolean;
+}
+
+export function computeCoverage(
+  month: string,
+  entries: { date: string; lastSyncedAt?: string }[],
+  now: Date = new Date(),
+): MonthCoverage {
+  const { from, to } = monthBounds(month);
+  const today = now.toISOString().slice(0, 10);
+  // Поточний місяць ще триває: дні, які не настали, пропущеними не рахуються
+  const last = to > today ? today : to;
+
+  const expected: string[] = [];
+  for (let d = new Date(`${from}T00:00:00Z`); d.toISOString().slice(0, 10) <= last; d.setUTCDate(d.getUTCDate() + 1)) {
+    expected.push(d.toISOString().slice(0, 10));
+    if (expected.length > 31) break;
+  }
+
+  const present = new Set(entries.map(e => e.date).filter(d => d >= from && d <= last));
+  const missingDays = expected.filter(d => !present.has(d));
+
+  const syncedAt = entries
+    .map(e => e.lastSyncedAt)
+    .filter((v): v is string => !!v)
+    .sort();
+
+  return {
+    month,
+    expectedDays: expected.length,
+    presentDays: expected.length - missingDays.length,
+    missingDays,
+    lastSyncedAt: syncedAt.length > 0 ? syncedAt[syncedAt.length - 1] : null,
+    percent: expected.length > 0
+      ? Math.round(((expected.length - missingDays.length) / expected.length) * 100)
+      : 100,
+    complete: missingDays.length === 0,
+  };
+}
+
+/**
  * Скільки днів когорта «дозріває», перш ніж її конверсію можна вважати усталеною.
  * Те саме число, що на дашборді — див. COHORT_MATURITY_DAYS у cac.ts.
  */
@@ -983,10 +1113,22 @@ export function summarizeMonth(
   const p = r.prevTotals;
   const out: string[] = [];
 
-  if (t.clients === 0) {
-    return [`За ${monthLabel(r.month).toLowerCase()} у базі немає жодної угоди.`];
+  /*
+    Помісячних сум за місяць може не бути — знімок LTV перераховується окремо й
+    за поточний місяць зазвичай відстає. Це не «угод не було»: добові дані CRM
+    за той самий місяць уже є, і рядки про залучення нижче лишаються осмисленими.
+    Тому замість раннього виходу — один чесний рядок і далі все, що можна сказати.
+  */
+  const hasLtvMonth = t.clients > 0;
+  if (!hasLtvMonth) {
+    out.push(
+      extra.acquisition && extra.acquisition.acquired > 0
+        ? `Помісячних сум LTV за ${monthLabel(r.month).toLowerCase()} ще немає — дохід, угоди й утримання нижче порожні.`
+        : `За ${monthLabel(r.month).toLowerCase()} у базі немає жодної угоди.`,
+    );
   }
 
+  if (hasLtvMonth) {
   const rev = delta(t.revenue, p.revenue);
   const prevIn = monthLabelIn(r.prevMonth);
   out.push(
@@ -1043,6 +1185,7 @@ export function summarizeMonth(
       `купували й цього місяця ${num(ret.kept)}.${money}`,
     );
   }
+  }
 
   // Залучення: MQA, конверсія й найсильніше джерело — якщо агрегати CRM приїхали
   const acq = extra.acquisition;
@@ -1081,7 +1224,7 @@ export function summarizeMonth(
     );
   }
 
-  if (r.hasYearAgo) {
+  if (hasLtvMonth && r.hasYearAgo) {
     const yoy = delta(t.revenue, r.yearAgoTotals.revenue);
     if (yoy.pct !== null) {
       out.push(

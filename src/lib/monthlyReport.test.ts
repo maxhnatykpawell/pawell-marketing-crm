@@ -4,6 +4,7 @@ import {
   computeMonthTotals, buildTrend, computeMovements, topClients,
   delta, formatPct, computeMonthSpend, monthlyReportToCsv, buildMonthlyReport, summarizeMonth,
   computeRetention, computeAcquisition, computeSources, groupSources, judgeLtvToCac, SourceStat,
+  computeCoverage, monthProgress, sameSpanPrevMonth, dayLabel,
 } from './monthlyReport';
 import { ClientRecord } from './clientAnalytics';
 
@@ -43,6 +44,33 @@ console.log('\nМісяці');
   check('межі місяця', monthBounds('2026-08'), { from: '2026-08-01', to: '2026-08-31' });
   check('лютий у високосному', monthBounds('2024-02'), { from: '2024-02-01', to: '2024-02-29' });
   check('лютий у звичайному', monthBounds('2026-02'), { from: '2026-02-01', to: '2026-02-28' });
+}
+
+console.log('\nМісяць, що триває');
+{
+  check('дата словами', dayLabel('2026-09-28'), '28 вересня 2026');
+  check('сміття лишається як є', dayLabel('нема'), 'нема');
+
+  // 28 вересня: звіт за вересень має бути, але станом на 28-ме
+  const cur = monthProgress('2026-09', new Date('2026-09-28T10:00:00Z'));
+  check('станом на сьогодні', cur.asOf, '2026-09-28');
+  check('минуло днів', [cur.daysElapsed, cur.daysInMonth], [28, 30]);
+  check('місяць триває', cur.partial, true);
+
+  const closed = monthProgress('2026-08', new Date('2026-09-28T10:00:00Z'));
+  check('закритий місяць — станом на кінець', closed.asOf, '2026-08-31');
+  check('закритий місяць повний', [closed.partial, closed.daysElapsed], [false, 31]);
+
+  // Останній день місяця вже вважається закритим
+  const lastDay = monthProgress('2026-09', new Date('2026-09-30T23:00:00Z'));
+  check('останній день закриває місяць', [lastDay.partial, lastDay.asOf], [false, '2026-09-30']);
+
+  // Рівний відрізок попереднього місяця — чесна база для неповного
+  check('той самий відрізок місяць тому',
+    sameSpanPrevMonth('2026-09', '2026-09-28'), { from: '2026-08-01', to: '2026-08-28' });
+  // У лютому менше днів, ніж у березні — відрізок обрізається
+  check('короткий попередній місяць',
+    sameSpanPrevMonth('2026-03', '2026-03-31'), { from: '2026-02-01', to: '2026-02-28' });
 }
 
 console.log('\nПерша активність');
@@ -304,6 +332,36 @@ console.log('\nЗалучення, MQA і конверсія');
     maturityDays: 14, now: new Date('2026-09-05T12:00:00Z'),
   });
   check('свіжий місяць не дозрів', fresh.mature, false);
+}
+
+console.log('\nПокриття місяця знімками CRM');
+{
+  const day = (d: string, syncedAt?: string) => ({ date: d, lastSyncedAt: syncedAt });
+  const august = (dates: string[]) => dates.map(d => day(`2026-08-${d}`));
+
+  // Повний серпень — 31 знімок
+  const all = Array.from({ length: 31 }, (_, i) => day(`2026-08-${String(i + 1).padStart(2, '0')}`, '2026-09-01T03:00:00Z'));
+  const full = computeCoverage('2026-08', all, new Date('2026-09-28T12:00:00Z'));
+  check('повний місяць', [full.presentDays, full.expectedDays, full.complete], [31, 31, true]);
+  check('останній знімок', full.lastSyncedAt, '2026-09-01T03:00:00Z');
+
+  // Синхронізація почалась із середини місяця — саме той випадок, коли суми вдвічі менші
+  const half = computeCoverage('2026-08', all.slice(15), new Date('2026-09-28T12:00:00Z'));
+  check('половина днів', half.presentDays, 16);
+  check('покриття у відсотках', half.percent, 52);
+  check('місяць неповний', half.complete, false);
+  check('перша пропущена дата', half.missingDays[0], '2026-08-01');
+  check('кількість пропущених', half.missingDays.length, 15);
+
+  // Поточний місяць: дні, які ще не настали, пропущеними не рахуються
+  const current = computeCoverage('2026-09', august([]).concat(
+    Array.from({ length: 10 }, (_, i) => day(`2026-09-${String(i + 1).padStart(2, '0')}`)),
+  ), new Date('2026-09-10T12:00:00Z'));
+  check('поточний місяць — до сьогодні', [current.expectedDays, current.presentDays, current.complete], [10, 10, true]);
+
+  const none = computeCoverage('2026-08', [], new Date('2026-09-28T12:00:00Z'));
+  check('жодного знімка', [none.presentDays, none.percent], [0, 0]);
+  check('без знімків дати синхронізації немає', none.lastSyncedAt, null);
 }
 
 console.log('\nГрупування джерел для кільця');

@@ -15,6 +15,7 @@ import {
   AcquisitionInput, AcquisitionStats, SourceStat,
   buildMonthlyReport, computeMonthSpend, computeAcquisition, groupSources,
   monthlyReportToCsv, summarizeMonth, judgeLtvToCac, LTV_TO_CAC_HINTS,
+  computeCoverage, monthProgress, sameSpanPrevMonth, dayLabel,
   monthLabel, monthLabelIn, monthBounds, shiftMonth, currentMonth, lastClosedMonth,
   availableMonths, delta, formatPct,
 } from '../lib/monthlyReport';
@@ -179,7 +180,14 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
   const oldest = months[months.length - 1] ?? null;
 
   const thisMonth = currentMonth();
-  const incomplete = month >= thisMonth;
+
+  /**
+   * Місяць, що триває, — це нормальний запит: звіт дивляться 28-го, щоб
+   * побачити, з чим закриваються. Тому замість «місяць не закінчився» звіт
+   * скрізь підписаний датою: станом на 28 вересня.
+   */
+  const progress = useMemo(() => monthProgress(month), [month]);
+  const incomplete = progress.partial;
 
   const t = report.totals;
   const p = report.prevTotals;
@@ -191,14 +199,28 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
     рахується «стільки ж днів поспіль», і для 30-денного місяця базою став би
     хвіст попереднього, а не сам попередній місяць.
   */
-  const [acqRaw, setAcqRaw] = useState<{ month: string; current: AcquisitionInput; prev: AcquisitionInput | null } | null>(null);
+  const [acqRaw, setAcqRaw] = useState<{
+    month: string;
+    current: AcquisitionInput;
+    prev: AcquisitionInput | null;
+    /** Добові знімки місяця — з них рахується покриття */
+    entries: { date: string; lastSyncedAt?: string }[];
+  } | null>(null);
   const [acqLoading, setAcqLoading] = useState(true);
   const [acqError, setAcqError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    const bounds = monthBounds(month);
-    const prevBounds = monthBounds(shiftMonth(month, -1));
+    /*
+      Для місяця, що триває, беремо дані до сьогодні, а базою — той самий
+      відрізок попереднього місяця: 28 днів вересня проти 28 днів серпня.
+      Інакше кожен звіт, зроблений до кінця місяця, показував би падіння,
+      якого немає.
+    */
+    const bounds = { from: monthBounds(month).from, to: progress.asOf };
+    const prevBounds = progress.partial
+      ? sameSpanPrevMonth(month, progress.asOf)
+      : monthBounds(shiftMonth(month, -1));
 
     setAcqLoading(true);
     setAcqError(null);
@@ -209,7 +231,12 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
           getKeepInCRMHistory(prevBounds.from, prevBounds.to, false),
         ]);
         if (cancelled) return;
-        setAcqRaw({ month, current: cur.aggregated, prev: prev.aggregated });
+        setAcqRaw({
+          month,
+          current: cur.aggregated,
+          prev: prev.aggregated,
+          entries: (cur.entries ?? []).map(e => ({ date: e.date, lastSyncedAt: e.lastSyncedAt })),
+        });
       } catch (e: any) {
         if (!cancelled) setAcqError(e.message || 'Не вдалось завантажити дані залучення');
       } finally {
@@ -217,13 +244,38 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
       }
     })();
     return () => { cancelled = true; };
-  }, [month]);
+  }, [month, progress.asOf, progress.partial]);
 
   const acquisition = useMemo<AcquisitionStats | null>(() => {
     // Дані попереднього місяця ще на льоту — не показуємо чужі числа під новою назвою
     if (!acqRaw || acqRaw.month !== month) return null;
     return computeAcquisition(acqRaw.current, acqRaw.prev, month, { maturityDays: COHORT_MATURITY_DAYS });
   }, [acqRaw, month]);
+
+  /**
+   * Скільки добових знімків місяця реально є в базі.
+   *
+   * Сервер, збираючи період, мовчки пропускає дні, яких немає, — і місяць із
+   * пропусками виглядає як повний, просто з меншими сумами. Саме тут беруться
+   * розбіжності з дашбордом: там дивляться свіжі дні, які синхронізувались
+   * щойно, а тут — увесь місяць разом із його дірками.
+   */
+  const coverage = useMemo(
+    () => (acqRaw && acqRaw.month === month ? computeCoverage(month, acqRaw.entries) : null),
+    [acqRaw, month],
+  );
+
+  /**
+   * Чи є за цей місяць помісячні суми LTV.
+   *
+   * Від них залежать дохід, угоди, рух клієнтів і утримання — і лише вони.
+   * Залучення, конверсія й джерела приходять із добових зрізів CRM і живуть
+   * своїм життям, тож відсутність одного не має ховати друге.
+   */
+  const hasLtvMonth = report.totals.clients > 0;
+
+  /** Чи має CRM бодай щось за цей місяць — щоб відрізнити «ще не порахували» від «не було» */
+  const hasCrmDeals = !!acquisition && (acquisition.acquired > 0 || (acquisition.agreements ?? 0) > 0);
 
   /** Джерела для кільця: п'ять найбільших і «Інші» */
   const donutSources = useMemo(
@@ -300,7 +352,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
 
   const printDoc = useReactToPrint({
     contentRef: docRef,
-    documentTitle: `Місячний звіт — ${month}`,
+    documentTitle: `Місячний звіт — ${month}${progress.partial ? ` (станом на ${progress.asOf})` : ""}`,
     onAfterPrint: () => setPreparingPdf(false),
     onPrintError: () => setPreparingPdf(false),
   });
@@ -329,11 +381,18 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
             <div className="min-w-0">
               <h2 className="text-lg font-black text-gray-900 leading-tight">
                 Місячний звіт · {monthLabel(month)}
+                {progress.partial && (
+                  <span className="text-gray-400 font-bold"> · станом на {dayLabel(progress.asOf)}</span>
+                )}
               </h2>
               <p className="text-xs text-gray-500">
                 {loading
                   ? 'Завантаження клієнтів…'
-                  : <>по всій базі ({num(report.totalClients)} клієнтів) · порівняння з {monthLabelIn(report.prevMonth)} · фільтри аналітики не застосовуються</>}
+                  : <>
+                      по всій базі ({num(report.totalClients)} клієнтів)
+                      {' · '}база порівняння: {monthLabel(report.prevMonth)}
+                      {' · '}фільтри аналітики не застосовуються
+                    </>}
               </p>
             </div>
           </div>
@@ -424,32 +483,73 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
         </div>
       )}
 
+      {/*
+        Місяць, що триває, — не привід ховати звіт, а привід підписати його датою.
+        Тут же сказано, що з чим порівнюється: помісячні суми LTV живуть цілими
+        місяцями, тож дохід і угоди зіставляються з повним попереднім місяцем, а
+        залучення з CRM — з рівним відрізком, бо там дані добові.
+      */}
       {!loading && incomplete && clients.length > 0 && (
         <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 flex items-start gap-2 text-xs text-blue-800">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <CalendarRange className="w-4 h-4 flex-shrink-0 mt-0.5" />
           <span>
-            {monthLabel(month)} ще не закінчився — числа неповні, і порівняння
-            з {monthLabelIn(report.prevMonth)} занижене. Для підписаного звіту беріть закритий місяць.
+            Звіт станом на <strong>{dayLabel(progress.asOf)}</strong> — минуло{' '}
+            {num(progress.daysElapsed)} із {num(progress.daysInMonth)}{' '}
+            {pluralUk(progress.daysInMonth, 'дня', 'днів', 'днів')} місяця.
+            {' '}Дохід, угоди й утримання порівнюються з <strong>повним {monthLabel(report.prevMonth).toLowerCase()}</strong>{' '}
+            (помісячні суми інакше не діляться), тож ці зміни занижені.
+            {' '}MQA, конверсія й джерела — з рівним відрізком{' '}
+            <strong>1–{dayLabel(sameSpanPrevMonth(month, progress.asOf).to)}</strong>.
           </span>
         </div>
       )}
 
+      {/*
+        Помісячні суми LTV перераховуються окремою синхронізацією і за поточний
+        місяць зазвичай відстають. Раніше це ховало ВЕСЬ звіт під написом «немає
+        жодної угоди» — хоча добові дані CRM за цей самий місяць уже є. Тепер
+        порожня тут лише та частина, яка справді залежить від знімка LTV, і
+        сказано, чому вона порожня.
+      */}
       {!loading && report.hasMonthlyStats && t.clients === 0 && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-6 py-10 text-center">
-          <p className="text-sm text-gray-500">
-            За {monthLabelIn(month)} у базі немає жодної угоди.
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-6 py-6">
+          <p className="text-sm font-semibold text-gray-700">
+            {/* Поки CRM не відповіла, «угод немає» — ще не факт, а здогад */}
+            {acqLoading
+              ? <>Помісячних сум LTV за {monthLabel(month).toLowerCase()} ще немає — перевіряємо дані CRM…</>
+              : hasCrmDeals
+                ? <>Помісячних сум LTV за {monthLabel(month).toLowerCase()} ще немає — дохід, угоди й утримання нижче порожні.</>
+                : <>За {monthLabel(month).toLowerCase()} станом на {dayLabel(progress.asOf)} у базі немає жодної угоди.</>}
           </p>
-          {oldest && newest && (
-            <p className="text-xs text-gray-400 mt-1">
-              Дані є за {monthLabel(oldest)} — {monthLabel(newest)}.
-            </p>
-          )}
+          <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
+            {hasCrmDeals && <>
+              Ці числа рахуються зі знімка LTV, а він перераховується окремо — запустіть
+              синхронізацію LTV на головній, і блоки заповняться.
+              {' '}Залучення, конверсія й джерела нижче беруться з добових зрізів CRM і вже доступні:
+              за цей місяць у CRM {num(acquisition?.agreements ?? 0)}{' '}
+              {pluralUk(acquisition?.agreements ?? 0, 'угода', 'угоди', 'угод')}
+              {acquisition?.agreementsSum ? ` на ${uah(acquisition.agreementsSum)}` : ''}.
+            </>}
+            {!hasCrmDeals && oldest && newest && <>Дані є за {monthLabel(oldest)} — {monthLabel(newest)}.</>}
+            {snapshot?.lastSyncedAt && (
+              <> Останній перерахунок LTV: {new Date(snapshot.lastSyncedAt).toLocaleString('uk-UA', {
+                day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+              })}.</>
+            )}
+          </p>
         </div>
       )}
 
-      {!loading && t.clients > 0 && (
+      {/*
+        Звіт малюється, якщо є бодай одне джерело даних: помісячні суми LTV або
+        добові зрізи CRM. Блоки всередині самі знають, від чого залежать.
+      */}
+      {!loading && (hasLtvMonth || !!acquisition || acqLoading) && (
         <>
-          {/* ── Коротко ──────────────────────────────────────────────────── */}
+          {/* ── Коротко ────────────────────────────────────────────────────
+              Поки CRM не відповіла і помісячних сум немає, підсумовувати нічого:
+              єдиний рядок, який вийшов би, — «угод немає», а це ще не факт. */}
+          {(hasLtvMonth || !!acquisition) && (
           <Card
             title="Коротко про місяць"
             hint="Ті самі числа, що в таблицях нижче, прочитані вголос — щоб усі читали їх однаково."
@@ -463,7 +563,9 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
               ))}
             </ul>
           </Card>
+          )}
 
+          {hasLtvMonth && (<>
           {/* ── Показники ────────────────────────────────────────────────── */}
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
             {[
@@ -476,6 +578,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
               <Metric key={m.label} label={m.label} value={m.value} pct={m.d.pct} note={m.note} />
             ))}
           </div>
+          </>)}
 
           {/* ── Залучення і утримання ────────────────────────────────────
               Другий ряд показників, а не шість карток у першому: дохід — це
@@ -535,6 +638,27 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
             </div>
           )}
 
+          {/*
+            Неповне покриття — найчастіша причина, чому місячна сума не сходиться
+            з дашбордом. Мовчати про це не можна: число виглядає остаточним, а
+            насправді в ньому бракує днів.
+          */}
+          {coverage && !coverage.complete && (
+            <div className="bg-red-50 border border-red-100 rounded-xl px-4 py-2.5 flex items-start gap-2 text-xs text-red-800">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>
+                У базі лише <strong>{num(coverage.presentDays)} із {num(coverage.expectedDays)}</strong>{' '}
+                {pluralUk(coverage.expectedDays, 'добового знімка', 'добових знімків', 'добових знімків')}{' '}
+                {monthLabelIn(month)} ({coverage.percent} %) — тому MQA, конверсія й суми по джерелах
+                за цей місяць занижені: дні без знімка сервер просто пропускає.
+                {coverage.missingDays.length <= 5
+                  ? ` Бракує: ${coverage.missingDays.join(', ')}.`
+                  : ` Бракує ${num(coverage.missingDays.length)} днів, зокрема ${coverage.missingDays.slice(0, 3).join(', ')}…`}
+                {' '}Щоб добрати їх, запустіть синхронізацію історії на головній (кнопка доступна адміну).
+              </span>
+            </div>
+          )}
+
           {acquisition && !acquisition.mature && (
             <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-2.5 flex items-start gap-2 text-xs text-amber-800">
               <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
@@ -546,6 +670,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
             </div>
           )}
 
+          {hasLtvMonth && (<>
           {/* Рік тому — окремим рядком, а не шостою карткою: це інша база
               порівняння, і мішати її з «до минулого місяця» не можна. */}
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-3 flex flex-wrap items-center gap-3 text-sm">
@@ -566,7 +691,9 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
               </span>
             )}
           </div>
+          </>)}
 
+          {hasLtvMonth && (<>
           {/* ── Рух клієнтів ─────────────────────────────────────────────── */}
           <Card
             title="Рух клієнтів"
@@ -635,7 +762,9 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
               )}
             </div>
           </Card>
+          </>)}
 
+          {hasLtvMonth && (<>
           {/* ── Нові та постійні ─────────────────────────────────────────── */}
           <Card
             title="Нові та постійні"
@@ -693,6 +822,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
               </table>
             </div>
           </Card>
+          </>)}
 
           {/* ── Динаміка ─────────────────────────────────────────────────── */}
           <Card
@@ -766,7 +896,9 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
           {/* ── Джерела ───────────────────────────────────────────────────── */}
           <Card
             title="Яке джерело скільки принесло"
-            hint={<>Сума угод місяця по джерелах з CRM. Кільце — частки, точні числа в таблиці:
+            hint={<>Сума угод місяця по джерелах з CRM — з {coverage ? num(coverage.presentDays) : '…'}{' '}
+              {pluralUk(coverage?.presentDays ?? 0, 'добового знімка', 'добових знімків', 'добових знімків')}{' '}
+              за {num(coverage?.expectedDays ?? 0)}. Кільце — частки, точні числа в таблиці:
               на кільці їх не читають, і воно не для цього.
               {acquisition && acquisition.sources.length > donutSources.length &&
                 ` Джерел ${num(acquisition.sources.length)}; у кільці п'ять найбільших, решта — «Інші».`}</>}
@@ -982,6 +1114,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
           </Card>
           )}
 
+          {hasLtvMonth && (<>
           {/* ── Найбільші клієнти ────────────────────────────────────────── */}
           <Card
             title="Найбільші клієнти місяця"
@@ -1038,7 +1171,9 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
               </table>
             </div>
           </Card>
+          </>)}
 
+          {hasLtvMonth && (<>
           {/* ── Перестали купувати ───────────────────────────────────────── */}
           <Card
             title="Перестали купувати"
@@ -1082,6 +1217,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
               </div>
             )}
           </Card>
+          </>)}
         </>
       )}
     </div>
@@ -1098,7 +1234,8 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
           spend={spend}
           acquisition={acquisition}
           sources={donutSources}
-          incomplete={incomplete}
+          coverage={coverage}
+          progress={progress}
         />
       </div>
     )}

@@ -1,8 +1,8 @@
 import React from 'react';
 import {
   MonthlyReport, MonthSpend, MonthTotals, MovementKind, MOVEMENT_LABELS,
-  AcquisitionStats, SourceStat,
-  monthLabel, monthLabelIn, delta, formatPct, summarizeMonth,
+  AcquisitionStats, SourceStat, MonthCoverage, MonthProgress,
+  monthLabel, monthLabelIn, dayLabel, delta, formatPct, summarizeMonth,
   judgeLtvToCac, LTV_TO_CAC_HINTS,
 } from '../lib/monthlyReport';
 import { pluralUk } from '../lib/plural';
@@ -46,14 +46,16 @@ export interface MonthlyReportDocProps {
   spend: MonthSpend | null;
   /** Залучення з CRM: MQA, конверсія, джерела; null — дані не приїхали */
   acquisition: AcquisitionStats | null;
+  /** Покриття місяця добовими знімками CRM; null — дані не приїхали */
+  coverage: MonthCoverage | null;
   /** Джерела, вже згорнуті до шести — ті самі, що на екрані */
   sources: SourceStat[];
-  /** Чи звітний місяць ще не закінчився — тоді числа неповні, і це має бути написано */
-  incomplete: boolean;
+  /** Де саме місяць: закінчився чи триває, і станом на яке число */
+  progress: MonthProgress | null;
 }
 
 export default function MonthlyReportDoc({
-  report: r, spend, acquisition, sources, incomplete,
+  report: r, spend, acquisition, sources, coverage, progress,
 }: MonthlyReportDocProps) {
   const generatedAt = new Date().toLocaleString('uk-UA', {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -76,7 +78,12 @@ export default function MonthlyReportDoc({
       <header className="border-b-4 border-purple-600 pb-3">
         <div className="flex items-end justify-between gap-6">
           <div>
-            <h1 className="text-[22px] font-black leading-tight">Місячний звіт · {title}</h1>
+            <h1 className="text-[22px] font-black leading-tight">
+              Місячний звіт · {title}
+              {progress?.partial && (
+                <span className="text-[13px] text-gray-500 font-bold"> · станом на {dayLabel(progress.asOf)}</span>
+              )}
+            </h1>
             <p className="text-[10px] text-gray-600 mt-0.5">
               PAWELL · сформовано {generatedAt}
             </p>
@@ -100,14 +107,35 @@ export default function MonthlyReportDoc({
           {' '}Дохід і угоди беруться з помісячних сум знімка LTV.
         </p>
 
-        {incomplete && (
+        {/*
+          Місяць, що триває, підписаний датою, а не попередженням «не закінчився»:
+          такий звіт роблять свідомо — 28-го, щоб побачити, з чим закриваються.
+          Сказати треба інше: станом на яке число числа, і що з чим порівняне.
+        */}
+        {progress?.partial && (
           <p className="text-[9px] text-amber-700 mt-1 font-semibold">
-            ⚠ Місяць ще не закінчився — числа неповні й порівняння з {prevIn} занижене.
+            ⚠ Місяць ще триває: числа станом на {dayLabel(progress.asOf)} — минуло{' '}
+            {num(progress.daysElapsed)} із {num(progress.daysInMonth)} днів. Дохід, угоди й
+            утримання зіставлені з повним {monthLabel(r.prevMonth).toLowerCase()}, тож ці зміни
+            занижені; MQA, конверсія й джерела — з рівним відрізком попереднього місяця.
           </p>
         )}
         {!r.hasMonthlyStats && (
           <p className="text-[9px] text-red-700 mt-1 font-semibold">
             ⚠ У знімку немає сум по місяцях — звіт порожній. Перезапустіть синхронізацію LTV.
+          </p>
+        )}
+        {/*
+          Неповне покриття мусить стояти на першій сторінці, поруч із періодом:
+          документ ходить окремо від екрана, і читач інакше не дізнається, що в
+          сумах з CRM бракує днів.
+        */}
+        {coverage && !coverage.complete && (
+          <p className="text-[9px] text-red-700 mt-1 font-semibold">
+            ⚠ У базі лише {num(coverage.presentDays)} із {num(coverage.expectedDays)} добових знімків
+            CRM за цей місяць ({coverage.percent} %) — MQA, конверсія й суми по джерелах занижені:
+            дні без знімка не потрапляють у підсумок. Показники з помісячних сум LTV
+            (дохід, угоди, клієнти, утримання) від цього не залежать.
           </p>
         )}
       </header>
@@ -533,7 +561,7 @@ export default function MonthlyReportDoc({
       </Section>
 
       <footer className="mt-6 pt-2 border-t border-gray-300 text-[8px] text-gray-500">
-        PAWELL · Місячний звіт · {title} · сформовано {generatedAt}
+        PAWELL · Місячний звіт · {title}{progress?.partial ? ` · станом на ${dayLabel(progress.asOf)}` : ''} · сформовано {generatedAt}
       </footer>
     </div>
   );
