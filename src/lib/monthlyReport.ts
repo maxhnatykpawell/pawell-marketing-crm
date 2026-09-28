@@ -538,7 +538,7 @@ export function buildMonthlyReport(
   };
 }
 
-// ── Залучення: MQA, конверсія, канали ─────────────────────────────────────────
+// ── Залучення: MQA, конверсія, джерела ─────────────────────────────────────────
 
 /**
  * Агрегати залучення за місяць — те, що віддає /api/keepincrm/history.
@@ -573,25 +573,25 @@ export interface AcquisitionInput {
 }
 
 /**
- * Канал: скільки приніс і скільки привів.
+ * Джерело: скільки принесло і скільки привело.
  *
- * Дохід — сума угод каналу за місяць (з CRM), а не дохід клієнтів каналу за весь
+ * Дохід — сума угод джерела за місяць (з CRM), а не дохід клієнтів джерела за весь
  * час: місячний звіт говорить про місяць. Клієнти — когортні: залучені цього
  * місяця й уже конвертовані, тобто той самий набір, на який рахується CAC.
  */
-export interface ChannelStat {
+export interface SourceStat {
   source: string;
-  /** Сума угод каналу за місяць, грн */
+  /** Сума угод джерела за місяць, грн */
   revenue: number;
   /** Кількість угод */
   deals: number;
-  /** Клієнти когорти місяця з цього каналу (MQA каналу) */
+  /** Клієнти когорти місяця з цього джерела (MQA джерела) */
   clients: number;
-  /** Усі залучені записи каналу */
+  /** Усі залучені записи джерела */
   acquired: number;
   /** Частка в доході місяця, % */
   revenueShare: number;
-  /** Конверсія каналу: clients ÷ acquired, %; null — залучених не було */
+  /** Конверсія джерела: clients ÷ acquired, %; null — залучених не було */
   conversion: number | null;
 }
 
@@ -611,9 +611,9 @@ export interface AcquisitionStats {
   /** Угоди місяця з CRM — окреме число від угод у помісячних сумах LTV */
   agreements: number | null;
   agreementsSum: number | null;
-  channels: ChannelStat[];
-  /** Сума по каналах — база для часток у кільцевій діаграмі */
-  channelsRevenue: number;
+  sources: SourceStat[];
+  /** Сума по джерелах — база для часток у кільцевій діаграмі */
+  sourcesRevenue: number;
   /**
    * Чи дозріла когорта місяця. Свіжі ліди не встигли конвертнутись, тому в
    * недозрілому місяці і MQA, і конверсія занижені, а CAC завищений.
@@ -622,10 +622,10 @@ export interface AcquisitionStats {
 }
 
 /**
- * З двох написань того самого каналу лишаємо людське.
+ * З двох написань того самого джерела лишаємо людське.
  *
  * В угодах джерело приходить машинним («meta_ads»), у клієнтах — таким, як його
- * пишуть люди («Meta Ads»). Зводяться вони в один канал, але в таблицю й на
+ * пишуть люди («Meta Ads»). Зводяться вони в одне джерело, але в таблицю й на
  * кільце має піти те написання, яке читач бачить у CRM і в витратах.
  */
 function nicerSourceName(a: string, b: string): string {
@@ -635,11 +635,11 @@ function nicerSourceName(a: string, b: string): string {
   return a;
 }
 
-/** Зводить назви каналів до порівнюваного вигляду й складає три джерела в одне */
-export function computeChannels(agg: AcquisitionInput): ChannelStat[] {
-  const byKey = new Map<string, ChannelStat>();
+/** Зводить назви джерел до порівнюваного вигляду й складає три джерела в одне */
+export function computeSources(agg: AcquisitionInput): SourceStat[] {
+  const byKey = new Map<string, SourceStat>();
 
-  const touch = (source: string): ChannelStat => {
+  const touch = (source: string): SourceStat => {
     const key = normalizeSource(source) || source;
     let hit = byKey.get(key);
     if (!hit) {
@@ -698,7 +698,7 @@ export function computeAcquisition(
   const acquired = acquiredOf(current);
   const conversion = convOf(current);
   const prevConversion = prev ? convOf(prev) : null;
-  const channels = computeChannels(current);
+  const sources = computeSources(current);
 
   return {
     month,
@@ -713,30 +713,30 @@ export function computeAcquisition(
       conversion !== null && prevConversion !== null ? pctChange(conversion, prevConversion) : null,
     agreements: current.totalAgreements ?? null,
     agreementsSum: current.totalAgreementsSum ?? null,
-    channels,
-    channelsRevenue: channels.reduce((s, c) => s + c.revenue, 0),
+    sources,
+    sourcesRevenue: sources.reduce((s, c) => s + c.revenue, 0),
     mature: isMonthMature(month, opts.maturityDays, opts.now),
   };
 }
 
 /**
- * Канали для кільцевої діаграми: найбільші окремо, решта — одним сегментом.
+ * Джерела для кільцевої діаграми: найбільші окремо, решта — одним сегментом.
  *
  * Шість сегментів — межа, за якою частки на кільці перестають читатись, а сьомий
  * колір довелось би вигадувати. Тому хвіст згортається в «Інші», а точні числа
  * лишаються в таблиці поруч.
  */
-export const OTHER_CHANNEL = 'Інші';
+export const OTHER_SOURCE = 'Інші';
 
-export function groupChannels(channels: ChannelStat[], limit = 5): ChannelStat[] {
-  const withRevenue = channels.filter(c => c.revenue > 0);
+export function groupSources(sources: SourceStat[], limit = 5): SourceStat[] {
+  const withRevenue = sources.filter(c => c.revenue > 0);
   if (withRevenue.length <= limit + 1) return withRevenue;
 
   const head = withRevenue.slice(0, limit);
   const tail = withRevenue.slice(limit);
 
-  const other: ChannelStat = {
-    source: OTHER_CHANNEL,
+  const other: SourceStat = {
+    source: OTHER_SOURCE,
     revenue: tail.reduce((s, c) => s + c.revenue, 0),
     deals: tail.reduce((s, c) => s + c.deals, 0),
     clients: tail.reduce((s, c) => s + c.clients, 0),
@@ -837,7 +837,7 @@ export interface MonthSpend {
   /** Який саме LTV узято в співвідношення — щоб число можна було перевірити */
   ltvBasis: 'LTV 12 міс' | 'ARPU' | null;
   ltv: number | null;
-  /** CAC по каналах — лише там, де зійшлись і витрати, і клієнти */
+  /** CAC по джерелах — лише там, де зійшлись і витрати, і клієнти */
   bySource: SourceCacResult | null;
 }
 
@@ -863,7 +863,7 @@ export interface SpendBasis {
   /** LTV клієнта для співвідношення LTV/CAC */
   ltv?: number | null;
   ltvBasis?: MonthSpend['ltvBasis'];
-  /** Клієнти по каналах — щоб порахувати CAC по кожному */
+  /** Клієнти по джерелах — щоб порахувати CAC по кожному */
   clientsBySource?: SourceCount[];
 }
 
@@ -1044,7 +1044,7 @@ export function summarizeMonth(
     );
   }
 
-  // Залучення: MQA, конверсія й найсильніший канал — якщо агрегати CRM приїхали
+  // Залучення: MQA, конверсія й найсильніше джерело — якщо агрегати CRM приїхали
   const acq = extra.acquisition;
   if (acq && acq.acquired > 0) {
     const conv = acq.conversion !== null ? `, конверсія в клієнта ${pct(acq.conversion)}` : '';
@@ -1053,11 +1053,11 @@ export function summarizeMonth(
       `Залучено ${num(acq.acquired)} записів, з них стали клієнтами ${num(acq.mqa)} (MQA)${conv}.` +
       notMature,
     );
-    const top = acq.channels.find(c => c.revenue > 0);
+    const top = acq.sources.find(c => c.revenue > 0);
     if (top) {
       out.push(
-        `Найбільше приніс канал «${top.source}» — ${uah(top.revenue)} ` +
-        `(${top.revenueShare} % від суми угод по каналах).`,
+        `Найбільше принесло джерело «${top.source}» — ${uah(top.revenue)} ` +
+        `(${top.revenueShare} % від суми угод по джерелах).`,
       );
     }
   }

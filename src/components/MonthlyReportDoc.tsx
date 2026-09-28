@@ -1,13 +1,13 @@
 import React from 'react';
 import {
   MonthlyReport, MonthSpend, MonthTotals, MovementKind, MOVEMENT_LABELS,
-  AcquisitionStats, ChannelStat,
+  AcquisitionStats, SourceStat,
   monthLabel, monthLabelIn, delta, formatPct, summarizeMonth,
   judgeLtvToCac, LTV_TO_CAC_HINTS,
 } from '../lib/monthlyReport';
 import { pluralUk } from '../lib/plural';
 import { Section, TH, TD, Kpi, uah, num } from './report/primitives';
-import Donut, { channelColor } from './report/Donut';
+import Donut, { sourceColor } from './report/Donut';
 
 /**
  * Друкований місячний звіт.
@@ -44,16 +44,16 @@ export interface MonthlyReportDocProps {
   report: MonthlyReport;
   /** Витрати місяця; null — витрат немає або немає доступу, розділ «Гроші» пропускаємо */
   spend: MonthSpend | null;
-  /** Залучення з CRM: MQA, конверсія, канали; null — дані не приїхали */
+  /** Залучення з CRM: MQA, конверсія, джерела; null — дані не приїхали */
   acquisition: AcquisitionStats | null;
-  /** Канали, вже згорнуті до шести — ті самі, що на екрані */
-  channels: ChannelStat[];
+  /** Джерела, вже згорнуті до шести — ті самі, що на екрані */
+  sources: SourceStat[];
   /** Чи звітний місяць ще не закінчився — тоді числа неповні, і це має бути написано */
   incomplete: boolean;
 }
 
 export default function MonthlyReportDoc({
-  report: r, spend, acquisition, channels, incomplete,
+  report: r, spend, acquisition, sources, incomplete,
 }: MonthlyReportDocProps) {
   const generatedAt = new Date().toLocaleString('uk-UA', {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -303,14 +303,14 @@ export default function MonthlyReportDoc({
         </table>
       </Section>
 
-      {/* ── Канали ────────────────────────────────────────────────────────── */}
+      {/* ── Джерела ────────────────────────────────────────────────────────── */}
       {acquisition && (
         <Section
-          title="Який канал скільки приніс"
-          hint={<>Сума угод місяця по джерелах з CRM. У кільці п'ять найбільших каналів,
+          title="Яке джерело скільки принесло"
+          hint={<>Сума угод місяця по джерелах з CRM. У кільці п'ять найбільших джерел,
             решта — «Інші»; повний перелік у таблиці.</>}
         >
-          {channels.length === 0 ? (
+          {sources.length === 0 ? (
             <p className="text-[10px] text-gray-500 italic">
               За {monthLabelIn(r.month)} CRM не повернула угод по джерелах.
             </p>
@@ -318,12 +318,12 @@ export default function MonthlyReportDoc({
             <div className="flex gap-4 items-start">
               <div className="flex-shrink-0 flex flex-col items-center gap-1">
                 <Donut
-                  slices={channels.map((c, i) => ({
+                  slices={sources.map((c, i) => ({
                     label: c.source,
                     value: c.revenue,
-                    color: channelColor(i, c.source),
+                    color: sourceColor(i, c.source),
                   }))}
-                  centerValue={uah(acquisition.channelsRevenue)}
+                  centerValue={uah(acquisition.sourcesRevenue)}
                   centerLabel="сума угод"
                   size={150}
                   thickness={20}
@@ -331,11 +331,11 @@ export default function MonthlyReportDoc({
                 {/* Легенда під кільцем: у документі підказок немає, тож колір без
                     підпису лишився б загадкою */}
                 <div className="flex flex-col gap-0.5">
-                  {channels.map((c, i) => (
+                  {sources.map((c, i) => (
                     <span key={c.source} className="flex items-center gap-1 text-[7.5px] text-gray-700 whitespace-nowrap">
                       <span
                         className="inline-block w-1.5 h-1.5 rounded-sm"
-                        style={{ backgroundColor: channelColor(i, c.source) }}
+                        style={{ backgroundColor: sourceColor(i, c.source) }}
                       />
                       {c.source} · {c.revenueShare} %
                     </span>
@@ -346,7 +346,7 @@ export default function MonthlyReportDoc({
               <table className="w-full border-collapse">
                 <thead>
                   <tr>
-                    <TH>Канал</TH>
+                    <TH>Джерело</TH>
                     <TH align="right">Сума угод</TH>
                     <TH align="right">Частка</TH>
                     <TH align="right">Угод</TH>
@@ -357,7 +357,7 @@ export default function MonthlyReportDoc({
                   </tr>
                 </thead>
                 <tbody>
-                  {acquisition.channels.map(c => {
+                  {acquisition.sources.map(c => {
                     const sourceCac = spend?.bySource?.matched.find(
                       m => m.source.toLowerCase() === c.source.toLowerCase(),
                     );

@@ -12,14 +12,14 @@ import { DEFAULT_CURRENCY_RATES, COHORT_MATURITY_DAYS } from '../lib/cac';
 import { pluralUk } from '../lib/plural';
 import {
   MonthlyReport, MonthSpend, MonthTotals, MovementKind, MOVEMENT_LABELS,
-  AcquisitionInput, AcquisitionStats, ChannelStat,
-  buildMonthlyReport, computeMonthSpend, computeAcquisition, groupChannels,
+  AcquisitionInput, AcquisitionStats, SourceStat,
+  buildMonthlyReport, computeMonthSpend, computeAcquisition, groupSources,
   monthlyReportToCsv, summarizeMonth, judgeLtvToCac, LTV_TO_CAC_HINTS,
   monthLabel, monthLabelIn, monthBounds, shiftMonth, currentMonth, lastClosedMonth,
   availableMonths, delta, formatPct,
 } from '../lib/monthlyReport';
 import MonthlyReportDoc from './MonthlyReportDoc';
-import Donut, { channelColor } from './report/Donut';
+import Donut, { sourceColor } from './report/Donut';
 
 /**
  * Місячний звіт — окрема вкладка аналітики.
@@ -186,7 +186,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
 
   /*
     Залучення приходить не зі знімка LTV, а з добових зрізів CRM: MQA, конверсія
-    й канали — це когорта місяця, якої в помісячних сумах немає. Тягнемо два
+    й джерела — це когорта місяця, якої в помісячних сумах немає. Тягнемо два
     місяці окремими запитами, а не одним із `compare`: порівняння на сервері
     рахується «стільки ж днів поспіль», і для 30-денного місяця базою став би
     хвіст попереднього, а не сам попередній місяць.
@@ -225,9 +225,9 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
     return computeAcquisition(acqRaw.current, acqRaw.prev, month, { maturityDays: COHORT_MATURITY_DAYS });
   }, [acqRaw, month]);
 
-  /** Канали для кільця: п'ять найбільших і «Інші» */
-  const donutChannels = useMemo(
-    () => (acquisition ? groupChannels(acquisition.channels, 5) : []),
+  /** Джерела для кільця: п'ять найбільших і «Інші» */
+  const donutSources = useMemo(
+    () => (acquisition ? groupSources(acquisition.sources, 5) : []),
     [acquisition],
   );
 
@@ -529,7 +529,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
             <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-2.5 flex items-start gap-2 text-xs text-amber-800">
               <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
               <span>
-                Дані залучення з CRM не завантажились ({acqError}). MQA, конверсія й канали
+                Дані залучення з CRM не завантажились ({acqError}). MQA, конверсія й джерела
                 недоступні — решта звіту рахується з помісячних сум і не залежить від них.
               </span>
             </div>
@@ -763,47 +763,47 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
             </div>
           </Card>
 
-          {/* ── Канали ───────────────────────────────────────────────────── */}
+          {/* ── Джерела ───────────────────────────────────────────────────── */}
           <Card
-            title="Який канал скільки приніс"
+            title="Яке джерело скільки принесло"
             hint={<>Сума угод місяця по джерелах з CRM. Кільце — частки, точні числа в таблиці:
               на кільці їх не читають, і воно не для цього.
-              {acquisition && acquisition.channels.length > donutChannels.length &&
-                ` Каналів ${num(acquisition.channels.length)}; у кільці п'ять найбільших, решта — «Інші».`}</>}
+              {acquisition && acquisition.sources.length > donutSources.length &&
+                ` Джерел ${num(acquisition.sources.length)}; у кільці п'ять найбільших, решта — «Інші».`}</>}
           >
             {acqLoading ? (
               <div className="flex items-center gap-2 text-sm text-gray-400">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Завантаження даних по каналах…
+                Завантаження даних по джерелах…
               </div>
-            ) : !acquisition || donutChannels.length === 0 ? (
+            ) : !acquisition || donutSources.length === 0 ? (
               <p className="text-sm text-gray-400">
                 {acqError
-                  ? 'Дані по каналах недоступні — CRM не відповіла.'
+                  ? 'Дані по джерелах недоступні — CRM не відповіла.'
                   : `За ${monthLabelIn(month)} CRM не повернула угод по джерелах.`}
               </p>
             ) : (
               <div className="flex flex-col xl:flex-row gap-6 xl:items-start">
                 <div className="flex-shrink-0 flex flex-col items-center gap-3">
                   <Donut
-                    slices={donutChannels.map((c, i) => ({
+                    slices={donutSources.map((c, i) => ({
                       label: c.source,
                       value: c.revenue,
-                      color: channelColor(i, c.source),
+                      color: sourceColor(i, c.source),
                       hint: `${c.source}: ${uah(c.revenue)} · ${c.revenueShare} % · ${num(c.deals)} ${pluralUk(c.deals, 'угода', 'угоди', 'угод')}`,
                     }))}
-                    centerValue={uah(acquisition.channelsRevenue)}
+                    centerValue={uah(acquisition.sourcesRevenue)}
                     centerLabel="сума угод місяця"
                     size={220}
                   />
                   {/* Легенда обов'язкова: колір сам по собі ніколи не має
-                      залишатись єдиним носієм того, який це канал. */}
+                      залишатись єдиним носієм того, яке це джерело. */}
                   <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 max-w-[260px]">
-                    {donutChannels.map((c, i) => (
+                    {donutSources.map((c, i) => (
                       <span key={c.source} className="inline-flex items-center gap-1.5 text-[11px] text-gray-600">
                         <span
                           className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
-                          style={{ backgroundColor: channelColor(i, c.source) }}
+                          style={{ backgroundColor: sourceColor(i, c.source) }}
                         />
                         {c.source} · {c.revenueShare} %
                       </span>
@@ -815,7 +815,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="border-b border-gray-200">
-                        <Th>Канал</Th>
+                        <Th>Джерело</Th>
                         <Th align="right">Сума угод</Th>
                         <Th align="right">Частка</Th>
                         <Th align="right">Угод</Th>
@@ -826,8 +826,8 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {acquisition.channels.map((c: ChannelStat, i) => {
-                        // CAC по каналу є лише там, де зійшлись і витрати, і клієнти
+                      {acquisition.sources.map((c: SourceStat, i) => {
+                        // CAC по джерелу є лише там, де зійшлись і витрати, і клієнти
                         const sourceCac = spend?.bySource?.matched.find(
                           m => m.source.toLowerCase() === c.source.toLowerCase(),
                         );
@@ -837,7 +837,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
                               <span className="inline-flex items-center gap-2">
                                 <span
                                   className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
-                                  style={{ backgroundColor: i < 5 ? channelColor(i) : '#9ca3af' }}
+                                  style={{ backgroundColor: i < 5 ? sourceColor(i) : '#9ca3af' }}
                                 />
                                 {c.source}
                               </span>
@@ -1097,7 +1097,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
           report={report}
           spend={spend}
           acquisition={acquisition}
-          channels={donutChannels}
+          sources={donutSources}
           incomplete={incomplete}
         />
       </div>

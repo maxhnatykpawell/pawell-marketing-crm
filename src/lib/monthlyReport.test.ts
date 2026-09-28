@@ -3,7 +3,7 @@ import {
   firstActiveMonth, availableMonths, hasMonthlyStats,
   computeMonthTotals, buildTrend, computeMovements, topClients,
   delta, formatPct, computeMonthSpend, monthlyReportToCsv, buildMonthlyReport, summarizeMonth,
-  computeRetention, computeAcquisition, computeChannels, groupChannels, judgeLtvToCac, ChannelStat,
+  computeRetention, computeAcquisition, computeSources, groupSources, judgeLtvToCac, SourceStat,
 } from './monthlyReport';
 import { ClientRecord } from './clientAnalytics';
 
@@ -282,14 +282,14 @@ console.log('\nЗалучення, MQA і конверсія');
   check('угоди з CRM', [a.agreements, a.agreementsSum], [24, 5400]);
   check('місяць дозрів', a.mature, true);
 
-  // 'meta_ads' і 'Meta Ads' — один канал: без нормалізації розпалось би на два
-  check('канали зведено за нормалізованою назвою', a.channels.length, 2);
-  check('канали за доходом', a.channels.map(c => c.source), ['Meta Ads', 'Google Ads']);
-  check('дохід каналу', a.channels[0].revenue, 4000);
-  check('частка каналу', a.channels[0].revenueShare, 74.1);
-  check('клієнти каналу', a.channels[0].clients, 14);
-  check('конверсія каналу', a.channels[0].conversion, 23.3);
-  check('сума по каналах', a.channelsRevenue, 5400);
+  // 'meta_ads' і 'Meta Ads' — одне джерело: без нормалізації розпалось би на два
+  check('джерела зведено за нормалізованою назвою', a.sources.length, 2);
+  check('джерела за доходом', a.sources.map(c => c.source), ['Meta Ads', 'Google Ads']);
+  check('дохід джерела', a.sources[0].revenue, 4000);
+  check('частка джерела', a.sources[0].revenueShare, 74.1);
+  check('клієнти джерела', a.sources[0].clients, 14);
+  check('конверсія джерела', a.sources[0].conversion, 23.3);
+  check('сума по джерелах', a.sourcesRevenue, 5400);
 
   // Знімки старого формату не мають totalAcquired — добудовуємо з лідів і клієнтів
   const old = computeAcquisition(
@@ -306,20 +306,20 @@ console.log('\nЗалучення, MQA і конверсія');
   check('свіжий місяць не дозрів', fresh.mature, false);
 }
 
-console.log('\nГрупування каналів для кільця');
+console.log('\nГрупування джерел для кільця');
 {
-  const ch = (source: string, revenue: number): ChannelStat => ({
+  const ch = (source: string, revenue: number): SourceStat => ({
     source, revenue, deals: 1, clients: 1, acquired: 2, revenueShare: revenue / 100, conversion: 50,
   });
   const many = [ch('a', 1000), ch('b', 900), ch('c', 800), ch('d', 700), ch('e', 600), ch('f', 500), ch('g', 400)];
 
-  const grouped = groupChannels(many, 5);
-  check('п\'ять каналів і «Інші»', grouped.map(c => c.source), ['a', 'b', 'c', 'd', 'e', 'Інші']);
+  const grouped = groupSources(many, 5);
+  check('п\'ять джерел і «Інші»', grouped.map(c => c.source), ['a', 'b', 'c', 'd', 'e', 'Інші']);
   check('хвіст складено', grouped[5].revenue, 900);
   check('нічого не загублено', grouped.reduce((s, c) => s + c.revenue, 0), 4900);
-  // Шість каналів у кільце влазять — згортати нічого
-  check('рівно шість лишаються як є', groupChannels(many.slice(0, 6), 5).length, 6);
-  check('канали без доходу в кільце не йдуть', groupChannels([ch('a', 100), ch('b', 0)], 5).length, 1);
+  // Шість джерел у кільце влазять — згортати нічого
+  check('рівно шість лишаються як є', groupSources(many.slice(0, 6), 5).length, 6);
+  check('джерела без доходу в кільце не йдуть', groupSources([ch('a', 100), ch('b', 0)], 5).length, 1);
 }
 
 console.log('\nLTV/CAC');
@@ -342,7 +342,7 @@ console.log('\nLTV/CAC');
   check('оцінка: тонко', judgeLtvToCac(1.9), 'thin');
   check('без співвідношення немає й оцінки', judgeLtvToCac(null), null);
 
-  // Витрати є, але джерело в них не збігається з жодним каналом CRM
+  // Витрати є, але джерело в них не збігається з жодним джерелом CRM
   const unmatched = computeMonthSpend(
     [{ amount: 5000, currency: 'UAH', category: 'Реклама', source: 'Білборд', date: '2026-08-05' }],
     '2026-08', basis, rates,
