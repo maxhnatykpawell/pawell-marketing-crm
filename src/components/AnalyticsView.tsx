@@ -22,18 +22,29 @@ import { loadView, saveView } from '../lib/analyticsViewState';
 import PeriodPicker, { PeriodKey, PeriodValue, describePeriod } from './PeriodPicker';
 import AnalyticsReport from './AnalyticsReport';
 import ContactFrequency from './analytics/ContactFrequency';
+import MonthlyReportView from './MonthlyReportView';
 
 /** Пресети періоду аналітики — усі місячної точності */
 const ANALYTICS_PRESETS: PeriodKey[] = ['all', 'month', 'ytd', 'year', 'custom'];
 
-type TabKey = 'clients' | 'funnel' | 'cohorts' | 'activity';
+type TabKey = 'clients' | 'funnel' | 'cohorts' | 'activity' | 'monthly';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'clients', label: 'Клієнти · ARPU і тіри' },
   { key: 'funnel',  label: 'Швидкість воронки' },
   { key: 'cohorts', label: 'Утримання і когорти' },
   { key: 'activity', label: 'Частота контакту' },
+  { key: 'monthly', label: 'Місячний звіт' },
 ];
+
+/**
+ * Вкладки, якими керує панель угорі (період, пороги, фільтри).
+ *
+ * Місячний звіт до них не входить: у нього власний місяць і власне правило —
+ * рахувати по всій базі. Показувати над ним фільтри, які ні на що не впливають,
+ * означало б підказувати, що звіт зібраний саме по них.
+ */
+const FILTERED_TABS: TabKey[] = ['clients', 'funnel', 'cohorts', 'activity'];
 
 /** Заголовок колонки, що керує сортуванням; напрямок показано стрілкою */
 function SortableTh({
@@ -493,6 +504,9 @@ export default function AnalyticsView() {
   const avgSalesCycle = totalWonCount > 0 ? Math.round(totalCycleDays / totalWonCount) : 0;
   const totalOpenCount = openStages.reduce((sum, s) => sum + s.count, 0);
 
+  /** Чи має сенс показувати період, пороги й фільтри на відкритій вкладці */
+  const showSelectionControls = FILTERED_TABS.includes(activeTab);
+
   return (
     <>
     <div className="flex flex-col gap-4 w-full print:hidden">
@@ -512,16 +526,21 @@ export default function AnalyticsView() {
                 <p className="text-xs text-gray-500 truncate">
                   {clientsLoading
                     ? 'Завантаження клієнтів…'
-                    : <>
-                        {selectedClients.length.toLocaleString('uk-UA')} клієнтів у вибірці
-                        {' · '}
-                        {monthRange ? describePeriod(period) : 'за весь час'}
-                      </>}
+                    : activeTab === 'monthly'
+                      // Вибірка тут ні до чого — у звіту власний місяць і вся база
+                      ? 'Місячний звіт — один місяць по всій базі, з порівнянням із попереднім'
+                      : <>
+                          {selectedClients.length.toLocaleString('uk-UA')} клієнтів у вибірці
+                          {' · '}
+                          {monthRange ? describePeriod(period) : 'за весь час'}
+                        </>}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 flex-shrink-0">
+            {/* CSV і PDF тут — про поточну вибірку. У місячного звіту свої
+                кнопки й свій документ, тож ці на його вкладці лише плутали б. */}
+            <div className={`flex items-center gap-2 flex-shrink-0 ${activeTab === 'monthly' ? 'hidden' : ''}`}>
               <button
                 onClick={exportCsv}
                 disabled={selectedClients.length === 0}
@@ -570,7 +589,7 @@ export default function AnalyticsView() {
         </div>
 
         {/* Період аналітики */}
-        <div className="border-b border-gray-200 bg-white">
+        <div className={`border-b border-gray-200 bg-white ${showSelectionControls ? '' : 'hidden'}`}>
           <div className="px-6 py-3 flex flex-wrap items-center gap-3">
             <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Період</span>
             <PeriodPicker
@@ -595,6 +614,10 @@ export default function AnalyticsView() {
 
         {/* Пороги сегментації — над фільтрами: вони визначають, що взагалі
             означають слова «Чемпіон» і «Сплячий» у фільтрі нижче. */}
+        {/* Ховаємо класом, а не розмонтуванням: інакше незбережена чернетка
+            порогів і відкриті списки фільтрів гинули б від переходу на вкладку,
+            яка їх не використовує. */}
+        <div className={showSelectionControls ? '' : 'hidden'}>
         <SegmentSettings
           draft={draftThresholds}
           onDraftChange={setDraftThresholds}
@@ -606,10 +629,13 @@ export default function AnalyticsView() {
           counts={rfmSizes.counts}
           totalClients={rfmSizes.total}
         />
+        </div>
 
-        {/* Фільтри живуть над вкладками: вони впливають на вміст усіх трьох,
-            тож ховати їх на двох із них означало б приховати активний стан. */}
-        <div className="bg-white border-t border-gray-200">
+        {/* Фільтри живуть над вкладками: вони впливають на вміст усіх, які
+            працюють із вибіркою, тож ховати їх на частині з них означало б
+            приховати активний стан. Місячний звіт — виняток: він вибірки не
+            знає (див. FILTERED_TABS). */}
+        <div className={`bg-white border-t border-gray-200 ${showSelectionControls ? '' : 'hidden'}`}>
           <ClientFilterBar
             filters={filters}
             onChange={setFilters}
@@ -1040,6 +1066,12 @@ export default function AnalyticsView() {
           впливають — лише період. */}
       {activeTab === 'activity' && (
         <ContactFrequency from={period.from} to={period.to} />
+      )}
+
+      {/* Місячний звіт теж живе окремо: у нього власний вибір місяця, і рахується
+          він по всій базі — саме тому фільтри на цій вкладці приховані. */}
+      {activeTab === 'monthly' && (
+        <MonthlyReportView clients={allClients} loading={clientsLoading} />
       )}
 
     </div>

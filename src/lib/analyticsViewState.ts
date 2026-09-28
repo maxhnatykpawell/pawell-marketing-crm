@@ -19,7 +19,7 @@ export interface AnalyticsView {
   sortKey: SortKey;
   sortDir: SortDir;
   limit: number;
-  tab: 'clients' | 'funnel' | 'cohorts' | 'activity';
+  tab: 'clients' | 'funnel' | 'cohorts' | 'activity' | 'monthly';
   /** Показувати лише цей тір; null = усі */
   tierFocus: TierId | null;
   /** Показувати лише нових або лише постійних; null = усі */
@@ -38,7 +38,7 @@ export const DEFAULT_VIEW: AnalyticsView = {
 };
 
 const SORT_KEYS: SortKey[] = ['revenue', 'deals', 'avgCheck', 'recency', 'name', 'cohort'];
-const TABS: AnalyticsView['tab'][] = ['clients', 'funnel', 'cohorts', 'activity'];
+const TABS: AnalyticsView['tab'][] = ['clients', 'funnel', 'cohorts', 'activity', 'monthly'];
 const TIER_IDS: TierId[] = [1, 2, 3, 4];
 
 const strArray = (v: unknown): string[] =>
