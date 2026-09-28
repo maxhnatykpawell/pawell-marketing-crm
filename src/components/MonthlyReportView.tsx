@@ -1378,12 +1378,13 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
     {preparingPdf && (
       <div ref={docRef} className="hidden print:block">
         <MonthlyReportDoc
-          report={report}
+          report={crmFallback ? { ...report, totals: et, prevTotals: ep, trend: effectiveTrend } : report}
           spend={spend}
           acquisition={acquisition}
           sources={donutSources}
           coverage={coverage}
           progress={progress}
+          crmFallback={!!crmFallback}
         />
       </div>
     )}

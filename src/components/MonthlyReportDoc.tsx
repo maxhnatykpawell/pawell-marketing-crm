@@ -52,10 +52,12 @@ export interface MonthlyReportDocProps {
   sources: SourceStat[];
   /** Де саме місяць: закінчився чи триває, і станом на яке число */
   progress: MonthProgress | null;
+  /** Чи використовується CRM-фолбек для карток (замінює порожні LTV дані) */
+  crmFallback?: boolean;
 }
 
 export default function MonthlyReportDoc({
-  report: r, spend, acquisition, sources, coverage, progress,
+  report: r, spend, acquisition, sources, coverage, progress, crmFallback,
 }: MonthlyReportDocProps) {
   const generatedAt = new Date().toLocaleString('uk-UA', {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -136,6 +138,13 @@ export default function MonthlyReportDoc({
             CRM за цей місяць ({coverage.percent} %) — MQA, конверсія й суми по джерелах занижені:
             дні без знімка не потрапляють у підсумок. Показники з помісячних сум LTV
             (дохід, угоди, клієнти, утримання) від цього не залежать.
+          </p>
+        )}
+        {crmFallback && (
+          <p className="text-[9px] text-amber-700 mt-1 font-semibold">
+            ⚠ Дохід, угоди й клієнти у показниках — з добових зрізів CRM, а не зі знімка LTV:
+            помісячні суми LTV за {monthLabel(r.month).toLowerCase()} ще не перераховувались.
+            Рух клієнтів, утримання, нові/постійні й топ — потребують LTV і поки порожні.
           </p>
         )}
       </header>
