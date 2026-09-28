@@ -277,6 +277,67 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
   /** Чи має CRM бодай щось за цей місяць — щоб відрізнити «ще не порахували» від «не було» */
   const hasCrmDeals = !!acquisition && (acquisition.acquired > 0 || (acquisition.agreements ?? 0) > 0);
 
+  /**
+   * CRM-фолбек: коли помісячних сум LTV немає, але добові зрізи CRM вже є.
+   *
+   * Дає дохід (суму угод), кількість угод і клієнтів з CRM — ті самі числа, що
+   * на дашборді. Без нього звіт за поточний місяць показує нулі, хоча дашборд
+   * поруч бачить сотні угод.
+   *
+   * Фолбек НЕ замінює LTV-дані: рух клієнтів, утримання, нові/постійні й топ
+   * потребують пофілантропних сум, яких у CRM-агрегатах немає. Тому ці розділи
+   * лишаються порожніми, а картки й динаміка — заповнюються.
+   */
+  const crmFallback = useMemo<MonthTotals | null>(() => {
+    if (hasLtvMonth || !acquisition) return null;
+    const revenue = Math.round(acquisition.agreementsSum ?? 0);
+    const deals = acquisition.agreements ?? 0;
+    const clients = acquisition.mqa;
+    if (revenue === 0 && deals === 0 && clients === 0) return null;
+    return {
+      month,
+      revenue,
+      deals,
+      clients,
+      avgCheck: deals > 0 ? Math.round(revenue / deals) : 0,
+      arpu: clients > 0 ? Math.round(revenue / clients) : 0,
+      newClients: clients,
+      newRevenue: revenue,
+      newDeals: deals,
+      returningClients: 0,
+      returningRevenue: 0,
+      returningDeals: 0,
+    };
+  }, [hasLtvMonth, acquisition, month]);
+
+  const crmPrevFallback = useMemo<MonthTotals | null>(() => {
+    if (hasLtvMonth || !acquisition) return null;
+    const prev = shiftMonth(month, -1);
+    const revenue = Math.round(acqRaw?.prev?.totalAgreementsSum ?? 0);
+    const deals = acqRaw?.prev?.totalAgreements ?? 0;
+    const clients = acquisition.prevMqa;
+    return {
+      month: prev,
+      revenue,
+      deals,
+      clients,
+      avgCheck: deals > 0 ? Math.round(revenue / deals) : 0,
+      arpu: clients > 0 ? Math.round(revenue / clients) : 0,
+      newClients: clients,
+      newRevenue: revenue,
+      newDeals: deals,
+      returningClients: 0,
+      returningRevenue: 0,
+      returningDeals: 0,
+    };
+  }, [hasLtvMonth, acquisition, acqRaw, month]);
+
+  /** Ефективні підсумки: LTV-дані, коли є; CRM-фолбек, коли LTV ще немає */
+  const et = crmFallback ?? t;
+  const ep = crmPrevFallback ?? p;
+  /** Чи є хоч якісь числа для карток — або з LTV, або з CRM */
+  const hasAnyMetrics = hasLtvMonth || !!crmFallback;
+
   /** Джерела для кільця: п'ять найбільших і «Інші» */
   const donutSources = useMemo(
     () => (acquisition ? groupSources(acquisition.sources, 5) : []),
@@ -318,14 +379,14 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
         newClients: fromCrm ? acquisition!.mqa : report.totals.newClients,
         prevNewClients: fromCrm ? acquisition!.prevMqa : report.prevTotals.newClients,
         acquired: fromCrm ? acquisition!.acquired : undefined,
-        revenue: report.totals.revenue,
+        revenue: et.revenue,
         ltv: ltv?.value ?? null,
         ltvBasis: ltv?.basis,
         clientsBySource: fromCrm ? acqRaw?.current.clientsBySource : undefined,
       },
       state.currencyRates ?? DEFAULT_CURRENCY_RATES,
     );
-  }, [canSeeMoney, state.expenses, state.currencyRates, month, report, acquisition, acqRaw, ltv]);
+  }, [canSeeMoney, state.expenses, state.currencyRates, month, report, et, acquisition, acqRaw, ltv]);
 
   /** На чому саме порахований CAC — читач має знати, що в знаменнику */
   const cacBasisLabel = acquisition ? 'клієнти когорти місяця з CRM (MQA)' : 'нові клієнти з помісячних сум LTV';
@@ -364,7 +425,18 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
     return () => clearTimeout(id);
   }, [preparingPdf, printDoc]);
 
-  const trendMax = Math.max(1, ...report.trend.map(x => x.revenue));
+  /**
+   * Динаміка з CRM-фолбеком: коли поточний місяць порожній у LTV, але CRM дає
+   * числа — підставляємо їх у відповідний стовпець, щоб він не був пустим.
+   */
+  const effectiveTrend = useMemo(() => {
+    if (!crmFallback) return report.trend;
+    return report.trend.map(m =>
+      m.month === month && m.clients === 0 ? { ...m, ...crmFallback } : m,
+    );
+  }, [report.trend, crmFallback, month]);
+
+  const trendMax = Math.max(1, ...effectiveTrend.map(x => x.revenue));
   const lost = report.movements.lost;
 
   return (
@@ -473,6 +545,33 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
         </div>
       )}
 
+      {/*
+        Обмежений або впалий знімок занижує КОЖЕН місяць, а не лише порожній,
+        тож ці два попередження стоять над усім звітом — так само, як на
+        сторінці розширеної аналітики.
+      */}
+      {!loading && snapshot?.scopedTo && (snapshot.scopedTo.from || snapshot.scopedTo.to) && (
+        <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-2.5 flex items-start gap-2 text-xs text-amber-800">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <span>
+            Знімок LTV зібраний лише за {snapshot.scopedTo.from ?? '…'} — {snapshot.scopedTo.to ?? '…'}:
+            угоди поза цим періодом у нього не потрапили, тож дохід, угоди й утримання занижені,
+            а місяці поза діапазоном виглядають порожніми. Перезапустіть синхронізацію LTV за весь час.
+          </span>
+        </div>
+      )}
+
+      {!loading && snapshot?.lastSyncError && (
+        <div className="bg-red-50 border border-red-100 rounded-xl px-4 py-2.5 flex items-start gap-2 text-xs text-red-800">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <span>
+            Остання синхронізація LTV впала: {snapshot.lastSyncError}
+            {snapshot.lastSyncErrorAt && <> ({new Date(snapshot.lastSyncErrorAt).toLocaleString('uk-UA')})</>}.
+            {' '}Дохід, угоди й утримання показані зі старого знімка.
+          </span>
+        </div>
+      )}
+
       {!loading && clients.length > 0 && !report.hasMonthlyStats && (
         <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 flex items-start gap-2 text-xs text-amber-800">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
@@ -517,26 +616,59 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
             {/* Поки CRM не відповіла, «угод немає» — ще не факт, а здогад */}
             {acqLoading
               ? <>Помісячних сум LTV за {monthLabel(month).toLowerCase()} ще немає — перевіряємо дані CRM…</>
+              : crmFallback
+                ? <>Помісячних сум LTV за {monthLabel(month).toLowerCase()} ще немає — дохід і угоди нижче з добових зрізів CRM.</>
               : hasCrmDeals
                 ? <>Помісячних сум LTV за {monthLabel(month).toLowerCase()} ще немає — дохід, угоди й утримання нижче порожні.</>
                 : <>За {monthLabel(month).toLowerCase()} станом на {dayLabel(progress.asOf)} у базі немає жодної угоди.</>}
           </p>
           <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
             {hasCrmDeals && <>
-              Ці числа рахуються зі знімка LTV, а він перераховується окремо — запустіть
-              синхронізацію LTV на головній, і блоки заповняться.
-              {' '}Залучення, конверсія й джерела нижче беруться з добових зрізів CRM і вже доступні:
-              за цей місяць у CRM {num(acquisition?.agreements ?? 0)}{' '}
+              За {monthLabel(month).toLowerCase()} у CRM {num(acquisition?.agreements ?? 0)}{' '}
               {pluralUk(acquisition?.agreements ?? 0, 'угода', 'угоди', 'угод')}
-              {acquisition?.agreementsSum ? ` на ${uah(acquisition.agreementsSum)}` : ''}.
+              {acquisition?.agreementsSum ? ` на ${uah(acquisition.agreementsSum)}` : ''} —
+              вони видно в блоках нижче, бо ті беруться з добових зрізів CRM.
+              {' '}А дохід, угоди й утримання рахуються зі знімка LTV, і саме в ньому цього
+              місяця ще немає.
             </>}
             {!hasCrmDeals && oldest && newest && <>Дані є за {monthLabel(oldest)} — {monthLabel(newest)}.</>}
-            {snapshot?.lastSyncedAt && (
-              <> Останній перерахунок LTV: {new Date(snapshot.lastSyncedAt).toLocaleString('uk-UA', {
-                day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
-              })}.</>
-            )}
           </p>
+
+          {/*
+            Чому місяця немає у знімку — видно з нього самого: межі покриття,
+            обмеження періоду, помилка й дата перерахунку. Без цих чотирьох
+            рядків «угод немає» лишається загадкою, у якій звинувачують звіт.
+          */}
+          <ul className="mt-3 space-y-1 text-xs text-gray-600 border-t border-gray-100 pt-3">
+            {snapshot?.monthsCovered && (
+              <li>
+                Знімок LTV охоплює <strong>{monthLabel(snapshot.monthsCovered.from)} — {monthLabel(snapshot.monthsCovered.to)}</strong>
+                {month > snapshot.monthsCovered.to && <> — {monthLabelIn(month)} у ньому ще немає</>}.
+              </li>
+            )}
+            {snapshot?.scopedTo && (snapshot.scopedTo.from || snapshot.scopedTo.to) && (
+              <li className="text-amber-700">
+                Синхронізацію LTV запускали з обмеженням періоду{' '}
+                <strong>{snapshot.scopedTo.from ?? '…'} — {snapshot.scopedTo.to ?? '…'}</strong>,
+                тож угоди поза цим діапазоном у знімок не потрапили. Перезапустіть її
+                за весь час — у діалозі синхронізації LTV це пресет «Весь час».
+              </li>
+            )}
+            {snapshot?.lastSyncError && (
+              <li className="text-red-700">
+                Остання синхронізація LTV впала: {snapshot.lastSyncError}
+                {snapshot.lastSyncErrorAt && <> ({new Date(snapshot.lastSyncErrorAt).toLocaleString('uk-UA')})</>}
+                {' '}— тому знімок лишився старим.
+              </li>
+            )}
+            <li>
+              {snapshot?.lastSyncedAt
+                ? <>Останній вдалий перерахунок: <strong>{new Date(snapshot.lastSyncedAt).toLocaleString('uk-UA', {
+                    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                  })}</strong>. Він запускається щодоби о 03:00, або вручну на головній.</>
+                : <>Дати останнього перерахунку у знімку немає — запустіть синхронізацію LTV на головній.</>}
+            </li>
+          </ul>
         </div>
       )}
 
@@ -555,7 +687,10 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
             hint="Ті самі числа, що в таблицях нижче, прочитані вголос — щоб усі читали їх однаково."
           >
             <ul className="space-y-1.5">
-              {summarizeMonth(report, { acquisition, spend }).map((line, i) => (
+              {summarizeMonth(
+                crmFallback ? { ...report, totals: et, prevTotals: ep } : report,
+                { acquisition, spend },
+              ).map((line, i) => (
                 <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
                   <span className="text-purple-400 font-bold flex-shrink-0">•</span>
                   {line}
@@ -565,15 +700,25 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
           </Card>
           )}
 
-          {hasLtvMonth && (<>
+          {hasAnyMetrics && (<>
           {/* ── Показники ────────────────────────────────────────────────── */}
+          {crmFallback && (
+            <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-2.5 flex items-start gap-2 text-xs text-amber-800">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>
+                Дохід, угоди й клієнти нижче — з <strong>добових зрізів CRM</strong>, а не зі знімка LTV:
+                помісячні суми LTV за {monthLabel(month).toLowerCase()} ще не перераховувались.
+                Рух клієнтів, утримання, нові/постійні й топ — потребують LTV і поки недоступні.
+              </span>
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
             {[
-              { label: 'Дохід', value: uah(t.revenue), d: delta(t.revenue, p.revenue), note: `було ${uah(p.revenue)}` },
-              { label: 'Угод', value: num(t.deals), d: delta(t.deals, p.deals), note: `було ${num(p.deals)}` },
-              { label: 'Активних клієнтів', value: num(t.clients), d: delta(t.clients, p.clients), note: `було ${num(p.clients)}` },
-              { label: 'Середній чек', value: uah(t.avgCheck), d: delta(t.avgCheck, p.avgCheck), note: `було ${uah(p.avgCheck)}` },
-              { label: 'Дохід на клієнта', value: uah(t.arpu), d: delta(t.arpu, p.arpu), note: `було ${uah(p.arpu)}` },
+              { label: 'Дохід', value: uah(et.revenue), d: delta(et.revenue, ep.revenue), note: `було ${uah(ep.revenue)}` },
+              { label: 'Угод', value: num(et.deals), d: delta(et.deals, ep.deals), note: `було ${num(ep.deals)}` },
+              { label: 'Активних клієнтів', value: num(et.clients), d: delta(et.clients, ep.clients), note: `було ${num(ep.clients)}` },
+              { label: 'Середній чек', value: uah(et.avgCheck), d: delta(et.avgCheck, ep.avgCheck), note: `було ${uah(ep.avgCheck)}` },
+              { label: 'Дохід на клієнта', value: uah(et.arpu), d: delta(et.arpu, ep.arpu), note: `було ${uah(ep.arpu)}` },
             ].map(m => (
               <Metric key={m.label} label={m.label} value={m.value} pct={m.d.pct} note={m.note} />
             ))}
@@ -670,7 +815,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
             </div>
           )}
 
-          {hasLtvMonth && (<>
+          {hasAnyMetrics && (<>
           {/* Рік тому — окремим рядком, а не шостою карткою: це інша база
               порівняння, і мішати її з «до минулого місяця» не можна. */}
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-3 flex flex-wrap items-center gap-3 text-sm">
@@ -682,7 +827,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
                   {' · '}{num(report.yearAgoTotals.deals)} {pluralUk(report.yearAgoTotals.deals, 'угода', 'угоди', 'угод')}
                   {' · '}{num(report.yearAgoTotals.clients)} {pluralUk(report.yearAgoTotals.clients, 'клієнт', 'клієнти', 'клієнтів')}
                 </span>
-                <Change pct={delta(t.revenue, report.yearAgoTotals.revenue).pct} />
+                <Change pct={delta(et.revenue, report.yearAgoTotals.revenue).pct} />
                 <span className="text-xs text-gray-400">порівняння прибирає сезонність</span>
               </>
             ) : (
@@ -830,7 +975,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
             hint="Ряд закінчується звітним місяцем. Натисніть на стовпець, щоб перейти до звіту за той місяць."
           >
             <div className="flex items-end gap-1.5 h-48 mb-4 overflow-x-auto pt-6">
-              {report.trend.map(m => {
+              {effectiveTrend.map(m => {
                 const height = Math.round((m.revenue / trendMax) * 100);
                 const isCurrent = m.month === month;
                 return (
@@ -870,7 +1015,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {[...report.trend].reverse().map((m: MonthTotals) => (
+                  {[...effectiveTrend].reverse().map((m: MonthTotals) => (
                     <tr
                       key={m.month}
                       onClick={() => setMonth(m.month)}
@@ -878,6 +1023,9 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
                     >
                       <td className={`py-2 px-3 text-sm ${m.month === month ? 'font-bold text-purple-800' : 'text-gray-700'}`}>
                         {monthLabel(m.month)}
+                        {m.month === month && crmFallback && (
+                          <span className="ml-1 text-[10px] text-amber-600 font-normal" title="Дані з добових зрізів CRM, не зі знімка LTV">CRM</span>
+                        )}
                       </td>
                       <td className="py-2 px-3 text-sm text-right font-bold text-gray-900 whitespace-nowrap">{uah(m.revenue)}</td>
                       <td className="py-2 px-3 text-sm text-right text-gray-700">{num(m.deals)}</td>
@@ -1011,7 +1159,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
             title="Гроші: витрати й вартість клієнта"
             hint={<>Витрати за дати цього місяця з розділу «Витрати», зведені до гривні.
               У знаменнику CAC — {cacBasisLabel}
-              {acquisition ? `: ${num(acquisition.mqa)}` : `: ${num(t.newClients)}`}.
+              {acquisition ? `: ${num(acquisition.mqa)}` : `: ${num(et.newClients)}`}.
               {spend?.hasForeign && ' Частина витрат не в гривні — сума залежить від курсу в налаштуваннях витрат.'}</>}
           >
             {!spend || spend.count === 0 ? (
@@ -1102,7 +1250,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
                           <td className="py-2 px-3 text-sm text-right font-bold text-gray-900 whitespace-nowrap">{uah(c.amount)}</td>
                           <td className="py-2 px-3 text-sm text-right text-gray-700">{share(c.amount, spend.total)} %</td>
                           <td className="py-2 px-3 text-sm text-right text-gray-600">
-                            {t.revenue > 0 ? `${share(c.amount, t.revenue)} %` : '—'}
+                            {et.revenue > 0 ? `${share(c.amount, et.revenue)} %` : '—'}
                           </td>
                         </tr>
                       ))}
@@ -1161,7 +1309,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
                             </span>
                           : <span className="text-gray-300">—</span>}
                       </td>
-                      <td className="py-2.5 px-3 text-sm text-right text-gray-600">{share(c.revenue, t.revenue)} %</td>
+                      <td className="py-2.5 px-3 text-sm text-right text-gray-600">{share(c.revenue, et.revenue)} %</td>
                       <td className="py-2.5 px-3 text-xs text-gray-500 whitespace-nowrap">
                         {c.first ? monthLabel(c.first) : '—'}
                       </td>

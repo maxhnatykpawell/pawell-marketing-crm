@@ -26,6 +26,8 @@ export interface LtvSnapshot {
   stageStats?: StageStat[];
   /** Помилка останньої синхронізації, якщо вона впала */
   lastSyncError?: string | null;
+  /** Коли саме вона впала — щоб було видно, наскільки застаріли дані */
+  lastSyncErrorAt?: string;
   cohortLtv?: {
     rows: CohortLtvRow[];
     horizons: Record<number, CohortLtvHorizon | null>;
