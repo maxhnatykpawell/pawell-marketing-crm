@@ -165,8 +165,9 @@ export default function MonthlyReportDoc({
           ? <>Рік тому, у {monthLabelIn(r.yearAgoMonth)}, дохід був {uah(r.yearAgoTotals.revenue)}.</>
           : <>Даних за {monthLabelIn(r.yearAgoMonth)} немає, тож сезонність порівняти нема з чим.</>}</>}
       >
-        <div className="grid grid-cols-5 gap-2">
-          <Kpi label="Дохід" value={uah(t.revenue)} note={changeNote(t.revenue, p.revenue, uah)} />
+        <div className={`grid ${r.hasPaid ? 'grid-cols-6' : 'grid-cols-5'} gap-2`}>
+          <Kpi label="Законтрактовано" value={uah(t.revenue)} note={changeNote(t.revenue, p.revenue, uah)} />
+          {r.hasPaid && <Kpi label="Оплачено" value={uah(t.paid)} note={changeNote(t.paid, p.paid, uah)} />}
           <Kpi label="Угод" value={num(t.deals)} note={changeNote(t.deals, p.deals, num)} />
           <Kpi label="Активних клієнтів" value={num(t.clients)} note={changeNote(t.clients, p.clients, num)} />
           <Kpi label="Середній чек" value={uah(t.avgCheck)} note={changeNote(t.avgCheck, p.avgCheck, uah)} />
@@ -311,7 +312,8 @@ export default function MonthlyReportDoc({
           <thead>
             <tr>
               <TH>Місяць</TH>
-              <TH align="right">Дохід</TH>
+              <TH align="right">Законтрактовано</TH>
+              {r.hasPaid && <TH align="right">Оплачено</TH>}
               <TH align="right">Угод</TH>
               <TH align="right">Клієнтів</TH>
               <TH align="right">Нових</TH>
@@ -324,6 +326,7 @@ export default function MonthlyReportDoc({
               <tr key={m.month} className={m.month === r.month ? 'bg-purple-50' : undefined}>
                 <TD bold={m.month === r.month}>{monthLabel(m.month)}</TD>
                 <TD align="right" bold={m.month === r.month}>{uah(m.revenue)}</TD>
+                {r.hasPaid && <TD align="right">{uah(m.paid)}</TD>}
                 <TD align="right">{num(m.deals)}</TD>
                 <TD align="right">{num(m.clients)}</TD>
                 <TD align="right">{num(m.newClients)}</TD>

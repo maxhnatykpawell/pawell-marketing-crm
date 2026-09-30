@@ -18,6 +18,7 @@ import admin from 'firebase-admin';
 
 import { buildCohortLtv } from './src/lib/cohortLtv';
 import { chunkBySize } from './src/lib/clientAnalytics';
+import { PaidLedger, PaidLedgerMeta, applyPaid, cashMonth, extractAgreementPaid } from './src/lib/paidLedger';
 import {
   normalizeCallEvent, normalizeTaskEvent, aggregateContactEvents,
   contactCategoryMatcher, asName, isValidYmd,
@@ -1555,6 +1556,55 @@ async function readLtvClients(db: admin.firestore.Firestore): Promise<any[]> {
   return legacy.exists ? (legacy.data()?.clients ?? []) : [];
 }
 
+/** Журнал оплат (src/lib/paidLedger.ts) — частинами, як і клієнти */
+const PAID_LEDGER_COLLECTION = 'crm_keepincrm_paid_ledger';
+/** Службовий документ журналу — поруч із частинами, але не число */
+const PAID_LEDGER_META_DOC = 'meta';
+
+async function readPaidLedger(db: admin.firestore.Firestore | null): Promise<{ ledger: PaidLedger; meta: PaidLedgerMeta }> {
+  if (!db) {
+    const state = await getDb();
+    return {
+      ledger: state.keepincrm_paid_ledger ?? {},
+      meta: state.keepincrm_paid_ledger_meta ?? { since: null },
+    };
+  }
+  const snap = await db.collection(PAID_LEDGER_COLLECTION).get();
+  const ledger: PaidLedger = {};
+  let meta: PaidLedgerMeta = { since: null };
+  for (const d of snap.docs) {
+    if (d.id === PAID_LEDGER_META_DOC) { meta = { since: d.data().since ?? null }; continue; }
+    for (const e of (d.data().entries ?? []) as { id: string; m: Record<string, number> }[]) ledger[e.id] = e.m;
+  }
+  return { ledger, meta };
+}
+
+async function writePaidLedger(db: admin.firestore.Firestore | null, ledger: PaidLedger, meta: PaidLedgerMeta): Promise<void> {
+  if (!db) {
+    const state = await getDb();
+    state.keepincrm_paid_ledger = ledger;
+    state.keepincrm_paid_ledger_meta = meta;
+    await saveDb(state);
+    return;
+  }
+  const col = db.collection(PAID_LEDGER_COLLECTION);
+  const chunks = chunkBySize(Object.entries(ledger).map(([id, m]) => ({ id, m })), LTV_CHUNK_BUDGET_BYTES);
+  for (let i = 0; i < chunks.length; i++) {
+    await col.doc(String(i)).set({ index: i, entries: chunks[i] });
+  }
+  await col.doc(PAID_LEDGER_META_DOC).set(meta);
+
+  const stale = (await col.listDocuments()).filter(d => {
+    const n = Number(d.id);
+    return d.id !== PAID_LEDGER_META_DOC && !Number.isNaN(n) && n >= chunks.length;
+  });
+  if (stale.length > 0) {
+    const batch = db.batch();
+    for (const d of stale) batch.delete(d);
+    await batch.commit();
+  }
+}
+
 /**
  * @param range межі вивантаження угод. Обидві null (або аргумент відсутній) —
  *        розрахунок за весь час, єдиний варіант із повними когортами.
@@ -1575,7 +1625,21 @@ export async function syncKeepInCRMLTV(
     if (to)   params['q[created_at_lteq]'] = `${to}T23:59:59.999+03:00`;
 
     const allAgreementsRaw = await keepinFetchAll('/agreements', params);
-    
+
+    // Журнал оплат: «Сплачено» без дат, тож касовий місяць — це прогін, що
+    // побачив приріст. Поки поле ще ні разу не приходило, журнал не стартує —
+    // інакше виправлена назва поля звалила б усю історію в один місяць.
+    const db = initFirebase();
+    const { ledger: paidLedger, meta: paidMeta } = await readPaidLedger(db);
+    const paidBaseline = paidMeta.since === null;
+    const paidMonth = cashMonth(new Date());
+    let paidFieldSeen = false;
+    if (allAgreementsRaw[0]) {
+      // Назви полів оплати в API KeepInCRM не задокументовані — лишаємо слід для перевірки
+      const payKeys = Object.keys(allAgreementsRaw[0]).filter(k => /pa(y|id)/i.test(k));
+      console.log(`🔍 KeepInCRM угода: поля оплати = [${payKeys.join(', ')}]`);
+    }
+
     let totalLTVRevenue = 0;
     const clientsMap = new Map<string, any>();
     
@@ -1603,6 +1667,8 @@ export async function syncKeepInCRMLTV(
              * окреме поле purchaseMonths більше не пишемо.
              */
             monthlyStats: {} as Record<string, { revenue: number; deals: number }>,
+            /** Скільки грошей надійшло по місяцях — з журналу оплат, касово */
+            monthlyPaid: {} as Record<string, number>,
           };
           clientsMap.set(clientId, clientData);
         }
@@ -1622,6 +1688,20 @@ export async function syncKeepInCRMLTV(
             const bucket = clientData.monthlyStats[yyyyMm] ?? (clientData.monthlyStats[yyyyMm] = { revenue: 0, deals: 0 });
             bucket.revenue += amount;
             bucket.deals += 1;
+          }
+        }
+
+        const paid = extractAgreementPaid(item);
+        const agreementId = item.id != null ? String(item.id) : null;
+        if (paid !== null && agreementId) {
+          paidFieldSeen = true;
+          const d = dateStr ? new Date(dateStr) : null;
+          const agreementMonth = d && !isNaN(d.getTime())
+            ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+            : null;
+          applyPaid(paidLedger, agreementId, paid, agreementMonth, paidMonth, paidBaseline);
+          for (const [m, v] of Object.entries(paidLedger[agreementId] ?? {})) {
+            clientData.monthlyPaid[m] = (clientData.monthlyPaid[m] ?? 0) + v;
           }
         }
 
@@ -1659,6 +1739,11 @@ export async function syncKeepInCRMLTV(
       
       sData.openDaysTotal += (openDays > 0 ? openDays : 0);
       sData.cycleDaysTotal += (cycleDays > 0 ? cycleDays : 0);
+    }
+
+    // Поле оплати не прийшло — не віддаємо порожніх сум, інакше звіт показав би «Оплачено 0 ₴»
+    if (!paidFieldSeen) {
+      for (const c of clientsMap.values()) delete c.monthlyPaid;
     }
 
     const uniqueClientsCount = clientsMap.size;
@@ -1704,10 +1789,18 @@ export async function syncKeepInCRMLTV(
         const all = allClientsSorted.flatMap(c => Object.keys(c.monthlyStats));
         return all.length > 0 ? { from: all.reduce((a, b) => a < b ? a : b), to: all.reduce((a, b) => a > b ? a : b) } : null;
       })(),
+      /**
+       * З якої дати оплати по місяцях касові. null — поле «Сплачено» ще не
+       * приходило, і звіт показує лише законтрактоване.
+       */
+      paidTrackingSince: paidMeta.since ?? (paidFieldSeen ? new Date().toISOString() : null),
       lastSyncedAt: new Date().toISOString()
     };
 
-    const db = initFirebase();
+    if (paidFieldSeen) {
+      await writePaidLedger(db, paidLedger, { since: snapshot.paidTrackingSince });
+    }
+
     if (db) {
       // Клієнти живуть окремо від агрегатів: разом вони не влазять у ліміт
       // документа Firestore (1 МіБ) вже на кількох тисячах записів, і падав би

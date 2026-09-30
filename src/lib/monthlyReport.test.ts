@@ -433,5 +433,28 @@ console.log('\nПорівняння рік до року');
   check('рядок про рік з’явився', summarizeMonth(r).some(l => l.startsWith('Рік тому')), true);
 }
 
+console.log('\nОплачено');
+{
+  const withPaid = (c: ClientRecord, paid: Record<string, number>): ClientRecord => ({ ...c, monthlyPaid: paid });
+  const cs = [
+    // Серпневий контракт, оплачений частинами в серпні й вересні
+    withPaid(client('p1', { '2026-08': [1000, 1] }), { '2026-08': 400, '2026-09': 600 }),
+    // У вересні угод немає, але гроші за липень прийшли — це гроші вересня
+    withPaid(client('p2', { '2026-07': [500, 1] }), { '2026-09': 500 }),
+    client('p3', { '2026-09': [300, 1] }),
+  ];
+  const sep = computeMonthTotals(cs, '2026-09');
+  check('оплачено рахується касово, навіть без угоди в місяці', sep.paid, 1100);
+  check('законтрактоване — лише угоди місяця', sep.revenue, 300);
+  check('клієнт лише з оплатою не стає активним', sep.clients, 1);
+  check('серпень', computeMonthTotals(cs, '2026-08').paid, 400);
+
+  const r = buildMonthlyReport(cs, '2026-09');
+  check('звіт знає, що оплати є', r.hasPaid, true);
+  check('рядок про надходження', summarizeMonth(r).some(l => l.startsWith('На рахунок надійшло')), true);
+  check('без оплат — без рядка', summarizeMonth(buildMonthlyReport([client('x', { '2026-09': [1, 1] })], '2026-09'))
+    .some(l => l.startsWith('На рахунок')), false);
+}
+
 console.log(failures === 0 ? '\n✅ Усі перевірки пройдено\n' : `\n❌ Провалено: ${failures}\n`);
 process.exit(failures === 0 ? 0 : 1);

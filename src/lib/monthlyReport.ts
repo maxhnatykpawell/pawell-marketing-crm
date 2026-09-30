@@ -174,6 +174,8 @@ export interface PreparedClient {
   /** Місяць першої РЕАЛЬНОЇ активності; null — активності немає взагалі */
   first: string | null;
   stats: Record<string, MonthStats>;
+  /** Надходження по місяцях (касово) — див. `ClientRecord.monthlyPaid` */
+  paid: Record<string, number>;
 }
 
 /** Чи був місяць живим: угода або хоч якийсь рух грошей (у т.ч. повернення) */
@@ -208,12 +210,18 @@ export function prepareClients(clients: ClientRecord[]): PreparedClient[] {
     name: c.name,
     first: firstActiveMonth(c),
     stats: c.monthlyStats ?? {},
+    paid: c.monthlyPaid ?? {},
   }));
 }
 
 /** Чи взагалі є в даних помісячні суми — без них місячний звіт неможливий */
 export function hasMonthlyStats(clients: ClientRecord[]): boolean {
   return clients.some(c => !!c.monthlyStats);
+}
+
+/** Чи синхронізувались оплати — у старих знімках є лише законтрактоване */
+export function hasPaidStats(clients: ClientRecord[]): boolean {
+  return clients.some(c => !!c.monthlyPaid);
 }
 
 /**
@@ -238,7 +246,13 @@ export function availableMonths(clients: ClientRecord[]): string[] {
 
 export interface MonthTotals {
   month: string;
+  /** Законтрактовано: сума угод, укладених у місяці */
   revenue: number;
+  /**
+   * Оплачено: гроші, що надійшли на рахунок у місяці — за будь-які угоди, і
+   * нові, і минулих місяців. Тому може бути більшим за `revenue`.
+   */
+  paid: number;
   deals: number;
   /** Клієнтів з активністю в місяці */
   clients: number;
@@ -257,7 +271,7 @@ export interface MonthTotals {
 }
 
 const EMPTY_TOTALS = (month: string): MonthTotals => ({
-  month, revenue: 0, deals: 0, clients: 0, avgCheck: 0, arpu: 0,
+  month, revenue: 0, paid: 0, deals: 0, clients: 0, avgCheck: 0, arpu: 0,
   newClients: 0, newRevenue: 0, newDeals: 0,
   returningClients: 0, returningRevenue: 0, returningDeals: 0,
 });
@@ -266,6 +280,9 @@ function totalsOf(prepared: PreparedClient[], month: string): MonthTotals {
   const t = EMPTY_TOTALS(month);
 
   for (const c of prepared) {
+    // До isActive: доплата за старий контракт — гроші місяця, хоч угоди в ньому й немає
+    t.paid += c.paid[month] ?? 0;
+
     const s = c.stats[month];
     if (!isActive(s)) continue;
 
@@ -286,6 +303,7 @@ function totalsOf(prepared: PreparedClient[], month: string): MonthTotals {
   }
 
   t.revenue = Math.round(t.revenue);
+  t.paid = Math.round(t.paid);
   t.newRevenue = Math.round(t.newRevenue);
   t.returningRevenue = Math.round(t.returningRevenue);
   t.avgCheck = t.deals > 0 ? Math.round(t.revenue / t.deals) : 0;
@@ -569,6 +587,8 @@ export interface MonthlyReport {
   top: ClientMovement[];
   /** Чи є в даних суми по місяцях; false — звіт порахувати неможливо */
   hasMonthlyStats: boolean;
+  /** Чи є в даних оплати; false — показуємо лише законтрактоване */
+  hasPaid: boolean;
   /** Скільки клієнтів у базі всього — щоб було видно охоплення місяця */
   totalClients: number;
 }
@@ -599,6 +619,7 @@ export function buildMonthlyReport(
     prevRetention: retentionOf(prepared, prevMonth),
     top: topOf(prepared, month, topLimit),
     hasMonthlyStats: hasMonthlyStats(clients),
+    hasPaid: hasPaidStats(clients),
     totalClients: clients.length,
   };
 }
@@ -1139,6 +1160,20 @@ export function summarizeMonth(
         `ніж у ${prevIn} (${uah(p.revenue)}). ` +
         `Угод ${num(t.deals)} проти ${num(p.deals)}, середній чек ${uah(t.avgCheck)} проти ${uah(p.avgCheck)}.`,
   );
+  }
+
+  // Касою, а не контрактами: гроші могли прийти й за угоди минулих місяців,
+  // тож рядок живе поза перевіркою на угоди місяця
+  if (r.hasPaid && (t.paid !== 0 || t.revenue > 0)) {
+    const paidDelta = delta(t.paid, p.paid);
+    out.push(
+      `На рахунок надійшло ${uah(t.paid)}` +
+      (t.revenue > 0 ? ` — ${share(t.paid, t.revenue)} % від законтрактованого` : '') +
+      (paidDelta.pct !== null ? `; у ${monthLabelIn(r.prevMonth)} — ${uah(p.paid)}.` : '.'),
+    );
+  }
+
+  if (hasLtvMonth) {
 
   // Чому саме змінився дохід: нові клієнти чи ті, що вже були
   out.push(

@@ -297,6 +297,8 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
     return {
       month,
       revenue,
+      // Надходження — із журналу оплат, він живе окремо від угод місяця
+      paid: t.paid,
       deals,
       clients,
       avgCheck: deals > 0 ? Math.round(revenue / deals) : 0,
@@ -308,7 +310,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
       returningRevenue: 0,
       returningDeals: 0,
     };
-  }, [hasLtvMonth, acquisition, month]);
+  }, [hasLtvMonth, acquisition, month, t.paid]);
 
   const crmPrevFallback = useMemo<MonthTotals | null>(() => {
     if (hasLtvMonth || !acquisition) return null;
@@ -319,6 +321,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
     return {
       month: prev,
       revenue,
+      paid: p.paid,
       deals,
       clients,
       avgCheck: deals > 0 ? Math.round(revenue / deals) : 0,
@@ -330,7 +333,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
       returningRevenue: 0,
       returningDeals: 0,
     };
-  }, [hasLtvMonth, acquisition, acqRaw, month]);
+  }, [hasLtvMonth, acquisition, acqRaw, month, p.paid]);
 
   /** Ефективні підсумки: LTV-дані, коли є; CRM-фолбек, коли LTV ще немає */
   const et = crmFallback ?? t;
@@ -712,9 +715,18 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
               </span>
             </div>
           )}
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+          <div className={`grid grid-cols-1 sm:grid-cols-2 ${report.hasPaid ? 'xl:grid-cols-6' : 'xl:grid-cols-5'} gap-4`}>
             {[
-              { label: 'Дохід', value: uah(et.revenue), d: delta(et.revenue, ep.revenue), note: `було ${uah(ep.revenue)}` },
+              { label: 'Законтрактовано', value: uah(et.revenue), d: delta(et.revenue, ep.revenue), note: `було ${uah(ep.revenue)}` },
+              // Касою: гроші, що надійшли в місяці, зокрема за контракти минулих місяців
+              ...(report.hasPaid ? [{
+                label: 'Оплачено',
+                value: uah(et.paid),
+                d: delta(et.paid, ep.paid),
+                note: et.revenue > 0
+                  ? `${share(et.paid, et.revenue)} % від контрактів · було ${uah(ep.paid)}`
+                  : `було ${uah(ep.paid)}`,
+              }] : []),
               { label: 'Угод', value: num(et.deals), d: delta(et.deals, ep.deals), note: `було ${num(ep.deals)}` },
               { label: 'Активних клієнтів', value: num(et.clients), d: delta(et.clients, ep.clients), note: `було ${num(ep.clients)}` },
               { label: 'Середній чек', value: uah(et.avgCheck), d: delta(et.avgCheck, ep.avgCheck), note: `було ${uah(ep.avgCheck)}` },
@@ -723,6 +735,14 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
               <Metric key={m.label} label={m.label} value={m.value} pct={m.d.pct} note={m.note} />
             ))}
           </div>
+          {/* Дат платежів KeepInCRM не віддає: до старту журналу місяць оплати — це місяць угоди */}
+          {report.hasPaid && snapshot?.paidTrackingSince && month <= snapshot.paidTrackingSince.slice(0, 7) && (
+            <p className="text-[11px] text-gray-400 -mt-2">
+              «Оплачено» рахується за місяцем надходження з{' '}
+              {new Date(snapshot.paidTrackingSince).toLocaleDateString('uk-UA')}. Оплати до цієї дати віднесені до
+              місяця угоди — точних дат платежів у CRM немає.
+            </p>
+          )}
           </>)}
 
           {/* ── Залучення і утримання ────────────────────────────────────
@@ -1007,7 +1027,8 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
                 <thead>
                   <tr className="border-b border-gray-200">
                     <Th>Місяць</Th>
-                    <Th align="right">Дохід</Th>
+                    <Th align="right">Законтрактовано</Th>
+                    {report.hasPaid && <Th align="right">Оплачено</Th>}
                     <Th align="right">Угод</Th>
                     <Th align="right">Клієнтів</Th>
                     <Th align="right">Нових</Th>
@@ -1028,6 +1049,9 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
                         )}
                       </td>
                       <td className="py-2 px-3 text-sm text-right font-bold text-gray-900 whitespace-nowrap">{uah(m.revenue)}</td>
+                      {report.hasPaid && (
+                        <td className="py-2 px-3 text-sm text-right text-emerald-700 font-semibold whitespace-nowrap">{uah(m.paid)}</td>
+                      )}
                       <td className="py-2 px-3 text-sm text-right text-gray-700">{num(m.deals)}</td>
                       <td className="py-2 px-3 text-sm text-right text-gray-700">{num(m.clients)}</td>
                       <td className="py-2 px-3 text-sm text-right text-gray-700">{num(m.newClients)}</td>
