@@ -560,6 +560,93 @@ interface AnnouncementRecord {
 
 const announcementCronTasks = new Map<string, any>();
 
+// Оголошення (перерви тощо) запам'ятовуємо, щоб ввечері прибрати їх із групи.
+// Firestore, якщо підключений (файлова система хостингу ефемерна), інакше файл.
+const SENT_ANNOUNCEMENTS_COLLECTION = 'crm_telegram_sent_announcements';
+const sentAnnouncementsFile = path.join(DATA_DIR, 'sent-announcements.json');
+
+interface SentAnnouncement { id: string; chatId: string; messageId: number; sentAt: string; }
+
+async function rememberSentAnnouncement(chatId: string, messageId: number): Promise<void> {
+  const entry: SentAnnouncement = {
+    id: `${chatId}_${messageId}`.replace(/[^\w-]/g, '_'),
+    chatId, messageId, sentAt: new Date().toISOString()
+  };
+  try {
+    const db = initFirebase();
+    if (db) {
+      await db.collection(SENT_ANNOUNCEMENTS_COLLECTION).doc(entry.id).set(entry);
+    } else {
+      const list: SentAnnouncement[] = fs.existsSync(sentAnnouncementsFile)
+        ? JSON.parse(fs.readFileSync(sentAnnouncementsFile, 'utf-8')) : [];
+      list.push(entry);
+      fs.writeFileSync(sentAnnouncementsFile, JSON.stringify(list));
+    }
+  } catch (e) { console.error('Не вдалося зберегти message_id оголошення:', e); }
+}
+
+async function loadSentAnnouncements(): Promise<SentAnnouncement[]> {
+  const db = initFirebase();
+  if (db) {
+    const snap = await db.collection(SENT_ANNOUNCEMENTS_COLLECTION).get();
+    return snap.docs.map(d => d.data() as SentAnnouncement);
+  }
+  return fs.existsSync(sentAnnouncementsFile) ? JSON.parse(fs.readFileSync(sentAnnouncementsFile, 'utf-8')) : [];
+}
+
+async function forgetSentAnnouncements(ids: Set<string>): Promise<void> {
+  const db = initFirebase();
+  if (db) {
+    await Promise.all([...ids].map(id => db.collection(SENT_ANNOUNCEMENTS_COLLECTION).doc(id).delete()));
+  } else {
+    const list = await loadSentAnnouncements();
+    fs.writeFileSync(sentAnnouncementsFile, JSON.stringify(list.filter(a => !ids.has(a.id))));
+  }
+}
+
+/**
+ * Видалити з чату всі оголошення, надіслані ботом. Telegram дозволяє боту
+ * видаляти власні повідомлення лише 48 годин, тому старіші просто забуваємо.
+ */
+async function cleanupSentAnnouncements(): Promise<{ deleted: number; failed: number }> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return { deleted: 0, failed: 0 };
+  let deleted = 0, failed = 0;
+  const done = new Set<string>();
+  for (const a of await loadSentAnnouncements()) {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/deleteMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: a.chatId, message_id: a.messageId })
+      });
+      const tooOld = Date.now() - new Date(a.sentAt).getTime() > 48 * 3600 * 1000;
+      if (res.ok) { deleted++; done.add(a.id); }
+      else {
+        const errText = await res.text();
+        // Уже видалене вручну або застаріле — повторні спроби не допоможуть
+        if (tooOld || /message to delete not found|can't be deleted/i.test(errText)) done.add(a.id);
+        else { failed++; console.error('Telegram deleteMessage error:', errText); }
+      }
+    } catch (e) { failed++; console.error('Telegram deleteMessage request failed:', e); }
+  }
+  if (done.size) await forgetSentAnnouncements(done);
+  return { deleted, failed };
+}
+
+let announcementCleanupCronTask: any = null;
+
+function setupAnnouncementCleanupCron(expr: string = process.env.TELEGRAM_CLEANUP_CRON || '0 21 * * *') {
+  if (announcementCleanupCronTask) { announcementCleanupCronTask.stop(); announcementCleanupCronTask = null; }
+  try {
+    announcementCleanupCronTask = cron.schedule(expr, async () => {
+      const r = await cleanupSentAnnouncements();
+      console.log(`🧹 Telegram cleanup: видалено ${r.deleted}, помилок ${r.failed}.`);
+    }, { timezone: 'Europe/Kyiv' });
+    console.log(`🧹 Telegram cleanup cron scheduled (${expr}).`);
+  } catch (err) { console.error(`❌ Invalid cleanup cron: ${expr}`, err); }
+}
+
 async function sendAnnouncementToTelegram(text: string): Promise<{ success: boolean; error?: string }> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID || '-5182383955';
@@ -575,6 +662,9 @@ async function sendAnnouncementToTelegram(text: string): Promise<{ success: bool
       console.error('Telegram API rejected announcement:', errText);
       return { success: false, error: 'telegram_api_error' };
     }
+    const data: any = await res.json().catch(() => null);
+    const messageId = data?.result?.message_id;
+    if (messageId) await rememberSentAnnouncement(String(chatId), messageId);
     return { success: true };
   } catch (e) {
     return { success: false, error: 'request_failed' };
@@ -2301,6 +2391,7 @@ async function startServer() {
   const initialState = await getDb();
   setupTelegramCron(initialState.aiReportSchedule || '0 8 * * *');
   setupAnnouncementCrons(initialState.announcements || []);
+  setupAnnouncementCleanupCron();
   setupPersonalNotificationCrons(initialState.personalNotifications || DEFAULT_PERSONAL_NOTIFICATIONS);
   setupTaskAutomationCrons(initialState.taskAutomations || []);
 
