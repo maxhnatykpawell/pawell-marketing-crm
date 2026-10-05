@@ -16,12 +16,11 @@ function clientsWord(n: number): string {
 }
 
 /**
- * Клієнти, розкладені на Tier 1–4 за доходом у періоді.
+ * Клієнти, розкладені на Tier 1–4 за доходом за весь час (фіксовані межі).
  *
- * Сенс блоку — назвати числа, які «топ-10 % дають N %» лишає за кадром:
- * скільки саме це клієнтів і з якої суми починається кожен тір. Клік по
- * рядку залишає у вибірці лише цей тір — так «хто саме ці 10 %» стає
- * списком, а не здогадкою.
+ * Сенс блоку — скільки клієнтів у кожному тірі й скільки грошей вони дали за
+ * вибраний період. Межі тірів не плавають разом із вибіркою, тож «Tier 1» завжди
+ * означає одну й ту саму суму. Клік по рядку залишає у вибірці лише цей тір.
  */
 export default function ClientTiers({
   breakdown, focus, onFocus,
@@ -62,8 +61,8 @@ export default function ClientTiers({
       </div>
 
       <p className="text-sm text-gray-500 mb-5">
-        Ранг за доходом у періоді. Розподіляються <strong className="text-gray-700">{fmt(rankedCount)}</strong>{' '}
-        клієнтів із доходом &gt; 0
+        Тір — за доходом клієнта <strong className="text-gray-700">за весь час</strong>, межі фіксовані.{' '}
+        У вибірці <strong className="text-gray-700">{fmt(rankedCount)}</strong> {clientsWord(rankedCount)} з тіром
         {zeroRevenueCount > 0 && (
           <>
             {' '}· <strong className="text-gray-700">{fmt(zeroRevenueCount)}</strong> без доходу в тіри не входять
@@ -112,9 +111,9 @@ export default function ClientTiers({
               </div>
 
               <p className="mt-1.5 text-[11px] text-gray-500">
-                Поріг входу <strong className="text-gray-700">{fmt(s.minRevenue)} ₴</strong>
-                {' · '}діапазон {fmt(s.minRevenue)}–{fmt(s.maxRevenue)} ₴
-                {' · '}у середньому {fmt(s.avgRevenue)} ₴
+                За весь час у вибірці: {fmt(s.lifetimeMin)}–{fmt(s.lifetimeMax)} ₴
+                {' · '}у середньому {fmt(s.lifetimeAvg)} ₴
+                {' · '}дохід і частка — за вибраний період
               </p>
             </button>
           );
@@ -122,8 +121,8 @@ export default function ClientTiers({
       </div>
 
       <p className="text-[11px] text-gray-400 mt-4">
-        Загальний дохід платників вибірки — {fmt(total)} ₴. Тіри перераховуються під поточні
-        фільтри й період, тож це завжди ранг усередині того зрізу, який ви зараз дивитесь.
+        Дохід вибірки за період — {fmt(total)} ₴. Тір від періоду й фільтрів не залежить: клієнт
+        лишається в тому ж тірі, який зріз не відкрийте, і змінює його лише новими покупками.
       </p>
     </div>
   );

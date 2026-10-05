@@ -274,7 +274,7 @@ export default function AnalyticsReport({
       {/* ── Тіри ──────────────────────────────────────────────────────────── */}
       <Section
         title="Тіри клієнтів"
-        hint="Поділ за часткою кількості платників: Tier 1 — топ-10 % за доходом, далі 20 %, 30 % і решта. Клієнти без доходу в періоді в тіри не входять."
+        hint="Тір — за доходом клієнта за весь час, межі фіксовані й від періоду та фільтрів не залежать. Дохід і частка — за вибраний період; діапазон — дохід клієнтів тіру за весь час."
       >
         {tiered.stats.length === 0 ? (
           <p className="text-[10px] text-gray-500 italic">У вибірці немає клієнтів з доходом більшим за нуль.</p>
@@ -287,9 +287,9 @@ export default function AnalyticsReport({
                 <TH align="right">Клієнтів</TH>
                 <TH align="right">Дохід</TH>
                 <TH align="right">Частка доходу</TH>
-                <TH align="right">Поріг входу</TH>
-                <TH align="right">Найбільший</TH>
-                <TH align="right">Середній</TH>
+                <TH align="right">Найменший за весь час</TH>
+                <TH align="right">Найбільший за весь час</TH>
+                <TH align="right">Середній за весь час</TH>
               </tr>
             </thead>
             <tbody>
@@ -302,9 +302,9 @@ export default function AnalyticsReport({
                     <TD align="right">{num(s.count)}</TD>
                     <TD align="right">{uah(s.revenue)}</TD>
                     <TD align="right" bold>{s.revenueShare} %</TD>
-                    <TD align="right">{uah(s.minRevenue)}</TD>
-                    <TD align="right">{uah(s.maxRevenue)}</TD>
-                    <TD align="right">{uah(s.avgRevenue)}</TD>
+                    <TD align="right">{uah(s.lifetimeMin)}</TD>
+                    <TD align="right">{uah(s.lifetimeMax)}</TD>
+                    <TD align="right">{uah(s.lifetimeAvg)}</TD>
                   </tr>
                 );
               })}
@@ -313,7 +313,7 @@ export default function AnalyticsReport({
         )}
         {tiered.zeroRevenueCount > 0 && (
           <p className="text-[9px] text-gray-500 mt-1">
-            Поза тірами: {num(tiered.zeroRevenueCount)} клієнтів без доходу в періоді.
+            Поза тірами: {num(tiered.zeroRevenueCount)} клієнтів без доходу за весь час.
           </p>
         )}
       </Section>

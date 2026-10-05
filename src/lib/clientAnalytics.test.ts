@@ -4,7 +4,7 @@ import {
   EMPTY_FILTERS, ClientRecord, ClientFilters, chunkList, chunkBySize, getPurchaseMonths,
   classifyCustomer, computeCustomerMix,
   checkRfmThresholds, sanitizeRfmThresholds, countByRfm, DEFAULT_RFM_THRESHOLDS,
-  calculateCohorts,
+  calculateCohorts, TIER_MIN_REVENUE, tierOfRevenue,
 } from './clientAnalytics';
 
 let failures = 0;
@@ -158,42 +158,49 @@ console.log('\nРозподіл доходу');
   check('поріг = дохід меншого з двох', d4.top10Threshold, 1900);
 }
 
-console.log('\nТіри');
+console.log('\nТіри — фіксовані межі за доходом за весь час');
 {
+  const { 1: T1, 2: T2, 3: T3 } = TIER_MIN_REVENUE;
   const mk = (revenues: number[]) =>
     enrichClients(revenues.map((r, i) => client({ id: String(i), revenue: r })), NOW);
 
-  const t = assignTiers(mk(Array.from({ length: 10 }, (_, i) => (i + 1) * 100)));
-  check('10 платників: розміри тірів', t.stats.map(s => s.count), [1, 2, 3, 4]);
-  check('тіри за спаданням доходу', t.stats.map(s => s.tier), [1, 2, 3, 4]);
-  check('Tier 1 — найбільший клієнт', t.stats[0].maxRevenue, 1000);
-  check('поріг входу в Tier 1', t.stats[0].minRevenue, 1000);
-  check('частки доходу сумуються в 100', t.stats.reduce((s, x) => s + x.revenueShare, 0), 100);
-  check('усі платники ранжовані', t.rankedCount, 10);
-  check('без доходу нікого немає', t.zeroRevenueCount, 0);
+  check('межа: рівно на порозі — вищий тір',
+    [tierOfRevenue(T1), tierOfRevenue(T2), tierOfRevenue(T3)], [1, 2, 3]);
+  check('межа: на гривню нижче — нижчий тір',
+    [tierOfRevenue(T1 - 1), tierOfRevenue(T2 - 1), tierOfRevenue(T3 - 1)], [2, 3, 4]);
+  check('будь-який дохід більший за нуль — щонайменше Tier 4', tierOfRevenue(1), 4);
+  check('нуль і мінус — поза тірами', [tierOfRevenue(0), tierOfRevenue(-5), tierOfRevenue(NaN)], [null, null, null]);
+  check('межі спадають: Tier 1 > Tier 2 > Tier 3 > 0', T1 > T2 && T2 > T3 && T3 > 0, true);
 
-  const zeros = assignTiers(mk([0, 0, 0, 0, 0, 0, 0, 0, 0, 1000]));
-  check('нульові клієнти поза тірами', zeros.zeroRevenueCount, 9);
-  check('ранжується лише платник', zeros.rankedCount, 1);
-  check('єдиний платник — Tier 1', zeros.stats.map(s => [s.tier, s.count]), [[1, 1]]);
-  check(
-    'нульовим тір не присвоєно',
-    zeros.clients.filter(c => c.tier === null).length,
-    9,
-  );
+  const t = assignTiers(mk([T1 * 2, T1, T2, T3, 1, 0]));
+  check('розклад по тірах', t.stats.map(s => [s.tier, s.count]), [[1, 2], [2, 1], [3, 1], [4, 1]]);
+  check('діапазон тіру — дохід за весь час', [t.stats[0].lifetimeMin, t.stats[0].lifetimeMax], [T1, T1 * 2]);
+  check('частки доходу сумуються в 100', Math.round(t.stats.reduce((s, x) => s + x.revenueShare, 0)), 100);
+  check('без доходу — поза тірами', [t.rankedCount, t.zeroRevenueCount], [5, 1]);
+  check('нульовому тір не присвоєно', t.clients[5].tier, null);
 
-  const noEarners = assignTiers(mk([0, 0, 0]));
-  check('без платників тірів немає', [noEarners.stats.length, noEarners.rankedCount], [0, 0]);
+  // Головна вимога: тір — властивість клієнта, а не вибірки
+  const inCrowd = assignTiers(mk([T1 * 5, T1 * 4, T1 * 3, T2 + 1, 10, 10, 10])).clients[3].tier;
+  const alone = assignTiers(mk([T2 + 1])).clients[0].tier;
+  const withGiant = assignTiers(mk([T2 + 1, T1 * 100])).clients[0].tier;
+  check('той самий клієнт — той самий тір у будь-якій вибірці', [inCrowd, alone, withGiant], [2, 2, 2]);
 
-  // Однакові суми не можна розкладати в різні тіри: межа зсувається вниз
-  const ties = assignTiers(mk([500, 500, 500, 500, 500, 500, 500, 500, 500, 500]));
-  check('десять однакових сум — усі в Tier 1', ties.stats.map(s => [s.tier, s.count]), [[1, 10]]);
+  // Період змінює дохід за період, але не тір
+  const [yearly] = enrichClients([client({
+    id: 'p', revenue: T1,
+    monthlyStats: { '2026-01': { revenue: 10, deals: 1 }, '2026-02': { revenue: T1 - 10, deals: 1 } },
+  })], NOW, undefined, { from: '2026-01', to: '2026-01' });
+  const periodTier = assignTiers([yearly]);
+  check('період урізав дохід до 10 ₴', yearly.periodRevenue, 10);
+  check('а тір лишився за доходом за весь час', periodTier.clients[0].tier, 1);
+  check('дохід у картці — за період', periodTier.stats[0].revenue, 10);
 
   check('порядок вхідного списку збережено',
     assignTiers(mk([100, 900, 500])).clients.map(c => c.periodRevenue), [100, 900, 500]);
 
   check('порожній вхід не падає',
     [assignTiers([]).rankedCount, assignTiers([]).stats.length], [0, 0]);
+  check('без платників тірів немає', [assignTiers(mk([0, 0])).stats.length, assignTiers(mk([0, 0])).rankedCount], [0, 0]);
 }
 
 console.log('\nCSV');
@@ -209,7 +216,7 @@ console.log('\nCSV');
   check('є і періодні, і загальні числа', csv.split('\r\n')[0].split(';').slice(2, 7),
     ['Дохід за період', 'Угод за період', 'Середній чек', 'Дохід за весь час', 'Угод за весь час']);
   // Окремий рядок без лапок і крапки з комою — щоб split(';') бив по колонках
-  const plain = enrichClients([client({ id: '2', name: 'Бета', revenue: 100 })], NOW);
+  const plain = enrichClients([client({ id: '2', name: 'Бета', revenue: TIER_MIN_REVENUE[1] })], NOW);
   check('без тіру колонка порожня', clientsToCsv(plain).split('\r\n')[1].split(';')[1], '');
   check('тір потрапляє в CSV',
     clientsToCsv(assignTiers(plain).clients).split('\r\n')[1].split(';')[1], 'Tier 1');

@@ -726,8 +726,13 @@ export type TierId = 1 | 2 | 3 | 4;
 export interface TierMeta {
   id: TierId;
   label: string;
-  /** Яку частку клієнтів-платників забирає тір */
-  sharePct: number;
+  /**
+   * Нижня межа тіру — дохід клієнта ЗА ВЕСЬ ЧАС, ₴ (включно).
+   * Для Tier 4 це «більше нуля»: клієнт без жодної угоди поза тірами.
+   */
+  minRevenue: number;
+  /** Верхня межа (не включно); null — для Tier 1 її немає */
+  maxRevenue: number | null;
   hint: string;
   /** Класи Tailwind для бейджа в таблиці */
   badge: string;
@@ -736,109 +741,126 @@ export interface TierMeta {
 }
 
 /**
- * Межі тірів — за часткою КІЛЬКОСТІ платників, не за сумою.
+ * Межі тірів — фіксовані суми доходу клієнта за весь час.
  *
- * Так «Tier 1» лишається зрозумілим («десята частина клієнтів, найбільші»)
- * незалежно від того, наскільки перекошений дохід. Поділ за накопиченою сумою
- * (класичний ABC) при перекосі дає Tier 1 з одного клієнта, і тір перестає
- * бути придатним для роботи — з ним нічого не сплануєш.
+ * Тір — це характеристика клієнта, а не його місце в рейтингу поточної вибірки.
+ * Раніше тіри були «топ-10 %, наступні 20 %…» від того, що зараз відфільтровано й
+ * за який період: змінив період чи додав фільтр — і той самий клієнт стрибав з
+ * Tier 1 у Tier 3, а межа «Tier 1» щоразу була іншою сумою. Говорити з командою
+ * мовою «це Tier 1» при такому не вийде: завтра він уже не Tier 1.
+ *
+ * Тепер клієнт потрапляє в тір за сумою всіх своїх угод, і вона не залежить від
+ * ні періоду, ні фільтрів, ні того, хто ще є в базі. Змінити тір клієнта може
+ * лише його власна поведінка — нові покупки. Суми підібрано по реальній базі й
+ * змінюються свідомо, правкою цих констант, а не самі собою.
  */
+export const TIER_MIN_REVENUE: Record<1 | 2 | 3, number> = {
+  1: 1_000_000,
+  2: 250_000,
+  3: 50_000,
+};
+
+const uahShort = (n: number) => `${n.toLocaleString('uk-UA')} ₴`;
+
 export const TIERS: TierMeta[] = [
-  { id: 1, label: 'Tier 1', sharePct: 10, hint: 'топ-10 % за доходом',   badge: 'bg-amber-100 text-amber-800 border-amber-200',       bar: 'bg-amber-500' },
-  { id: 2, label: 'Tier 2', sharePct: 20, hint: 'наступні 20 %',          badge: 'bg-emerald-100 text-emerald-800 border-emerald-200', bar: 'bg-emerald-500' },
-  { id: 3, label: 'Tier 3', sharePct: 30, hint: 'наступні 30 %',          badge: 'bg-blue-100 text-blue-800 border-blue-200',          bar: 'bg-blue-500' },
-  { id: 4, label: 'Tier 4', sharePct: 40, hint: 'решта платників',        badge: 'bg-gray-100 text-gray-600 border-gray-200',          bar: 'bg-gray-400' },
+  {
+    id: 1, label: 'Tier 1', minRevenue: TIER_MIN_REVENUE[1], maxRevenue: null,
+    hint: `від ${uahShort(TIER_MIN_REVENUE[1])}`,
+    badge: 'bg-amber-100 text-amber-800 border-amber-200', bar: 'bg-amber-500',
+  },
+  {
+    id: 2, label: 'Tier 2', minRevenue: TIER_MIN_REVENUE[2], maxRevenue: TIER_MIN_REVENUE[1],
+    hint: `${uahShort(TIER_MIN_REVENUE[2])} – ${uahShort(TIER_MIN_REVENUE[1])}`,
+    badge: 'bg-emerald-100 text-emerald-800 border-emerald-200', bar: 'bg-emerald-500',
+  },
+  {
+    id: 3, label: 'Tier 3', minRevenue: TIER_MIN_REVENUE[3], maxRevenue: TIER_MIN_REVENUE[2],
+    hint: `${uahShort(TIER_MIN_REVENUE[3])} – ${uahShort(TIER_MIN_REVENUE[2])}`,
+    badge: 'bg-blue-100 text-blue-800 border-blue-200', bar: 'bg-blue-500',
+  },
+  {
+    id: 4, label: 'Tier 4', minRevenue: 0, maxRevenue: TIER_MIN_REVENUE[3],
+    hint: `до ${uahShort(TIER_MIN_REVENUE[3])}`,
+    badge: 'bg-gray-100 text-gray-600 border-gray-200', bar: 'bg-gray-400',
+  },
 ];
 
-/** Накопичені межі: Tier 1 — до 10 %, Tier 2 — до 30 %, Tier 3 — до 60 %, далі Tier 4 */
-const TIER_CUTS: { tier: TierId; upTo: number }[] = [
-  { tier: 1, upTo: 0.1 },
-  { tier: 2, upTo: 0.3 },
-  { tier: 3, upTo: 0.6 },
-];
+/** Тір за доходом клієнта за весь час; null — угод на суму не було, клієнт поза тірами */
+export function tierOfRevenue(revenue: number): TierId | null {
+  if (!(revenue > 0)) return null;
+  if (revenue >= TIER_MIN_REVENUE[1]) return 1;
+  if (revenue >= TIER_MIN_REVENUE[2]) return 2;
+  if (revenue >= TIER_MIN_REVENUE[3]) return 3;
+  return 4;
+}
 
 export interface TieredClient extends EnrichedClient {
-  /** null — клієнт без доходу в періоді, він поза тірами */
+  /** null — у клієнта ще не було доходу, він поза тірами */
   tier: TierId | null;
 }
 
 export interface TierStat {
   tier: TierId;
+  /** Скільки клієнтів вибірки в тірі */
   count: number;
+  /** Дохід тіру за ВИБРАНИЙ період — те, що він дав саме зараз */
   revenue: number;
-  /** Частка загального доходу вибірки, 0–100 */
+  /** Частка доходу вибірки за період, 0–100 */
   revenueShare: number;
-  /** Поріг входу — дохід найменшого клієнта тіру */
-  minRevenue: number;
-  maxRevenue: number;
-  avgRevenue: number;
+  /** Дохід клієнтів тіру за весь час: найменший, найбільший, середній — те, за чим вони розкладені */
+  lifetimeMin: number;
+  lifetimeMax: number;
+  lifetimeAvg: number;
 }
 
 export interface TierBreakdown {
   clients: TieredClient[];
   stats: TierStat[];
-  /** Скільки платників розподілено по тірах */
+  /** Скільки клієнтів вибірки отримали тір */
   rankedCount: number;
-  /** Клієнти з нульовим доходом у періоді — у тіри не потрапляють */
+  /** Клієнти без доходу за весь час — поза тірами */
   zeroRevenueCount: number;
-  /** Загальний дохід вибірки — база для revenueShare */
+  /** Дохід вибірки за період — база для revenueShare */
   total: number;
 }
 
 /**
- * Розкласти клієнтів на Tier 1–4 за доходом у періоді.
+ * Розкласти клієнтів на Tier 1–4 за доходом за весь час (див. TIER_MIN_REVENUE).
  *
- * Клієнти з нульовим доходом до тірів не входять узагалі. Інакше при
- * перекошених даних три нижні тіри складались би з самих нулів і не
- * розрізняли б нікого: «Tier 3: 0 ₴» нічого не каже про клієнта.
- *
- * Однакові суми не розриваються межею тіру — два клієнти з тим самим доходом
- * в різних тірах виглядають як помилка, навіть коли межа проходить рівно між ними.
+ * Тір клієнта від складу вибірки не залежить: той самий клієнт отримає той самий
+ * тір і в списку з одного клієнта, і в повній базі. Вибірка визначає лише, кого
+ * рахувати в картці, — а дохід і частки в ній лишаються доходом ЗА ПЕРІОД, бо
+ * картка відповідає на питання «скільки гроші дали ці тіри саме зараз».
  */
 export function assignTiers(clients: EnrichedClient[]): TierBreakdown {
-  const earners = clients
-    .filter(c => c.periodRevenue > 0)
-    .sort((a, b) => b.periodRevenue - a.periodRevenue);
-
-  const n = earners.length;
-  const tierOf = new Map<string, TierId>();
-
-  let start = 0;
-  for (const { tier, upTo } of TIER_CUTS) {
-    if (start >= n) break;
-    // Хоча б один клієнт на тір, поки платники не скінчились
-    let end = Math.min(n, Math.max(start + 1, Math.round(n * upTo)));
-    while (end < n && earners[end].periodRevenue === earners[end - 1].periodRevenue) end++;
-    for (let i = start; i < end; i++) tierOf.set(earners[i].id, tier);
-    start = end;
-  }
-  for (let i = start; i < n; i++) tierOf.set(earners[i].id, 4);
-
-  const total = earners.reduce((s, c) => s + c.periodRevenue, 0);
+  const tiered: TieredClient[] = clients.map(c => ({ ...c, tier: tierOfRevenue(c.revenue) }));
+  const ranked = tiered.filter(c => c.tier !== null);
+  const total = ranked.reduce((s, c) => s + c.periodRevenue, 0);
 
   const stats: TierStat[] = [];
   for (const { id } of TIERS) {
-    const members = earners.filter(c => tierOf.get(c.id) === id);
+    const members = ranked.filter(c => c.tier === id);
     if (members.length === 0) continue;
     const revenue = members.reduce((s, c) => s + c.periodRevenue, 0);
+    let lo = Infinity, hi = -Infinity, sum = 0;
+    for (const c of members) { lo = Math.min(lo, c.revenue); hi = Math.max(hi, c.revenue); sum += c.revenue; }
     stats.push({
       tier: id,
       count: members.length,
       revenue,
       revenueShare: total > 0 ? Math.round((revenue / total) * 1000) / 10 : 0,
-      // members відсортовані за спаданням разом з earners
-      minRevenue: members[members.length - 1].periodRevenue,
-      maxRevenue: members[0].periodRevenue,
-      avgRevenue: Math.round(revenue / members.length),
+      lifetimeMin: lo,
+      lifetimeMax: hi,
+      lifetimeAvg: Math.round(sum / members.length),
     });
   }
 
   return {
     // Порядок вхідного списку зберігаємо: він заданий сортуванням таблиці
-    clients: clients.map(c => ({ ...c, tier: tierOf.get(c.id) ?? null })),
+    clients: tiered,
     stats,
-    rankedCount: n,
-    zeroRevenueCount: clients.length - n,
+    rankedCount: ranked.length,
+    zeroRevenueCount: clients.length - ranked.length,
     total,
   };
 }

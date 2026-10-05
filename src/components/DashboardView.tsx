@@ -288,7 +288,7 @@ export default function DashboardView() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-800">Головна панель відділу</h2>
+          <h2 className="text-3xl font-extrabold tracking-tight text-gray-900">Головна панель відділу</h2>
           <p className="text-gray-500 text-sm mt-1">Огляд ключових показників та розклад на поточний тиждень</p>
         </div>
         <button
@@ -304,9 +304,10 @@ export default function DashboardView() {
 
 
       {/* KeepInCRM Block */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex-shrink-0">
+      <div className="flex flex-col gap-5 flex-shrink-0">
+        <div className="bg-white rounded-[24px] shadow-sm border border-gray-100 overflow-hidden">
         {/* Header */}
-        <div className="flex flex-wrap items-center gap-3 px-6 py-4 border-b border-gray-100 bg-gray-50/50">
+        <div className="flex flex-wrap items-center gap-3 px-6 py-5">
           {/* Icon + title */}
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm flex-shrink-0">
@@ -396,9 +397,12 @@ export default function DashboardView() {
           </div>
         )}
 
-        {/* Content */}
-        <div className="p-6">
+        </div>
 
+        {/* Content */}
+        <div className="flex flex-col gap-5">
+
+          <div className="bg-white rounded-[24px] shadow-sm border border-gray-100 p-6">
           {kLoading ? (
             <div className="flex items-center justify-center py-8 text-gray-400">
               <Loader2 className="w-5 h-5 animate-spin mr-2" />
@@ -425,6 +429,7 @@ export default function DashboardView() {
                 color="blue"
                 icon={<Users className="w-4 h-4" />}
                 change={kData.comparison?.acquiredChange ?? null}
+                trend={chartData.map(e => e.acquired)}
               />
 
               {/* Скільки з цієї когорти вже конвертувалось */}
@@ -435,6 +440,7 @@ export default function DashboardView() {
                 color="green"
                 icon={<Target className="w-4 h-4" />}
                 change={kData.comparison?.clientsChange ?? null}
+                trend={chartData.map(e => e.totalClientsToday || 0)}
               />
               
               {/* Agreements */}
@@ -447,6 +453,7 @@ export default function DashboardView() {
                 change={kData.comparison?.agreementsChange ?? null}
                 subTotal={kData.aggregated.totalAgreementsSum ? `${kData.aggregated.totalAgreementsSum.toLocaleString('uk-UA')} ₴` : undefined}
                 showSum
+                trend={chartData.map(e => e.totalAgreementsToday || 0)}
               />
 
               {/* Avg Deal Value */}
@@ -466,7 +473,7 @@ export default function DashboardView() {
                     приводити в одне й те саме місце. */}
                 <div 
                   onClick={() => setActiveView('analytics')}
-                  className="flex-1 flex flex-col justify-center bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl border border-purple-100 p-5 relative overflow-hidden transition-all cursor-pointer hover:shadow-md hover:border-purple-300 group"
+                  className="flex-1 flex flex-col justify-center bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl border border-purple-100 p-5 relative overflow-hidden transition-all cursor-pointer hover:shadow-md hover:border-purple-300 group"
                   title="Відкрити розширену аналітику"
                 >
                   {ltvLoading ? (
@@ -535,7 +542,7 @@ export default function DashboardView() {
                 >
                   Конверсія когорти
                 </p>
-                <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-br from-violet-50 to-indigo-50 rounded-xl border border-violet-100 p-6">
+                <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-br from-violet-50 to-indigo-50 rounded-2xl border border-violet-100 p-6">
                   <span className="text-5xl font-black text-violet-700 leading-none">
                     {kData.aggregated.avgConversionRate}%
                   </span>
@@ -579,6 +586,7 @@ export default function DashboardView() {
 
             </div>
           )}
+          </div>
 
           {/* ── Юніт-економіка: CAC ──────────────────────────────────────── */}
           {/* Прив'язано до права на «Витрати», а не до ролі: CAC — це той самий
@@ -614,7 +622,7 @@ export default function DashboardView() {
 
           {/* Chart Section */}
           {kData && kData.entries.length > 0 && (
-            <div className="mt-8 pt-6 border-t border-gray-100">
+            <div className="bg-white rounded-[24px] shadow-sm border border-gray-100 p-6">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="text-sm font-bold text-gray-800">Динаміка залучення та конверсії</h3>
               </div>
@@ -752,7 +760,7 @@ export default function DashboardView() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col min-h-[400px]">
+      <div className="bg-white rounded-[24px] shadow-sm border border-gray-100 overflow-hidden flex flex-col min-h-[400px]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex-shrink-0">
           <h3 className="text-lg font-bold text-gray-800 flex items-center">
             <CalendarIcon className="w-5 h-5 mr-3 text-blue-500" />
@@ -889,7 +897,7 @@ function CacSection({
   const maxSourceCac = Math.max(...bySource.matched.map(s => s.cac ?? 0), 1);
 
   return (
-    <div className="mt-8 pt-6 border-t border-gray-100">
+    <div className="bg-white rounded-[24px] shadow-sm border border-gray-100 p-6">
       {/* Header + перемикач бази витрат */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
         <div className="flex items-center gap-2">
@@ -917,7 +925,7 @@ function CacSection({
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
 
         {/* CAC */}
-        <div className="bg-gradient-to-br from-sky-50 to-cyan-50 rounded-xl border border-sky-100 p-4 flex flex-col">
+        <div className="bg-gradient-to-br from-sky-50 to-cyan-50 rounded-2xl border border-sky-100 p-4 flex flex-col">
           <div className="flex items-start justify-between">
             <p
               className="text-[11px] font-semibold text-sky-700 uppercase tracking-wider"
@@ -966,7 +974,7 @@ function CacSection({
         </div>
 
         {/* CPL */}
-        <div className="bg-gradient-to-br from-indigo-50 to-blue-50 rounded-xl border border-indigo-100 p-4 flex flex-col">
+        <div className="bg-gradient-to-br from-indigo-50 to-blue-50 rounded-2xl border border-indigo-100 p-4 flex flex-col">
           <div className="flex items-start justify-between">
             <p
               className="text-[11px] font-semibold text-indigo-700 uppercase tracking-wider"
@@ -999,7 +1007,7 @@ function CacSection({
         </div>
 
         {/* LTV : CAC */}
-        <div className="bg-gradient-to-br from-purple-50 to-fuchsia-50 rounded-xl border border-purple-100 p-4 flex flex-col">
+        <div className="bg-gradient-to-br from-purple-50 to-fuchsia-50 rounded-2xl border border-purple-100 p-4 flex flex-col">
           <div className="flex items-start justify-between">
             <p
               className="text-[11px] font-semibold text-purple-700 uppercase tracking-wider"
@@ -1034,13 +1042,21 @@ function CacSection({
                     ? 'Окупається, але запасу мало (норма ≥ 3×)'
                     : 'Клієнт коштує дорожче, ніж приносить'}
               </p>
-              <p className="text-[10px] text-gray-400 mt-1">База: {ltvBasis}</p>
+              {/* Шкала 0–5×: мітка на 3× — бенчмарк здорової економіки */}
+              <div className="relative mt-3 h-2 rounded-full bg-purple-100" title="Мітка — бенчмарк 3×">
+                <div
+                  className={`h-2 rounded-full ${ltvToCac >= 3 ? 'bg-emerald-500' : ltvToCac >= 1 ? 'bg-amber-500' : 'bg-red-500'}`}
+                  style={{ width: `${Math.min(100, (ltvToCac / 5) * 100)}%` }}
+                />
+                <span className="absolute -top-0.5 h-3 w-0.5 rounded bg-gray-500" style={{ left: '60%' }} />
+              </div>
+              <p className="text-[10px] text-gray-400 mt-2">База: {ltvBasis}</p>
             </>
           )}
         </div>
 
         {/* Витрати періоду */}
-        <div className="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-100 p-4 flex flex-col">
+        <div className="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-2xl border border-emerald-100 p-4 flex flex-col">
           <div className="flex items-start justify-between">
             <p className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wider">
               Витрати періоду
@@ -1153,7 +1169,7 @@ function AvgDealCard({ totalSum, totalCount, bySource, sumChange }: AvgDealCardP
   return (
     <div className="flex flex-col">
       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Середній чек</p>
-      <div className="flex-1 bg-gradient-to-br from-rose-50 to-pink-50 rounded-xl border border-rose-100 p-4">
+      <div className="flex-1 bg-gradient-to-br from-rose-50 to-pink-50 rounded-2xl border border-rose-100 p-4">
 
         {/* Main value */}
         <div className="flex items-start justify-between mb-5">
@@ -1275,7 +1291,7 @@ function SalesFunnel({ acquired, clients, agreements, agreementsSum, acquiredCha
   ];
 
   return (
-    <div className="mt-8 pt-6 border-t border-gray-100">
+    <div className="bg-white rounded-[24px] shadow-sm border border-gray-100 p-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h3 className="text-sm font-bold text-gray-800">Воронка продажів</h3>
@@ -1367,7 +1383,7 @@ function SalesFunnel({ acquired, clients, agreements, agreementsSum, acquiredCha
           {stages.map((s) => (
             <div
               key={s.key}
-              className="flex items-center gap-4 rounded-xl px-4 py-3 border"
+              className="flex items-center gap-4 rounded-2xl px-4 py-3 border"
               style={{ background: s.color.light, borderColor: s.color.border }}
             >
               {/* Color dot */}
@@ -1407,7 +1423,7 @@ function SalesFunnel({ acquired, clients, agreements, agreementsSum, acquiredCha
           ))}
 
           {/* Когортна конверсія — єдиний перехід, який ці дані дозволяють виміряти */}
-          <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3 text-center">
+          <div className="rounded-2xl bg-gray-50 border border-gray-100 px-4 py-3 text-center">
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
               Залучений → Клієнт
             </p>
@@ -1425,6 +1441,24 @@ function SalesFunnel({ acquired, clients, agreements, agreementsSum, acquiredCha
   );
 }
 
+// ── Міні-графік тренду для плиток ────────────────────────────────────────────
+
+function Spark({ points, color }: { points: number[]; color: string }) {
+  const w = 120, h = 32;
+  const max = Math.max(...points), min = Math.min(...points);
+  const span = max - min || 1;
+  const d = points
+    .map((v, i) => `${i ? 'L' : 'M'}${((i * w) / (points.length - 1)).toFixed(1)} ${(h - 4 - ((v - min) / span) * (h - 8)).toFixed(1)}`)
+    .join(' ');
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-8" aria-hidden="true">
+      <path d={d} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+const SPARK_COLORS = { blue: '#3b82f6', green: '#10b981', yellow: '#f59e0b' } as const;
+
 // ── KeepInCRM Source Bar Card ─────────────────────────────────────────────────
 
 interface SourceCardProps {
@@ -1436,9 +1470,10 @@ interface SourceCardProps {
   change?: number | null;  // % зміна відносно попереднього періоду
   subTotal?: string;       // додатковий текст під тоталом (напр. сума в грн)
   showSum?: boolean;       // показати суму по кожному джерелу (для угод)
+  trend?: number[];        // значення по днях періоду — для міні-графіка
 }
 
-function KeepInCRMSourceCard({ title, total, stats, color, icon, change, subTotal, showSum }: SourceCardProps) {
+function KeepInCRMSourceCard({ title, total, stats, color, icon, change, subTotal, showSum, trend }: SourceCardProps) {
   const [isExpanded, setIsExpanded] = React.useState(false);
 
   const colors = {
@@ -1489,7 +1524,7 @@ function KeepInCRMSourceCard({ title, total, stats, color, icon, change, subTota
   return (
     <div className="flex flex-col">
       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">{title}</p>
-      <div className={`flex-1 bg-gradient-to-br ${colors.bg} rounded-xl border ${colors.border} p-4`}>
+      <div className={`flex-1 bg-gradient-to-br ${colors.bg} rounded-2xl border ${colors.border} p-4`}>
         {/* Total */}
         <div className="flex items-start justify-between mb-5">
           <div className="flex gap-2.5">
@@ -1523,6 +1558,12 @@ function KeepInCRMSourceCard({ title, total, stats, color, icon, change, subTota
             </span>
           )}
         </div>
+
+        {trend && trend.length > 1 && (
+          <div className="mb-4 -mt-1 rounded-2xl bg-white/60 px-2.5 py-1">
+            <Spark points={trend} color={SPARK_COLORS[color]} />
+          </div>
+        )}
 
         {/* Source bars */}
         {stats.length === 0 ? (

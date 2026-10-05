@@ -123,7 +123,7 @@ const ClientRow = React.memo(function ClientRow({
             {tierMeta.label}
           </button>
         ) : (
-          <span className="text-xs text-gray-300" title="Немає доходу в періоді — поза тірами">—</span>
+          <span className="text-xs text-gray-300" title="Немає доходу — поза тірами">—</span>
         )}
       </td>
       <td className="py-3 px-4 text-right">
@@ -352,18 +352,18 @@ export default function AnalyticsView() {
   const tagOptions = useMemo(() => collectTags(allClients), [allClients]);
   const cohortOptions = useMemo(() => collectCohortMonths(enriched), [enriched]);
 
-  /** Вибірка після фільтрів — база, на якій ранжуються тіри */
+  /** Вибірка після фільтрів — те, що рахується в картці тірів і таблиці */
   const filteredClients = useMemo(
     () => sortClients(applyFilters(enriched, filters), sortKey, sortDir),
     [enriched, filters, sortKey, sortDir],
   );
 
   /**
-   * Тіри рахуються ДО фокуса на тірі, а не після.
+   * Картка тірів рахується ДО фокуса на тірі, а не після.
    *
-   * Інакше вийшло б коло: обмежили вибірку до Tier 1 — і всередині неї знову
-   * з'явився б свій Tier 1. Тому склад тірів залежить лише від фільтрів
-   * і періоду, а фокус лише ховає зайві рядки.
+   * Тір клієнта від вибірки не залежить, але розподіл у картці — залежить: якби
+   * він рахувався після фокуса, то обмеживши вибірку до Tier 1 ви побачили б у
+   * картці самий лише Tier 1 і не мали б звідки перемкнутись на сусідній.
    */
   const tiered = useMemo(() => assignTiers(filteredClients), [filteredClients]);
 
