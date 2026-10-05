@@ -6,6 +6,9 @@ import {
 } from '../lib/clientAnalytics';
 import { LtvSnapshot } from '../lib/ltvSnapshot';
 import { LTV_HORIZONS } from '../lib/cohortLtv';
+import {
+  STAGES as FUNNEL_STAGES, LOW_SAMPLE, StageStat, FunnelSpeedResult, FunnelSpeedMeta, formatDuration,
+} from '../lib/funnelSpeed';
 import { PeriodValue, describePeriod } from './PeriodPicker';
 import { Section, TH, TD, Kpi, uah, num } from './report/primitives';
 
@@ -35,6 +38,40 @@ const CLIENT_ROWS = 100;
 /** Скільки місяців матриць влазить у сторінку, лишаючись читабельним */
 const MATRIX_MONTHS = 18;
 
+/** Скільки джерел і місяців швидкості воронки влазить у документ */
+const FUNNEL_SOURCE_ROWS = 15;
+const FUNNEL_COHORT_ROWS = 12;
+
+const pctShare = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`);
+
+/** Три комірки переходу: медіана, p75, частка тих, хто дійшов */
+function StageCells({ stat }: { stat: StageStat; key?: React.Key }) {
+  const low = stat.reached < LOW_SAMPLE;
+  return (
+    <>
+      <TD align="right" bold={!low}>
+        {low ? <span className="text-gray-400">{formatDuration(stat.median)}</span> : formatDuration(stat.median)}
+      </TD>
+      <TD align="right">{formatDuration(stat.p75)}</TD>
+      <TD align="right">{pctShare(stat.share)} ({num(stat.reached)}/{num(stat.entered)})</TD>
+    </>
+  );
+}
+
+function StageHeads() {
+  return (
+    <>
+      {FUNNEL_STAGES.map(s => (
+        <React.Fragment key={s.key}>
+          <TH align="right">{s.label}: медіана</TH>
+          <TH align="right">p75</TH>
+          <TH align="right">дійшли</TH>
+        </React.Fragment>
+      ))}
+    </>
+  );
+}
+
 export interface AnalyticsReportProps {
   /** Вибірка після фільтрів і фокусів — у порядку, заданому сортуванням таблиці */
   clients: TieredClient[];
@@ -55,12 +92,18 @@ export interface AnalyticsReportProps {
   snapshot: LtvSnapshot;
   /** Етапи, позначені як фінальні — від них рахується цикл угоди */
   closedStages: string[];
+  /** Швидкість проходження воронки по джерелах; null — дані ще не вивантажені */
+  funnelSpeed: FunnelSpeedResult | null;
+  funnelMeta: FunnelSpeedMeta | null;
+  /** Чи відсічені свіжі когорти і від якого віку */
+  funnelMatureOnly: boolean;
+  funnelMaturityDays: number;
 }
 
 export default function AnalyticsReport({
   clients, distribution, tiered, customerMix, period, monthRange,
   activeFilterCount, filterChips, thresholds, rfmCounts, totalClients,
-  cohorts, snapshot, closedStages,
+  cohorts, snapshot, closedStages, funnelSpeed, funnelMeta, funnelMatureOnly, funnelMaturityDays,
 }: AnalyticsReportProps) {
   const generatedAt = new Date().toLocaleString('uk-UA', {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -389,6 +432,103 @@ export default function AnalyticsReport({
                 )}
               </tbody>
             </table>
+          </>
+        )}
+      </Section>
+
+      {/* ── Швидкість воронки по джерелах ─────────────────────────────────── */}
+      <Section
+        title="Швидкість проходження воронки по джерелах"
+        breakBefore
+        hint={
+          <>
+            Лід → клієнт → угода → перша оплата. Джерело — з картки клієнта. Когорти {periodLabel} (за місяцем початку переходу)
+            {funnelMatureOnly
+              ? <>; свіжі старти (молодші за {funnelMaturityDays} дн.) відсічені</>
+              : <>; свіжі старти <strong>не відсічені</strong> — вони виглядають швидшими, ніж є</>}.
+            {' '}Медіана і p75; «дійшли» — частка стартувавших, що завершили перехід (дійшли/стартували). Сірим — менше {LOW_SAMPLE} випадків.
+          </>
+        }
+      >
+        {!funnelSpeed ? (
+          <p className="text-[10px] text-gray-500 italic">Дані про проходження воронки ще не вивантажені.</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              {FUNNEL_STAGES.map(s => {
+                const st = funnelSpeed.overall[s.key];
+                return (
+                  <Kpi
+                    key={s.key}
+                    label={s.label}
+                    value={formatDuration(st.median)}
+                    note={`p75 ${formatDuration(st.p75)} · дійшли ${pctShare(st.share)} (${num(st.reached)} з ${num(st.entered)})`}
+                  />
+                );
+              })}
+            </div>
+
+            <table className="w-full border-collapse">
+              <thead>
+                <tr><TH>Джерело</TH><TH align="right">Клієнтів</TH><StageHeads /></tr>
+              </thead>
+              <tbody>
+                {funnelSpeed.bySource.slice(0, FUNNEL_SOURCE_ROWS).map(s => (
+                  <tr key={s.source}>
+                    <TD bold>{s.source}</TD>
+                    <TD align="right">{num(s.total)}</TD>
+                    {FUNNEL_STAGES.map(st => <StageCells key={st.key} stat={s.stages[st.key]} />)}
+                  </tr>
+                ))}
+                {funnelSpeed.bySource.length > FUNNEL_SOURCE_ROWS && (
+                  <tr>
+                    <TD>… ще {num(funnelSpeed.bySource.length - FUNNEL_SOURCE_ROWS)} джерел</TD>
+                    <TD align="right">{num(funnelSpeed.bySource.slice(FUNNEL_SOURCE_ROWS).reduce((a, s) => a + s.total, 0))}</TD>
+                    {FUNNEL_STAGES.map(st => (
+                      <React.Fragment key={st.key}><TD>—</TD><TD>—</TD><TD>—</TD></React.Fragment>
+                    ))}
+                  </tr>
+                )}
+              </tbody>
+            </table>
+
+            <h3 className="text-[10px] font-bold text-gray-800 mt-4 mb-1">По місяцях старту</h3>
+            <table className="w-full border-collapse">
+              <thead>
+                <tr><TH>Місяць</TH><StageHeads /></tr>
+              </thead>
+              <tbody>
+                {funnelSpeed.byCohort.slice(0, FUNNEL_COHORT_ROWS).map(c => (
+                  <tr key={c.month}>
+                    <TD bold>{c.month}</TD>
+                    {FUNNEL_STAGES.map(st => <StageCells key={st.key} stat={c.stages[st.key]} />)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <p className="text-[8px] text-gray-500 mt-2 leading-snug">
+              Не враховано: {num(funnelSpeed.overall.leadToClient.immediate)} клієнтів, створених одразу клієнтами (не були лідами);
+              {' '}{num(funnelSpeed.overall.clientToDeal.negative)} з угодою раніше за конверсію;
+              {' '}{num(funnelSpeed.overall.dealToPayment.negative)} з оплатою раніше за першу угоду.
+              {(funnelSpeed.bulkDays.created.length + funnelSpeed.bulkDays.converted.length + funnelSpeed.bulkDays.deals.length) > 0 && (
+                <> Відкинуто дати масових імпортів і правок (сотні й тисячі подій за добу при звичайних ~10): {
+                  [...funnelSpeed.bulkDays.created, ...funnelSpeed.bulkDays.converted, ...funnelSpeed.bulkDays.deals]
+                    .map(d => d.day)
+                    .filter((d, i, all) => all.indexOf(d) === i)
+                    .sort()
+                    .join(', ')
+                }.</>
+              )}
+              {funnelSpeed.overall.dealToPayment.unverified > 0 && (
+                <> У {num(funnelSpeed.overall.dealToPayment.unverified)} клієнтів є сума «сплачено» без запису оплати (давні угоди) — у швидкості оплати вони «не дійшли».</>
+              )}
+              {funnelMeta && (
+                <> Дані KeepInCRM станом на {new Date(funnelMeta.lastSyncedAt).toLocaleString('uk-UA', {
+                  day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                })}.</>
+              )}
+            </p>
           </>
         )}
       </Section>

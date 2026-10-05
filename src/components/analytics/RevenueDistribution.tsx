@@ -17,7 +17,7 @@ export default function RevenueDistribution({ dist }: { dist: Dist }) {
   const skewed = dist.median > 0 && dist.mean / dist.median >= 2;
 
   return (
-    <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+    <div className="bg-white p-6 rounded-[20px] border border-gray-100 shadow-sm">
       <h3 className="text-base font-black text-gray-800 mb-1">Розподіл доходу</h3>
       <p className="text-sm text-gray-500 mb-5">
         Як дохід розкладається по клієнтах вибірки — середнє саме по собі цього не показує.

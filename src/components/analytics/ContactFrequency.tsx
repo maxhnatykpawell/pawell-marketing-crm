@@ -328,7 +328,7 @@ export default function ContactFrequency({
       </div>
 
       {t.contacts === 0 ? (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-6 py-12 text-center">
+        <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm px-6 py-12 text-center">
           <p className="text-sm font-semibold text-gray-700">За цей період дотиків не зафіксовано</p>
           <p className="text-xs text-gray-500 mt-1 max-w-lg mx-auto">
             Дзвінки з'являються тут у момент розмови — через тригер KeepInCRM. Завдання-контакти
@@ -338,7 +338,7 @@ export default function ContactFrequency({
       ) : (
         <>
           {/* Хто скільки — впорядковано за кількістю дотиків */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
               <h3 className="text-base font-black text-gray-800">Активність по сейлах</h3>
               <Legend />
@@ -366,7 +366,7 @@ export default function ContactFrequency({
           </div>
 
           {/* Динаміка по днях */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+          <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm p-6">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
               <h3 className="text-base font-black text-gray-800">Дотики по днях</h3>
               <Legend />
@@ -420,7 +420,7 @@ export default function ContactFrequency({
           </div>
 
           {/* Дотики на клієнта */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="text-base font-black text-gray-800">Дотики на клієнта</h3>

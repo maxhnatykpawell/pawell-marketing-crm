@@ -20,6 +20,10 @@ import { buildCohortLtv } from './src/lib/cohortLtv';
 import { chunkBySize } from './src/lib/clientAnalytics';
 import { PaidLedger, PaidLedgerMeta, applyPaid, cashMonth, extractAgreementPaid } from './src/lib/paidLedger';
 import {
+  FunnelRecord, FunnelSpeedMeta, FunnelSpeedState, RawClient, RawDeal, RawPayment,
+  mergeFunnelRecords, summarizeFunnelSpeed,
+} from './src/lib/funnelSpeed';
+import {
   normalizeCallEvent, normalizeTaskEvent, aggregateContactEvents,
   contactCategoryMatcher, asName, isValidYmd,
   ContactEvent, TaskLookups,
@@ -1926,6 +1930,287 @@ export async function syncKeepInCRMLTV(
   }
 }
 
+// ── Швидкість воронки (src/lib/funnelSpeed.ts) ────────────────────────────────
+
+const FUNNEL_SPEED_COLLECTION = 'crm_keepincrm_funnel_speed';
+/** Службовий документ — поруч із частинами, але не число */
+const FUNNEL_SPEED_META_DOC = 'meta';
+
+/** Стан фонового прогону: вивантаження — це тисячі запитів, відповідь на POST його не чекає */
+const funnelSpeedState: FunnelSpeedState = {
+  running: false,
+  mode: null,
+  phase: '',
+  done: 0,
+  total: 0,
+  startedAt: null,
+  finishedAt: null,
+  error: null,
+};
+
+let funnelSpeedCache: { records: FunnelRecord[]; meta: FunnelSpeedMeta } | null = null;
+
+/**
+ * Ліміт KeepInCRM — 100 запитів на хвилину на ключ («Rate limit exceeded»).
+ * Беремо 80, а решту лишаємо іншим синхронізаціям, які ходять тим самим ключем.
+ */
+const FUNNEL_REQUESTS_PER_MIN = 80;
+let keepinNextSlot = 0;
+
+/** Видає запитам слоти через рівні проміжки; чекати можна з кількох місць одразу */
+async function keepinThrottle(perMinute: number): Promise<void> {
+  const gap = 60_000 / perMinute;
+  const start = Math.max(Date.now(), keepinNextSlot);
+  keepinNextSlot = start + gap;
+  const wait = start - Date.now();
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+}
+
+/**
+ * Усі сторінки ендпоінту з мапінгом на льоту, у межах ліміту запитів.
+ *
+ * Клієнтів і угод разом понад сорок тисяч, API віддає по 25 записів — це понад
+ * півтори тисячі запитів, тобто хвилин двадцять. Мапимо відразу, щоб у пам'яті
+ * лежали не повні об'єкти угод (з товарами й кастомними полями), а лише потрібні поля.
+ */
+async function keepinFetchPages<T>(
+  endpoint: string,
+  params: Record<string, string>,
+  mapItem: (raw: any) => T | null,
+  onProgress: (done: number, total: number) => void,
+  concurrency = 3,
+): Promise<{ items: T[]; expected: number; seen: number }> {
+  const base = keepinCRMBaseUrl();
+
+  const fetchPage = async (page: number): Promise<any> => {
+    const query = new URLSearchParams({ ...params, page: String(page), per_page: '100' }).toString();
+    for (let attempt = 1; ; attempt++) {
+      await keepinThrottle(FUNNEL_REQUESTS_PER_MIN);
+      const res = await fetch(`${base}${endpoint}?${query}`, { headers: keepinCRMHeaders() });
+      if (res.ok) return res.json();
+
+      // Ліміт — тимчасовий: вікно хвилинне, тож чекаємо пів хвилини й пробуємо знову.
+      // Решта 4xx (401, 404…) повторенням не лікується.
+      const limited = res.status === 429;
+      if (attempt >= (limited ? 6 : 4) || (!limited && res.status < 500)) {
+        throw new Error(`KeepInCRM ${endpoint} стор. ${page} [${res.status}]`);
+      }
+      await new Promise(r => setTimeout(r, limited ? 30_000 : 1000 * attempt));
+    }
+  };
+
+  const items: T[] = [];
+  /** Скільки записів API реально віддав — до відсіву мапером; саме це звіряємо з total_count */
+  let seen = 0;
+  const take = (body: any) => {
+    const raw: any[] = Array.isArray(body) ? body : (body.items ?? body.data ?? []);
+    seen += raw.length;
+    for (const r of raw) {
+      const m = mapItem(r);
+      if (m !== null) items.push(m);
+    }
+  };
+
+  const first = await fetchPage(1);
+  const totalPages: number = first.pagination?.total_pages ?? first.last_page ?? 1;
+  const expected: number = first.pagination?.total_count ?? 0;
+  take(first);
+  onProgress(1, totalPages);
+
+  let next = 2;
+  let done = 1;
+  const worker = async () => {
+    while (next <= totalPages) {
+      const page = next++;
+      take(await fetchPage(page));
+      onProgress(++done, totalPages);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(0, totalPages - 1)) }, worker));
+
+  return { items, expected, seen };
+}
+
+async function writeFunnelSpeed(records: FunnelRecord[], meta: FunnelSpeedMeta): Promise<void> {
+  const db = initFirebase();
+  if (!db) {
+    const state = await getDb();
+    state.keepincrm_funnel_speed = { records, meta };
+    await saveDb(state);
+    return;
+  }
+  const col = db.collection(FUNNEL_SPEED_COLLECTION);
+  const chunks = chunkBySize(records, LTV_CHUNK_BUDGET_BYTES);
+  for (let i = 0; i < chunks.length; i++) {
+    await col.doc(String(i)).set({ index: i, records: chunks[i] });
+  }
+  await col.doc(FUNNEL_SPEED_META_DOC).set(meta);
+
+  const stale = (await col.listDocuments()).filter(d => {
+    const n = Number(d.id);
+    return d.id !== FUNNEL_SPEED_META_DOC && !Number.isNaN(n) && n >= chunks.length;
+  });
+  if (stale.length > 0) {
+    const batch = db.batch();
+    for (const d of stale) batch.delete(d);
+    await batch.commit();
+  }
+}
+
+async function loadFunnelSpeed(): Promise<{ records: FunnelRecord[]; meta: FunnelSpeedMeta } | null> {
+  if (funnelSpeedCache) return funnelSpeedCache;
+
+  const db = initFirebase();
+  if (!db) {
+    const state = await getDb();
+    const saved = state.keepincrm_funnel_speed;
+    if (!saved?.records) return null;
+    return (funnelSpeedCache = { records: saved.records, meta: saved.meta });
+  }
+
+  const snap = await db.collection(FUNNEL_SPEED_COLLECTION).get();
+  if (snap.empty) return null;
+  let meta: FunnelSpeedMeta | null = null;
+  const parts: { index: number; records: FunnelRecord[] }[] = [];
+  for (const d of snap.docs) {
+    if (d.id === FUNNEL_SPEED_META_DOC) { meta = d.data() as FunnelSpeedMeta; continue; }
+    parts.push({ index: Number(d.id), records: d.data().records ?? [] });
+  }
+  if (!meta) return null;
+  parts.sort((a, b) => a.index - b.index);
+  return (funnelSpeedCache = { records: parts.flatMap(p => p.records), meta });
+}
+
+/** Раз на стільки повний прохід: інкрементальні не бачать видалених угод і переданих клієнтів */
+const FUNNEL_FULL_REFRESH_MS = 7 * 24 * 3600 * 1000;
+/** Запас до мітки останнього прогону: зміни, що прийшли під час нього, не мають загубитись */
+const FUNNEL_WATERMARK_OVERLAP_MS = 2 * 3600 * 1000;
+
+/**
+ * Зібрати з KeepInCRM дати проходу воронкою для кожного клієнта.
+ *
+ * Повний прохід — клієнти, усі угоди й усі оплати: понад півтори тисячі запитів,
+ * при ліміті 80 на хвилину це десь двадцять хвилин. Тому повний — лише коли даних
+ * ще немає, раз на тиждень або за явним проханням; решту часу тягнемо тільки
+ * змінене після попереднього прогону (кілька десятків запитів) і зливаємо із
+ * збереженим. Оплати беремо завжди всі — їх мало, а перша оплата може змінитись.
+ *
+ * Повторний запуск, поки йде перший, відхиляється.
+ */
+async function syncFunnelSpeed(opts: { full?: boolean } = {}): Promise<{ ok: boolean; error?: string }> {
+  if (!KEEPINCRM_API_KEY()) return { ok: false, error: 'missing_api_key' };
+  if (funnelSpeedState.running) return { ok: false, error: 'already_running' };
+
+  const startedAt = new Date();
+  Object.assign(funnelSpeedState, {
+    running: true, mode: null, phase: 'Підготовка', done: 0, total: 0,
+    startedAt: startedAt.toISOString(), finishedAt: null, error: null,
+  });
+
+  try {
+    const stored = await loadFunnelSpeed();
+    const full = !!opts.full
+      || !stored
+      || !stored.meta.lastFullAt
+      || startedAt.getTime() - Date.parse(stored.meta.lastFullAt) > FUNNEL_FULL_REFRESH_MS;
+    funnelSpeedState.mode = full ? 'full' : 'incremental';
+
+    // Мітка — початок ПОПЕРЕДНЬОГО прогону, а не його кінець: усе, що змінилось, поки
+    // він ішов, ми зобов'язані підібрати цього разу.
+    const since = full || !stored
+      ? null
+      : new Date(Date.parse(stored.meta.lastSyncedAt) - FUNNEL_WATERMARK_OVERLAP_MS).toISOString();
+    const delta: Record<string, string> = since ? { 'q[updated_at_gteq]': since } : {};
+    console.log(`🔄 Швидкість воронки (${full ? 'повний прохід' : `зміни від ${since}`})...`);
+
+    const progress = (phase: string) => (done: number, total: number) => {
+      funnelSpeedState.phase = phase;
+      funnelSpeedState.done = done;
+      funnelSpeedState.total = total;
+    };
+
+    // Клієнтів тягнемо ДО угод: угода, чий клієнт ще не в наборі, рахувалась би сиротою
+    const clients = await keepinFetchPages<RawClient>('/clients', delta, c => (c?.id == null ? null : {
+      id: String(c.id),
+      source: c.source?.name || '',
+      createdAt: c.created_at,
+      isLead: !!c.lead,
+      leadUpdatedAt: c.lead_updated_at ?? null,
+    }), progress('Клієнти'));
+
+    const deals = await keepinFetchPages<RawDeal>('/agreements', delta, a => {
+      const clientId = a?.client?.id ?? a?.client_id;
+      return clientId == null ? null : {
+        clientId: String(clientId),
+        createdAt: a.created_at,
+        paidAmount: Number(a.paid_amount) || 0,
+      };
+    }, progress('Угоди'));
+
+    // Надходження — це debit без позначки «заплановано»; credit — витрати
+    const payments = await keepinFetchPages<RawPayment>('/payments', {}, p => (
+      p?.kind === 'debit' && !p.planned && p.parent_id && p.client?.id != null
+        ? { clientId: String(p.client.id), at: String(p.at || '') }
+        : null
+    ), progress('Оплати'));
+
+    const { records, stats } = mergeFunnelRecords(
+      full || !stored ? [] : stored.records,
+      clients.items, deals.items, payments.items, todayKyiv(),
+    );
+
+    const short = ([['клієнтів', clients], ['угод', deals], ['оплат', payments]] as const)
+      // seen, а не items: оплат мапер лишає лише надходження, і 568 із 649 — це норма
+      .filter(([, r]) => r.expected > 0 && r.seen < r.expected * 0.99)
+      .map(([name, r]) => `${name}: отримано ${r.seen} із ${r.expected}`);
+
+    const meta: FunnelSpeedMeta = {
+      lastSyncedAt: startedAt.toISOString(),
+      lastFullAt: full || !stored ? startedAt.toISOString() : stored.meta.lastFullAt,
+      mode: full ? 'full' : 'incremental',
+      clients: records.length,
+      fetched: { clients: clients.items.length, deals: deals.items.length, payments: payments.items.length },
+      ...stats,
+      // Дані змінюються під час вивантаження, і сторінки зсуваються — частину записів
+      // можна пропустити. Невелика розбіжність нормальна, велика — привід перезапустити.
+      warning: short.length ? short.join('; ') : null,
+      durationSec: Math.round((Date.now() - startedAt.getTime()) / 1000),
+    };
+
+    await writeFunnelSpeed(records, meta);
+    funnelSpeedCache = { records, meta };
+
+    funnelSpeedState.running = false;
+    funnelSpeedState.finishedAt = new Date().toISOString();
+    console.log(
+      `✅ Швидкість воронки (${meta.mode}): ${records.length} клієнтів; отримано ` +
+      `${meta.fetched.clients} кл., ${meta.fetched.deals} угод, ${meta.fetched.payments} оплат за ${meta.durationSec} с`,
+    );
+    return { ok: true };
+  } catch (err: any) {
+    const message = err.message || String(err);
+    funnelSpeedState.running = false;
+    funnelSpeedState.finishedAt = new Date().toISOString();
+    funnelSpeedState.error = message;
+    console.error('❌ Швидкість воронки: помилка вивантаження:', message);
+    return { ok: false, error: message };
+  }
+}
+
+let funnelSpeedCronTask: any = null;
+
+/** Щодоби о 05:00 — після LTV (03:00) і когортного перерахунку (04:00), щоб не змагатись за ліміти API */
+function setupFunnelSpeedCron() {
+  if (funnelSpeedCronTask) {
+    funnelSpeedCronTask.stop();
+    funnelSpeedCronTask = null;
+  }
+  funnelSpeedCronTask = cron.schedule('0 5 * * *', async () => {
+    await syncFunnelSpeed();
+  }, { timezone: 'Europe/Kyiv' });
+  console.log('📈 KeepInCRM швидкість воронки: щодоби о 05:00');
+}
+
 // ── KeepInCRM History Helpers ─────────────────────────────────────────────────
 
 /** Список дат (YYYY-MM-DD) у діапазоні [from, to] включно */
@@ -2400,6 +2685,10 @@ async function startServer() {
   setupKeepInCRMLTVCron();
   setupKeepInCRMCohortCron();
   setupKeepInCRMContactsCron();
+  setupFunnelSpeedCron();
+  // Перший запуск — коли даних ще немає. Далі їх оновлює нічний cron: повний прохід
+  // дорогий, і запускати його на кожен рестарт сервера не варто.
+  loadFunnelSpeed().then(d => { if (!d) syncFunnelSpeed({ full: true }); }).catch(() => {});
   syncKeepInCRM().catch(() => { /* помилка записується в снімок */ });
   syncKeepInCRMLTV().catch(() => {});
   syncKeepInCRMContactTasks(addDaysToYmd(todayKyiv(), -1), todayKyiv()).catch(() => {});
@@ -2657,6 +2946,45 @@ async function startServer() {
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
     }
+  });
+
+  /**
+   * GET /api/keepincrm/funnel-speed?from=YYYY-MM&to=YYYY-MM&minAgeDays=N
+   * Швидкість лід → клієнт → угода → оплата по джерелах і когортах.
+   * Збережені записи важать мегабайти, тож у відповідь іде лише готовий підсумок.
+   */
+  app.get('/api/keepincrm/funnel-speed', requireAuth, async (req, res) => {
+    try {
+      const month = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}$/.test(v) ? v : null);
+      const minAgeDays = Math.min(365, Math.max(0, parseInt(String(req.query.minAgeDays ?? '0'), 10) || 0));
+
+      const data = await loadFunnelSpeed();
+      if (!data) return res.json({ meta: null, result: null, state: funnelSpeedState });
+
+      res.json({
+        meta: data.meta,
+        result: summarizeFunnelSpeed(data.records, { from: month(req.query.from), to: month(req.query.to), minAgeDays }),
+        state: funnelSpeedState,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** GET /api/keepincrm/funnel-speed/status — хід фонового вивантаження */
+  app.get('/api/keepincrm/funnel-speed/status', requireAuth, (_req, res) => {
+    res.json(funnelSpeedState);
+  });
+
+  /**
+   * POST /api/keepincrm/sync-funnel-speed — запустити вивантаження у фоні.
+   * Повний прохід — тисячі запитів, відповідь на нього не чекаємо.
+   */
+  app.post('/api/keepincrm/sync-funnel-speed', requireAuth, requireAdmin, (req, res) => {
+    if (!KEEPINCRM_API_KEY()) return res.status(400).json({ success: false, error: 'KEEPINCRM_API_KEY не задано' });
+    if (funnelSpeedState.running) return res.status(409).json({ success: false, error: 'Вивантаження вже виконується' });
+    syncFunnelSpeed({ full: !!req.body?.full }).catch(() => { /* помилка лишається в funnelSpeedState */ });
+    res.json({ success: true, started: true });
   });
 
   /** POST /api/keepincrm/sync — примусова ручна синхронізація (тільки admin) */

@@ -20,11 +20,53 @@ import {
 import { buildCohortLtv } from '../src/lib/cohortLtv';
 import { LtvSnapshot } from '../src/lib/ltvSnapshot';
 import { PeriodValue } from '../src/components/PeriodPicker';
+import { FunnelRecord, FunnelSpeedMeta, summarizeFunnelSpeed } from '../src/lib/funnelSpeed';
 
 const NOW = new Date('2026-08-15T12:00:00Z');
 
 /** Місяць 'YYYY-MM' зі зміщенням від серпня 2026 */
 const month = (offset: number) => new Date(Date.UTC(2026, 7 + offset, 1)).toISOString().slice(0, 7);
+
+/**
+ * Вигадані проходи воронкою: різні джерела з різною швидкістю, частка недійшлих,
+ * клієнти-одразу, аномалії — щоб побачити і таблиці, і примітки про виключене.
+ */
+const FUNNEL_SOURCES = [
+  { name: 'Instagram', leadH: 6, dealD: 4, payD: 3, drop: 0.3 },
+  { name: 'Google Ads', leadH: 30, dealD: 12, payD: 9, drop: 0.5 },
+  { name: 'Рекомендації', leadH: 3, dealD: 2, payD: 1, drop: 0.15 },
+  { name: 'Холодні дзвінки', leadH: 70, dealD: 25, payD: 20, drop: 0.7 },
+  { name: 'Сайт', leadH: 12, dealD: 8, payD: 5, drop: 0.4 },
+];
+const funnelRecords: FunnelRecord[] = Array.from({ length: 900 }, (_, i) => {
+  const src = FUNNEL_SOURCES[i % FUNNEL_SOURCES.length];
+  const created = new Date(NOW.getTime() - ((i * 37) % 330 + 3) * 86_400_000);
+  const jitter = 0.5 + ((i * 7919) % 100) / 70;
+  const r: FunnelRecord = {
+    id: String(i), source: src.name, createdAt: created.toISOString(), isLead: false,
+    convertedAt: null, firstDealAt: null, firstPaidDate: null,
+  };
+  if (i % 11 === 0) { r.convertedAt = r.createdAt; return r; } // створений одразу клієнтом
+  if ((i * 13) % 100 < src.drop * 100 * 0.6) { r.isLead = true; return r; }
+  const conv = new Date(created.getTime() + src.leadH * 3_600_000 * jitter);
+  r.convertedAt = conv.toISOString();
+  if ((i * 17) % 100 < src.drop * 100) return r;
+  const deal = new Date(conv.getTime() + src.dealD * 86_400_000 * jitter);
+  r.firstDealAt = deal.toISOString();
+  if ((i * 19) % 100 < src.drop * 100) { if (i % 5 === 0) r.paidNoDate = true; return r; }
+  r.firstPaidDate = new Date(deal.getTime() + Math.round(src.payD * jitter) * 86_400_000).toISOString().slice(0, 10);
+  return r;
+});
+const funnelMeta: FunnelSpeedMeta = {
+  lastSyncedAt: '2026-08-15T03:05:00Z', lastFullAt: '2026-08-10T03:05:00Z', mode: 'incremental',
+  clients: funnelRecords.length, fetched: { clients: 234, deals: 36, payments: 649 },
+  orphanDeals: 3, orphanPayments: 1, futurePayments: 12, warning: null, durationSec: 214,
+};
+const funnelResult = (q: URLSearchParams) => summarizeFunnelSpeed(funnelRecords, {
+  from: q.get('from'), to: q.get('to'), minAgeDays: Number(q.get('minAgeDays') || 0),
+}, NOW);
+
+
 
 /**
  * База з перекосом: кілька великих клієнтів і довгий хвіст дрібних — саме той
@@ -84,6 +126,16 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const json = (body: unknown) =>
     new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
+  if (url.includes('/api/keepincrm/funnel-speed/status')) {
+    return json({ running: false, mode: null, phase: '', done: 0, total: 0, startedAt: null, finishedAt: null, error: null });
+  }
+  if (url.includes('/api/keepincrm/funnel-speed')) {
+    return json({
+      meta: funnelMeta,
+      result: funnelResult(new URL(url, location.href).searchParams),
+      state: { running: false, mode: null, phase: '', done: 0, total: 0, startedAt: null, finishedAt: null, error: null },
+    });
+  }
   if (url.includes('/api/keepincrm/ltv/clients')) return json(clients);
   if (url.includes('/api/keepincrm/ltv')) return json(snapshot);
   return realFetch(input as any, init);
@@ -93,6 +145,7 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 const ctx: any = {
   state: { rfmThresholds: DEFAULT_RFM_THRESHOLDS },
   hasEditRights: true,
+  currentUser: { role: 'admin' },
   updateSettings: (u: any) => console.log('updateSettings', u),
 };
 
@@ -102,8 +155,14 @@ const period: PeriodValue = { key: 'custom', from: `${monthRange.from}-01`, to: 
 const enriched = enrichClients(clients, NOW, DEFAULT_RFM_THRESHOLDS, monthRange);
 const tiered = assignTiers(enriched);
 
+/** ?tab=funnel&view=report — відкрити конкретну вкладку, щоб зняти її без кліків */
+const qs = new URLSearchParams(location.search);
+if (qs.get('tab')) {
+  try { localStorage.setItem('pawell_ltv_analytics_view', JSON.stringify({ tab: qs.get('tab') })); } catch { /* пісочниця */ }
+}
+
 function Preview() {
-  const [tab, setTab] = useState<'page' | 'report'>('page');
+  const [tab, setTab] = useState<'page' | 'report'>(qs.get('view') === 'report' ? 'report' : 'page');
 
   return (
     <div className="min-h-screen bg-blue-50/50">
@@ -147,6 +206,10 @@ function Preview() {
               cohorts={calculateCohorts(tiered.clients)}
               snapshot={snapshot}
               closedStages={['Успішно реалізовано', 'Відмова']}
+              funnelSpeed={funnelResult(new URLSearchParams({ minAgeDays: '30' }))}
+              funnelMeta={funnelMeta}
+              funnelMatureOnly
+              funnelMaturityDays={30}
             />
           </div>
         </div>

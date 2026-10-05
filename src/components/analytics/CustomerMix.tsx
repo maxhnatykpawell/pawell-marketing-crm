@@ -92,7 +92,7 @@ export default function CustomerMixCard({
 
   if (mix.totalDeals === 0) {
     return (
-      <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+      <div className="bg-white p-6 rounded-[20px] border border-gray-100 shadow-sm">
         <h3 className="text-base font-black text-gray-800 mb-1">Постійні й нові клієнти</h3>
         <p className="text-sm text-gray-500">
           У вибірці немає жодного замовлення — ділити нічого.
@@ -102,7 +102,7 @@ export default function CustomerMixCard({
   }
 
   return (
-    <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+    <div className="bg-white p-6 rounded-[20px] border border-gray-100 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-1">
         <h3 className="text-base font-black text-gray-800 flex items-center gap-2">
           <Repeat className="w-4 h-4 text-purple-600" />

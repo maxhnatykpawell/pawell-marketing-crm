@@ -3,6 +3,8 @@ import { Users, DollarSign, Gem, Download, FileDown, ArrowUp, ArrowDown, AlertTr
 import { useReactToPrint } from 'react-to-print';
 import { useAppContext } from '../App';
 import { getKeepInCRMLTV, getKeepInCRMLTVClients } from '../api';
+import FunnelSpeed from './analytics/FunnelSpeed';
+import { useFunnelSpeed } from './analytics/useFunnelSpeed';
 import { LTV_HORIZONS } from '../lib/cohortLtv';
 import { LtvSnapshot, EMPTY_LTV_SNAPSHOT } from '../lib/ltvSnapshot';
 import ClientFilterBar from './analytics/ClientFilterBar';
@@ -23,6 +25,9 @@ import PeriodPicker, { PeriodKey, PeriodValue, describePeriod } from './PeriodPi
 import AnalyticsReport from './AnalyticsReport';
 import ContactFrequency from './analytics/ContactFrequency';
 import MonthlyReportView from './MonthlyReportView';
+
+/** Старт молодший за стільки днів вважається незрілим для швидкості воронки */
+const FUNNEL_MATURITY_DAYS = 30;
 
 /** Пресети періоду аналітики — усі місячної точності */
 const ANALYTICS_PRESETS: PeriodKey[] = ['all', 'month', 'ytd', 'year', 'custom'];
@@ -191,7 +196,7 @@ const LTV_MAX_MONTHS = 24;
  * тягне сама — вона більше ні від кого не залежить.
  */
 export default function AnalyticsView() {
-  const { state, updateSettings, hasEditRights } = useAppContext();
+  const { state, updateSettings, hasEditRights, currentUser } = useAppContext();
   const rfmThresholds = state.rfmThresholds;
   const canEditSettings = hasEditRights;
 
@@ -282,6 +287,12 @@ export default function AnalyticsView() {
     () => (period.from && period.to ? { from: period.from.slice(0, 7), to: period.to.slice(0, 7) } : null),
     [period.from, period.to],
   );
+
+  // ── Швидкість воронки по джерелах ──────────────────────────────────────────
+  /** Свіжі когорти виглядають швидшими, бо повільні ще не дійшли; відсікаємо їх за замовчуванням */
+  const [matureOnly, setMatureOnly] = useState(true);
+  const funnelMinAgeDays = matureOnly ? FUNNEL_MATURITY_DAYS : 0;
+  const funnel = useFunnelSpeed(monthRange, funnelMinAgeDays);
 
   const [closedStages, setClosedStages] = useState<string[]>(() => {
     try {
@@ -509,14 +520,14 @@ export default function AnalyticsView() {
 
   return (
     <>
-    <div className="flex flex-col gap-4 w-full print:hidden">
+    <div className="flex flex-col gap-5 w-full print:hidden">
 
       {/* Шапка, період, пороги і фільтри — однією карткою: усе це керує тим,
           що показано нижче, і розсипати його на чотири коробки означало б
           зробити з панелі керування смітник. */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm overflow-hidden">
         <div className="px-6">
-          <div className="flex items-center justify-between gap-4 pt-4">
+          <div className="flex items-center justify-between gap-4 pt-5">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center flex-shrink-0 shadow-sm shadow-purple-200">
                 <Gem className="w-5 h-5 text-white" />
@@ -569,17 +580,20 @@ export default function AnalyticsView() {
             </div>
           </div>
 
-          {/* Вкладки підкресленням, а не «пігулками»: на всю ширину екрана
-              пігулки в сірій коробці виглядають як загублений віджет. */}
-          <nav className="flex items-center gap-1 -mb-px mt-3 border-b border-gray-200">
+          {/* Вкладки-«пігулки» в одній смузі: активна заповнена, решта — тло.
+              Смуга прокручується, а не ламається, коли вкладки не влазять. */}
+          <nav
+            aria-label="Розділи аналітики"
+            className="flex items-center gap-1 mt-4 mb-4 p-1 bg-gray-100 rounded-2xl overflow-x-auto"
+          >
             {TABS.map(t => (
               <button
                 key={t.key}
                 onClick={() => setActiveTab(t.key)}
-                className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition ${
+                className={`px-4 min-h-[40px] text-sm whitespace-nowrap rounded-xl transition ${
                   activeTab === t.key
-                    ? 'border-purple-600 text-purple-700'
-                    : 'border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-300'
+                    ? 'bg-purple-600 text-white font-bold shadow-sm'
+                    : 'text-gray-600 font-semibold hover:bg-white hover:text-gray-900'
                 }`}
               >
                 {t.label}
@@ -685,10 +699,10 @@ export default function AnalyticsView() {
                 { label: 'Загальний дохід вибірки', value: `${distribution.total.toLocaleString('uk-UA')} ₴`, tone: 'text-emerald-600', bg: 'bg-emerald-50', icon: <DollarSign className="w-6 h-6 text-emerald-500" /> },
                 { label: 'Клієнтів у вибірці', value: distribution.count.toLocaleString('uk-UA'), tone: 'text-blue-600', bg: 'bg-blue-50', icon: <Users className="w-6 h-6 text-blue-500" /> },
               ].map(m => (
-                <div key={m.label} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between hover:shadow-md transition-shadow">
+                <div key={m.label} className="bg-white px-6 py-5 rounded-[20px] border border-gray-100 shadow-sm flex items-center justify-between hover:shadow-md transition-shadow">
                   <div className="min-w-0">
-                    <p className="text-[11px] text-gray-400 font-bold uppercase tracking-wider mb-1">{m.label}</p>
-                    <p className={`text-3xl font-black ${m.tone} truncate`}>{m.value}</p>
+                    <p className="text-[13px] text-gray-500 font-semibold mb-1.5">{m.label}</p>
+                    <p className={`text-3xl font-extrabold tracking-tight ${m.tone} truncate`}>{m.value}</p>
                   </div>
                   <div className={`w-12 h-12 ${m.bg} rounded-xl flex items-center justify-center flex-shrink-0 ml-3`}>
                     {m.icon}
@@ -715,7 +729,7 @@ export default function AnalyticsView() {
             </div>
 
             {/* Таблиця */}
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -789,6 +803,26 @@ export default function AnalyticsView() {
         <div>
           <div className="flex flex-col gap-6">
 
+            <FunnelSpeed
+              response={funnel.response}
+              loading={funnel.loading}
+              error={funnel.error}
+              syncState={funnel.syncState}
+              isAdmin={currentUser?.role === 'admin'}
+              onSync={funnel.startSync}
+              matureOnly={matureOnly}
+              onMatureOnlyChange={setMatureOnly}
+              minAgeDays={FUNNEL_MATURITY_DAYS}
+              periodLabel={monthRange ? describePeriod(period) : 'за весь час'}
+            />
+
+            <div className="border-t border-gray-200 pt-6">
+              <h3 className="text-base font-black text-gray-800">Етапи угод: де зараз висять відкриті угоди</h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Стан воронки угод на цей момент — за поточним етапом, без розбивки по джерелах.
+              </p>
+            </div>
+
             {/* Configuration Panel */}
             <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 flex flex-col gap-3">
               <div className="flex items-center gap-2 text-purple-800 font-bold text-sm">
@@ -849,7 +883,7 @@ export default function AnalyticsView() {
             </div>
 
             {/* Bottlenecks Chart */}
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 flex-1 flex flex-col min-h-[400px]">
+            <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm p-6 flex-1 flex flex-col min-h-[400px]">
               <h3 className="text-base font-black text-gray-800 mb-6 flex items-center gap-2">
                 Вузькі місця (Скільки днів висять поточні відкриті угоди)
               </h3>
@@ -1098,6 +1132,10 @@ export default function AnalyticsView() {
           cohorts={cohortsData}
           snapshot={data}
           closedStages={closedStages}
+          funnelSpeed={funnel.response?.result ?? null}
+          funnelMeta={funnel.response?.meta ?? null}
+          funnelMatureOnly={matureOnly}
+          funnelMaturityDays={FUNNEL_MATURITY_DAYS}
         />
       </div>
     )}

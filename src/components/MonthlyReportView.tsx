@@ -85,10 +85,10 @@ function Metric({
   key?: React.Key;
 }) {
   return (
-    <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
-      <p className="text-[11px] text-gray-400 font-bold uppercase tracking-wider mb-1">{label}</p>
+    <div className="bg-white px-5 py-4 rounded-[20px] border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+      <p className="text-[13px] text-gray-500 font-semibold mb-1.5">{label}</p>
       <div className="flex items-baseline justify-between gap-2">
-        <p className="text-2xl font-black text-gray-900 truncate" title={value}>{value}</p>
+        <p className="text-2xl font-extrabold tracking-tight text-gray-900 truncate" title={value}>{value}</p>
         <Change pct={pct} good={good} />
       </div>
       {note && <p className="text-[11px] text-gray-400 mt-1 truncate" title={note}>{note}</p>}
@@ -111,10 +111,10 @@ function Card({ title, hint, children, right }: {
   right?: React.ReactNode;
 }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-      <div className="flex items-start justify-between gap-4 mb-4">
+    <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm p-6">
+      <div className="flex items-start justify-between gap-4 mb-5">
         <div className="min-w-0">
-          <h3 className="text-base font-black text-gray-800">{title}</h3>
+          <h3 className="text-[17px] font-extrabold text-gray-900">{title}</h3>
           {hint && <p className="text-xs text-gray-500 mt-0.5 leading-snug">{hint}</p>}
         </div>
         {right}
@@ -447,7 +447,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
     <div className="flex flex-col gap-6 print:hidden">
 
       {/* ── Вибір місяця ─────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+      <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm p-5">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center flex-shrink-0 shadow-sm shadow-purple-200">
@@ -473,7 +473,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+            <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
               <button
                 onClick={() => setMonth(m => shiftMonth(m, -1))}
                 disabled={oldest !== null && month <= oldest}
@@ -503,7 +503,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
               onClick={() => setMonth(lastClosedMonth())}
               disabled={month === lastClosedMonth()}
               title="Останній закритий місяць — типовий звітний період"
-              className="px-2.5 py-1.5 text-xs font-semibold text-gray-600 border border-gray-200 rounded-lg hover:border-purple-300 hover:text-purple-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-3.5 min-h-[36px] text-xs font-bold text-purple-800 bg-purple-50 border border-purple-200 rounded-full hover:bg-purple-100 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Минулий місяць
             </button>
@@ -533,7 +533,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
 
       {/* ── Попередження ─────────────────────────────────────────────────── */}
       {loading && (
-        <div className="flex items-center justify-center gap-2 px-6 py-4 text-sm text-gray-500 bg-white rounded-2xl border border-gray-100">
+        <div className="flex items-center justify-center gap-2 px-6 py-4 text-sm text-gray-500 bg-white rounded-[20px] border border-gray-100">
           <Loader2 className="w-4 h-4 animate-spin" />
           Завантаження клієнтів…
         </div>
@@ -541,7 +541,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
 
       {/* Порожня база й знімок старого формату — різні біди, і радять у них різне */}
       {!loading && clients.length === 0 && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-6 py-10 text-center">
+        <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm px-6 py-10 text-center">
           <p className="text-sm text-gray-500">
             Список клієнтів порожній — можливо, синхронізація LTV ще не збирала ці дані.
           </p>
@@ -614,7 +614,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
         сказано, чому вона порожня.
       */}
       {!loading && report.hasMonthlyStats && t.clients === 0 && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-6 py-6">
+        <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm px-6 py-6">
           <p className="text-sm font-semibold text-gray-700">
             {/* Поки CRM не відповіла, «угод немає» — ще не факт, а здогад */}
             {acqLoading
@@ -685,22 +685,24 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
               Поки CRM не відповіла і помісячних сум немає, підсумовувати нічого:
               єдиний рядок, який вийшов би, — «угод немає», а це ще не факт. */}
           {(hasLtvMonth || !!acquisition) && (
-          <Card
-            title="Коротко про місяць"
-            hint="Ті самі числа, що в таблицях нижче, прочитані вголос — щоб усі читали їх однаково."
-          >
-            <ul className="space-y-1.5">
+          <div className="rounded-3xl bg-[#1d1730] p-8 shadow-lg shadow-purple-950/20">
+            <span className="text-xs font-bold uppercase tracking-[0.08em] text-[#b9a6ff]">Коротко про місяць</span>
+            <h2 className="mt-2 mb-1 text-2xl font-extrabold text-white leading-tight">{monthLabel(month)}</h2>
+            <p className="text-sm text-[#cfc8e4] mb-5">
+              Ті самі числа, що в таблицях нижче, прочитані вголос — щоб усі читали їх однаково.
+            </p>
+            <ul className="space-y-2.5">
               {summarizeMonth(
                 crmFallback ? { ...report, totals: et, prevTotals: ep } : report,
                 { acquisition, spend },
               ).map((line, i) => (
-                <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
-                  <span className="text-purple-400 font-bold flex-shrink-0">•</span>
+                <li key={i} className="flex gap-3 text-[15px] text-[#e4def5] leading-relaxed">
+                  <span className="text-[#b9a6ff] font-extrabold flex-shrink-0 w-4 text-right">{i + 1}</span>
                   {line}
                 </li>
               ))}
             </ul>
-          </Card>
+          </div>
           )}
 
           {hasAnyMetrics && (<>
@@ -838,7 +840,7 @@ export default function MonthlyReportView({ clients, loading, snapshot }: Props)
           {hasAnyMetrics && (<>
           {/* Рік тому — окремим рядком, а не шостою карткою: це інша база
               порівняння, і мішати її з «до минулого місяця» не можна. */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-3 flex flex-wrap items-center gap-3 text-sm">
+          <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm px-5 py-3 flex flex-wrap items-center gap-3 text-sm">
             <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Рік тому</span>
             {report.hasYearAgo ? (
               <>

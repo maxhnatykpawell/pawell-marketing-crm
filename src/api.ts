@@ -4,6 +4,7 @@ import {
   ChatConversation, ChatConversationView, ChatMessage,
   Card, TaskAutomation,
 } from './types';
+import type { FunnelSpeedResponse, FunnelSpeedState } from './lib/funnelSpeed';
 import { v4 as uuidv4 } from 'uuid';
 
 const getToken = () => localStorage.getItem('auth_token');
@@ -595,6 +596,51 @@ export const triggerKeepInCRMContactsSync = async (
     throw new Error(err.error || 'Не вдалось синхронізувати контакти');
   }
   return res.json();
+};
+
+/**
+ * Швидкість воронки по джерелах: лід → клієнт → угода → перша оплата.
+ * Сервер віддає готовий підсумок, а не сирі записи — вони важать мегабайти.
+ *
+ * @param from       YYYY-MM — перший місяць когорти (за початком переходу)
+ * @param to         YYYY-MM — останній місяць когорти
+ * @param minAgeDays відсікти старти молодші за N днів, щоб свіжі когорти не виглядали «швидшими»
+ */
+export const getFunnelSpeed = async (
+  opts: { from?: string | null; to?: string | null; minAgeDays?: number } = {},
+): Promise<FunnelSpeedResponse> => {
+  const params = new URLSearchParams();
+  if (opts.from) params.set('from', opts.from);
+  if (opts.to) params.set('to', opts.to);
+  if (opts.minAgeDays) params.set('minAgeDays', String(opts.minAgeDays));
+  const res = await fetch(`/api/keepincrm/funnel-speed?${params}`, { headers: authHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Не вдалось завантажити швидкість воронки');
+  }
+  return res.json();
+};
+
+export const getFunnelSpeedStatus = async (): Promise<FunnelSpeedState> => {
+  const res = await fetch('/api/keepincrm/funnel-speed/status', { headers: authHeaders() });
+  if (!res.ok) throw new Error('Не вдалось отримати стан вивантаження');
+  return res.json();
+};
+
+/**
+ * Запустити вивантаження вручну (тільки адмін); іде у фоні, хід — через getFunnelSpeedStatus.
+ * full = повний прохід (~20 хв); інакше підтягуються лише зміни після попереднього прогону.
+ */
+export const triggerFunnelSpeedSync = async (full = false): Promise<void> => {
+  const res = await fetch('/api/keepincrm/sync-funnel-speed', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ full }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Не вдалось запустити вивантаження');
+  }
 };
 
 // ── Асистент ──────────────────────────────────────────────────────────────────
