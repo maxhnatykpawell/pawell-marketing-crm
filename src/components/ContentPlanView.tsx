@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../App';
-import { Plus, Trash2, Settings } from 'lucide-react';
+import { Plus, Trash2, Settings, Copy } from 'lucide-react';
 import { ContentPlanItem } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import TagPicker from './TagPicker';
@@ -39,6 +39,20 @@ const DEFAULT_COLUMNS = [
   { id: 'publishDate', title: 'Дата', visible: true },
   { id: 'engagement', title: 'Охоплення/Взаємодія', visible: true }
 ];
+
+// Dates are shown/edited in local time; toISOString().split('T') shifts local
+// midnight to the previous day in timezones ahead of UTC.
+const toLocalInputValue = (iso: string | null) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+const fromLocalInputValue = (v: string) => {
+  const [y, m, d] = v.split('-').map(Number);
+  return new Date(y, m - 1, d).toISOString();
+};
 
 export default function ContentPlanView() {
   const { state, addContentPlan, updateContentPlan, deleteContentPlan, confirmAction, hasEditRights } = useAppContext();
@@ -119,7 +133,9 @@ export default function ContentPlanView() {
       // Parse the active tab label back to a date (e.g. "Серпень 2026")
       const parsed = new Date(`1 ${currentMonth}`);
       if (!isNaN(parsed.getTime())) {
-        publishDate = new Date(parsed.getFullYear(), parsed.getMonth(), 1).toISOString();
+        const now = new Date();
+        const isCurrent = parsed.getFullYear() === now.getFullYear() && parsed.getMonth() === now.getMonth();
+        publishDate = new Date(parsed.getFullYear(), parsed.getMonth(), isCurrent ? now.getDate() : 1).toISOString();
       } else {
         // Fallback: iterate groupedPlans to find the real date
         const group = groupedPlans.find(g => g.month === currentMonth);
@@ -357,8 +373,8 @@ export default function ContentPlanView() {
                   <td className="px-4 py-2">
                     <input
                       type="date"
-                      value={plan.publishDate ? plan.publishDate.split('T')[0] : ''}
-                      onChange={(e) => updateContentPlan(plan.id, { publishDate: e.target.value ? new Date(e.target.value).toISOString() : null })}
+                      value={toLocalInputValue(plan.publishDate)}
+                      onChange={(e) => updateContentPlan(plan.id, { publishDate: e.target.value ? fromLocalInputValue(e.target.value) : null })}
                       disabled={!hasEditRights}
                       className={`w-full bg-transparent outline-none ${hasEditRights ? 'cursor-pointer hover:bg-gray-100 hover:border-gray-200' : ''} rounded px-2 py-1 border border-transparent transition text-gray-700`}
                     />
@@ -378,17 +394,33 @@ export default function ContentPlanView() {
                 )}
                 <td className="px-4 py-2 text-right">
                   {hasEditRights && (
-                    <button
-                      onClick={() => {
-                        confirmAction('Ви впевнені, що хочете видалити цей рядок?', () => {
-                          deleteContentPlan(plan.id);
-                        });
-                      }}
-                      className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-white/50 rounded transition opacity-0 group-hover:opacity-100"
-                      title="Видалити"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="inline-flex items-center">
+                      <button
+                        onClick={() => {
+                          const { id, ...copy } = plan;
+                          addContentPlan({
+                            ...copy,
+                            channels: plan.channels ? [...plan.channels] : undefined,
+                            tagIds: plan.tagIds ? [...plan.tagIds] : undefined
+                          });
+                        }}
+                        className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-white/50 rounded transition opacity-0 group-hover:opacity-100"
+                        title="Клонувати рядок"
+                      >
+                        <Copy className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          confirmAction('Ви впевнені, що хочете видалити цей рядок?', () => {
+                            deleteContentPlan(plan.id);
+                          });
+                        }}
+                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-white/50 rounded transition opacity-0 group-hover:opacity-100"
+                        title="Видалити"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   )}
                 </td>
               </tr>
