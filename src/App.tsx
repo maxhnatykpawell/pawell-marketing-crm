@@ -62,7 +62,7 @@ interface AppContextType {
   updateContentPlan: (id: string, updates: Partial<ContentPlanItem>) => void;
   deleteContentPlan: (id: string) => void;
   importContentPlans: (plans: Omit<ContentPlanItem, 'id'>[]) => void;
-  addUserGroup: (group: Omit<UserGroup, 'id'>) => void;
+  addUserGroup: (group: Omit<UserGroup, 'id'>) => string | undefined;
   updateUserGroup: (id: string, updates: Partial<UserGroup>) => void;
   deleteUserGroup: (id: string) => void;
   updateSettings: (updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule' | 'expenseCategories' | 'expenseSources' | 'rfmThresholds' | 'currencyRates'>>) => void;
@@ -653,10 +653,11 @@ export default function App() {
   }, [state]);
 
   const addUserGroup = useCallback((group: Omit<UserGroup, 'id'>) => {
-    if (!state) return;
+    if (!state) return undefined;
     const newGroup = { ...group, id: uuidv4() };
     setState(prev => prev ? { ...prev, userGroups: [...(prev.userGroups || []), newGroup] } : prev);
     createEntity('userGroups', newGroup).catch(console.error);
+    return newGroup.id;
   }, [state]);
 
   const updateUserGroup = useCallback((id: string, updates: Partial<UserGroup>) => {

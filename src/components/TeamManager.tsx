@@ -1,15 +1,16 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../App';
-import { Users, Plus, X, Edit2, Trash2, Sparkles } from 'lucide-react';
+import { Users, Plus, X, Edit2, Trash2, Sparkles, Shield, ChevronRight } from 'lucide-react';
 import { User } from '../types';
-import AdminUsersPanel from './AdminUsersPanel';
+import AccessCenter from './AccessCenter';
 import AdminSettingsPanel from './AdminSettingsPanel';
 
 export default function TeamManager({ onClose }: { onClose: () => void }) {
-  const { state, addUser, updateUser, deleteUser, confirmAction } = useAppContext();
+  const { state, currentUser, addUser, updateUser, deleteUser, confirmAction } = useAppContext();
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [userName, setUserName] = useState('');
+  const [accessOpen, setAccessOpen] = useState(false);
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
@@ -189,7 +190,19 @@ export default function TeamManager({ onClose }: { onClose: () => void }) {
           )}
 
           {/* Admin panel (only visible to admins) */}
-          <AdminUsersPanel />
+          {currentUser?.role === 'admin' && (
+            <button
+              onClick={() => setAccessOpen(true)}
+              className="mt-6 w-full flex items-center gap-3 px-5 py-4 rounded-xl border border-indigo-100 bg-indigo-50/50 hover:bg-indigo-50 transition text-left"
+            >
+              <div className="w-8 h-8 rounded-lg bg-indigo-600/10 flex items-center justify-center">
+                <Shield className="w-4 h-4 text-indigo-600" />
+              </div>
+              <span className="flex-1 font-bold text-gray-800 text-sm">Доступ і команди</span>
+              <ChevronRight className="w-4 h-4 text-gray-400" />
+            </button>
+          )}
+          {accessOpen && <AccessCenter onClose={() => setAccessOpen(false)} />}
           <AdminSettingsPanel />
         </div>
       </div>

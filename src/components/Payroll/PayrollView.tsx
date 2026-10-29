@@ -84,6 +84,7 @@ export const PayrollView: React.FC = () => {
   /** Документи в черзі на PDF: один (з картки) або всі за місяць (для керівника) */
   const [printDocs, setPrintDocs] = useState<PayrollDocument[]>([]);
   const [bulkPeriod, setBulkPeriod] = useState('');
+  const [bulkGroupId, setBulkGroupId] = useState('');
   const printRef = useRef<HTMLDivElement>(null);
   const runPrint = useReactToPrint({
     contentRef: printRef,
@@ -102,7 +103,11 @@ export const PayrollView: React.FC = () => {
     [payrolls]
   );
   const activeBulkPeriod = bulkPeriod || periods[0] || '';
-  const bulkDocs = payrolls.filter((p) => p.period === activeBulkPeriod);
+  const bulkDocs = payrolls.filter(
+    (p) =>
+      p.period === activeBulkPeriod &&
+      (!bulkGroupId || state.users.find((u) => u.id === p.userId)?.groupId === bulkGroupId)
+  );
 
   const printBulk = () => {
     const docs = bulkDocs.slice().sort((a, b) => {
@@ -196,7 +201,7 @@ export const PayrollView: React.FC = () => {
           <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-3 text-gray-500">
               <FileDown size={20} />
-              <span className="font-medium text-gray-700">Усі працівники за місяць:</span>
+              <span className="font-medium text-gray-700">Зведення за місяць:</span>
             </div>
             <select
               value={activeBulkPeriod}
@@ -207,8 +212,21 @@ export const PayrollView: React.FC = () => {
                 <option key={p} value={p}>{p}</option>
               ))}
             </select>
+            <select
+              value={bulkGroupId}
+              onChange={(e) => setBulkGroupId(e.target.value)}
+              className="px-4 py-2 border border-gray-200 rounded-xl bg-gray-50"
+            >
+              <option value="">Усі працівники</option>
+              {(state.userGroups || []).map((g) => (
+                <option key={g.id} value={g.id}>
+                  Команда: {g.name} ({state.users.filter((u) => u.groupId === g.id).length})
+                </option>
+              ))}
+            </select>
             <button
               onClick={printBulk}
+              disabled={bulkDocs.length === 0}
               className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors font-medium"
             >
               <FileDown size={16} />
