@@ -76,7 +76,7 @@ export default function Board() {
       const toListId = destination.droppableId;
       
       let destVisibleCards = state.cards
-        .filter(c => c.listId === toListId && (!activeProjectId || c.projectId === activeProjectId))
+        .filter(c => c.listId === toListId && (activeProjectId ? c.projectId === activeProjectId : !c.projectId))
         .filter(c => {
           if (filterAssigneeId) {
             if (filterAssigneeId === 'unassigned') {

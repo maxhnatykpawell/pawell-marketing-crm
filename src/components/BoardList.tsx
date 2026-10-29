@@ -25,7 +25,7 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
 
   // Filter and sort cards
   const cards = state.cards
-    .filter(c => c.listId === list.id && (!activeProjectId || c.projectId === activeProjectId))
+    .filter(c => c.listId === list.id && (activeProjectId ? c.projectId === activeProjectId : !c.projectId))
     .filter(c => {
       if (filterAssigneeId) {
         if (filterAssigneeId === 'unassigned') {
