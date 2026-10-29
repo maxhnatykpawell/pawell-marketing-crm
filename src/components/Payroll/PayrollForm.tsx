@@ -1,5 +1,7 @@
-import React, { useMemo, useState } from 'react';
-import { X, Save, Calculator, AlertTriangle, RefreshCw } from 'lucide-react';
+import React, { useMemo, useRef, useState } from 'react';
+import { X, Save, Calculator, AlertTriangle, RefreshCw, FileDown } from 'lucide-react';
+import { useReactToPrint } from 'react-to-print';
+import { PayrollPrintSheet } from './PayrollPrintSheet';
 import { PayrollDocument } from '../../types';
 import {
   PayrollModule,
@@ -66,6 +68,11 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
     initialData ? { ...initialValuesFromDoc } : initialValues(template.modules)
   );
   const [isSaving, setIsSaving] = useState(false);
+  const printRef = useRef<HTMLDivElement>(null);
+  const printPdf = useReactToPrint({
+    contentRef: printRef,
+    documentTitle: `Зарплатний документ ${user?.name || ''} ${period}`.trim(),
+  });
 
   const result = useMemo(
     () => evaluateModules(activeTemplate.modules, values),
@@ -392,6 +399,15 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
               >
                 {readOnly ? 'Закрити' : 'Скасувати'}
               </button>
+              <button
+                type="button"
+                onClick={() => printPdf()}
+                className="flex items-center gap-2 px-5 py-2 text-sm text-gray-700 bg-white border border-gray-200 rounded-xl
+                  hover:bg-gray-50 hover:border-gray-300 transition-all"
+              >
+                <FileDown size={16} />
+                PDF
+              </button>
               {!readOnly && (
                 <button
                   onClick={handleSubmit}
@@ -407,6 +423,18 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
             </div>
           </div>
         </form>
+      </div>
+
+      {/* Документ для PDF: поза екраном, друкується через react-to-print */}
+      <div className="hidden">
+        <div ref={printRef}>
+          <PayrollPrintSheet
+            userName={user?.name}
+            period={period}
+            template={activeTemplate}
+            values={values}
+          />
+        </div>
       </div>
     </div>
   );

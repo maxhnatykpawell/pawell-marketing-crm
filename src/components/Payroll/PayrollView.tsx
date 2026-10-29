@@ -1,8 +1,10 @@
-import React, { useMemo, useState } from 'react';
-import { Settings, Plus, FileText, User as UserIcon, Trash2, Layers } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useReactToPrint } from 'react-to-print';
+import { Settings, Plus, FileText, User as UserIcon, Trash2, Layers, FileDown } from 'lucide-react';
 import { useAppContext } from '../../App';
 import { PayrollSettingsModal } from './PayrollSettingsModal';
 import { PayrollForm } from './PayrollForm';
+import { PayrollPrintSheet } from './PayrollPrintSheet';
 import { PayrollDocument, PayrollSettings } from '../../types';
 import { evaluateModules } from '../../lib/payrollEngine';
 import { documentView, templateForUser } from '../../lib/payrollTemplates';
@@ -78,6 +80,38 @@ export const PayrollView: React.FC = () => {
   };
 
   const visiblePayrolls = payrolls.filter((p) => p.userId === targetUserId);
+
+  /** Документи в черзі на PDF: один (з картки) або всі за місяць (для керівника) */
+  const [printDocs, setPrintDocs] = useState<PayrollDocument[]>([]);
+  const [bulkPeriod, setBulkPeriod] = useState('');
+  const printRef = useRef<HTMLDivElement>(null);
+  const runPrint = useReactToPrint({
+    contentRef: printRef,
+    documentTitle:
+      printDocs.length === 1
+        ? `Зарплатний документ ${state.users.find((u) => u.id === printDocs[0].userId)?.name || ''} ${printDocs[0].period}`.trim()
+        : `Зарплатні документи ${printDocs[0]?.period || ''}`.trim(),
+    onAfterPrint: () => setPrintDocs([]),
+  });
+  useEffect(() => {
+    if (printDocs.length > 0) runPrint();
+  }, [printDocs]);
+
+  const periods = useMemo(
+    () => Array.from(new Set<string>(payrolls.map((p) => p.period))).sort((a, b) => b.localeCompare(a)),
+    [payrolls]
+  );
+  const activeBulkPeriod = bulkPeriod || periods[0] || '';
+  const bulkDocs = payrolls.filter((p) => p.period === activeBulkPeriod);
+
+  const printBulk = () => {
+    const docs = bulkDocs.slice().sort((a, b) => {
+      const an = state.users.find((u) => u.id === a.userId)?.name || '';
+      const bn = state.users.find((u) => u.id === b.userId)?.name || '';
+      return an.localeCompare(bn, 'uk');
+    });
+    if (docs.length) setPrintDocs(docs);
+  };
 
   /** Поточний шаблон посади — за ним створюється новий документ */
   const current = useMemo(
@@ -158,6 +192,31 @@ export const PayrollView: React.FC = () => {
           </div>
         )}
 
+        {isAdmin && periods.length > 0 && (
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-3 text-gray-500">
+              <FileDown size={20} />
+              <span className="font-medium text-gray-700">Усі працівники за місяць:</span>
+            </div>
+            <select
+              value={activeBulkPeriod}
+              onChange={(e) => setBulkPeriod(e.target.value)}
+              className="px-4 py-2 border border-gray-200 rounded-xl bg-gray-50"
+            >
+              {periods.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+            <button
+              onClick={printBulk}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors font-medium"
+            >
+              <FileDown size={16} />
+              Завантажити PDF ({bulkDocs.length})
+            </button>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {visiblePayrolls
             .slice()
@@ -171,6 +230,16 @@ export const PayrollView: React.FC = () => {
                   className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer group relative"
                   onClick={() => setEditingDoc(doc)}
                 >
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPrintDocs([doc]);
+                    }}
+                    className={`absolute top-3 ${isAdmin ? 'right-11' : 'right-3'} p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100`}
+                    title="Завантажити PDF"
+                  >
+                    <FileDown size={14} />
+                  </button>
                   {isAdmin && (
                     <button
                       onClick={(e) => {
@@ -235,6 +304,25 @@ export const PayrollView: React.FC = () => {
               </p>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Макет для PDF: поза екраном, кожен документ — з нової сторінки */}
+      <div className="hidden">
+        <div ref={printRef}>
+          {printDocs.map((doc, i) => {
+            const { template, values } = documentView(doc, effectiveSettings);
+            return (
+              <PayrollPrintSheet
+                key={doc.id}
+                userName={state.users.find((u) => u.id === doc.userId)?.name}
+                period={doc.period}
+                template={template}
+                values={values}
+                pageBreak={i > 0}
+              />
+            );
+          })}
         </div>
       </div>
 
