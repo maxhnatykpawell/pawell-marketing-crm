@@ -167,11 +167,11 @@ export default function Donut({
       )}
 
       <text x={cx} y={cy - (size > 160 ? 6 : 4)} textAnchor="middle" dominantBaseline="middle"
-            style={{ fontSize: size > 160 ? 15 : 11, fontWeight: 800, fill: '#111827' }}>
+            style={{ fontSize: size > 160 ? 17 : 11, fontWeight: 800, fill: '#111827' }}>
         {centerValue}
       </text>
       <text x={cx} y={cy + (size > 160 ? 12 : 8)} textAnchor="middle" dominantBaseline="middle"
-            style={{ fontSize: size > 160 ? 9 : 7, fill: '#6b7280' }}>
+            style={{ fontSize: size > 160 ? 12 : 7, fill: '#4b5563' }}>
         {centerLabel}
       </text>
     </svg>

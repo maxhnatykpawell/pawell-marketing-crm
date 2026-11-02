@@ -18,6 +18,7 @@ import admin from 'firebase-admin';
 
 import { buildCohortLtv } from './src/lib/cohortLtv';
 import { chunkBySize } from './src/lib/clientAnalytics';
+import { kyivMonthOf, kyivDayBounds } from './src/lib/kyivTime';
 import { PaidLedger, PaidLedgerMeta, applyPaid, cashMonth, extractAgreementPaid } from './src/lib/paidLedger';
 import {
   FunnelRecord, FunnelSpeedMeta, FunnelSpeedState, RawClient, RawDeal, RawPayment,
@@ -1505,9 +1506,13 @@ async function syncKeepInCRM(
     // Використовуємо універсальні системні поля created_at_gteq/lteq для фільтрації по даті
     // Вказуємо повний час від 00:00:00 до 23:59:59, оскільки KeepInCRM (Ransack) інакше 
     // шукає точний збіг на 00:00:00, і через це повертає 0 записів за день!
-    const allClientsRaw = await keepinFetchAll('/clients', { 
-      'q[created_at_gteq]': `${today}T00:00:00.000+03:00`, 
-      'q[created_at_lteq]': `${today}T23:59:59.999+03:00` 
+    // Зсув — за київським календарем, а не жорсткий +03:00: з кінця жовтня до кінця
+    // березня Київ живе на +02:00, і з літнім зсувом остання година кожної доби
+    // потрапляла б у знімок наступної (31 жовтня 23:xx → листопад).
+    const dayBounds = kyivDayBounds(today);
+    const allClientsRaw = await keepinFetchAll('/clients', {
+      'q[created_at_gteq]': dayBounds.gteq,
+      'q[created_at_lteq]': dayBounds.lteq
     });
 
     // Ліди мають поле lead: true, клієнти lead: false (або undefined)
@@ -1520,8 +1525,8 @@ async function syncKeepInCRM(
 
     // Отримуємо угоди за день
     const allAgreementsRaw = await keepinFetchAll('/agreements', {
-      'q[created_at_gteq]': `${today}T00:00:00.000+03:00`,
-      'q[created_at_lteq]': `${today}T23:59:59.999+03:00`
+      'q[created_at_gteq]': dayBounds.gteq,
+      'q[created_at_lteq]': dayBounds.lteq,
     });
 
     const leadsToday = groupBySource(leadsRaw, allSourceNames);
@@ -1715,8 +1720,8 @@ export async function syncKeepInCRMLTV(
   console.log(`🔄 Запуск LTV синхронізації з KeepInCRM (${label})...`);
   try {
     const params: Record<string, string> = {};
-    if (from) params['q[created_at_gteq]'] = `${from}T00:00:00.000+03:00`;
-    if (to)   params['q[created_at_lteq]'] = `${to}T23:59:59.999+03:00`;
+    if (from) params['q[created_at_gteq]'] = kyivDayBounds(from).gteq;
+    if (to)   params['q[created_at_lteq]'] = kyivDayBounds(to).lteq;
 
     const allAgreementsRaw = await keepinFetchAll('/agreements', params);
 
@@ -1776,9 +1781,10 @@ export async function syncKeepInCRMLTV(
             clientData.lastPurchaseDate = dateStr;
           }
           
-          const d = new Date(dateStr);
-          if (!isNaN(d.getTime())) {
-            const yyyyMm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          // Місяць — за Києвом, а не за поясом процесу: на хостингу це UTC, і угода
+          // о 01:30 першого числа потрапляла в попередній місяць.
+          const yyyyMm = kyivMonthOf(dateStr);
+          if (yyyyMm) {
             const bucket = clientData.monthlyStats[yyyyMm] ?? (clientData.monthlyStats[yyyyMm] = { revenue: 0, deals: 0 });
             bucket.revenue += amount;
             bucket.deals += 1;
@@ -1789,10 +1795,7 @@ export async function syncKeepInCRMLTV(
         const agreementId = item.id != null ? String(item.id) : null;
         if (paid !== null && agreementId) {
           paidFieldSeen = true;
-          const d = dateStr ? new Date(dateStr) : null;
-          const agreementMonth = d && !isNaN(d.getTime())
-            ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-            : null;
+          const agreementMonth = dateStr ? kyivMonthOf(dateStr) : null;
           applyPaid(paidLedger, agreementId, paid, agreementMonth, paidMonth, paidBaseline);
           for (const [m, v] of Object.entries(paidLedger[agreementId] ?? {})) {
             clientData.monthlyPaid[m] = (clientData.monthlyPaid[m] ?? 0) + v;
@@ -2431,8 +2434,8 @@ async function syncKeepInCRMContactTasks(
     const today = todayKyiv();
 
     const tasks = await keepinFetchAll('/tasks', {
-      'q[created_at_gteq]': `${from}T00:00:00.000+03:00`,
-      'q[created_at_lteq]': `${to}T23:59:59.999+03:00`,
+      'q[created_at_gteq]': kyivDayBounds(from).gteq,
+      'q[created_at_lteq]': kyivDayBounds(to).lteq,
     });
 
     const events = tasks

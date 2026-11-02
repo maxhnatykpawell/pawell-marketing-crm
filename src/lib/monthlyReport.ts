@@ -23,6 +23,7 @@ import {
   CacExpenseInput, CurrencyRates, SourceCacResult,
 } from './cac';
 import { pluralUk } from './plural';
+import { kyivYmd } from './kyivTime';
 
 // ── Місяці ────────────────────────────────────────────────────────────────────
 
@@ -121,7 +122,7 @@ export interface MonthProgress {
 
 export function monthProgress(month: string, now: Date = new Date()): MonthProgress {
   const { to } = monthBounds(month);
-  const today = now.toISOString().slice(0, 10);
+  const today = kyivYmd(now);
   const daysInMonth = Number(to.slice(8, 10));
 
   // Майбутній місяць теж можливий (стрілка вперед на межі доби) — тоді нуль днів
@@ -792,7 +793,7 @@ export function computeCoverage(
   now: Date = new Date(),
 ): MonthCoverage {
   const { from, to } = monthBounds(month);
-  const today = now.toISOString().slice(0, 10);
+  const today = kyivYmd(now);
   // Поточний місяць ще триває: дні, які не настали, пропущеними не рахуються
   const last = to > today ? today : to;
 
@@ -829,7 +830,7 @@ export function computeCoverage(
  */
 export function isMonthMature(month: string, maturityDays: number, now: Date = new Date()): boolean {
   const end = new Date(`${monthBounds(month).to}T00:00:00Z`);
-  const today = new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
+  const today = new Date(`${kyivYmd(now)}T00:00:00Z`);
   return (today.getTime() - end.getTime()) / 86_400_000 >= maturityDays;
 }
 
