@@ -19,6 +19,7 @@ import admin from 'firebase-admin';
 import { buildCohortLtv } from './src/lib/cohortLtv';
 import { chunkBySize } from './src/lib/clientAnalytics';
 import { kyivMonthOf, kyivDayBounds } from './src/lib/kyivTime';
+import { dedupeById } from './src/lib/dedupeById';
 import { PaidLedger, PaidLedgerMeta, applyPaid, cashMonth, extractAgreementPaid } from './src/lib/paidLedger';
 import {
   FunnelRecord, FunnelSpeedMeta, FunnelSpeedState, RawClient, RawDeal, RawPayment,
@@ -1359,7 +1360,14 @@ async function keepinFetchAll(endpoint: string, params: Record<string, string> =
     page++;
   }
 
-  return allItems;
+  // Запити йдуть без фіксованого сортування, а CRM під час прогону змінюється:
+  // нова угода зсуває сторінки, і запис на межі приходить двічі. Повтор у
+  // знімку LTV означав би подвоєний дохід, угоди й «Оплачено» цієї угоди.
+  const { items, removed } = dedupeById(allItems);
+  if (removed > 0) {
+    console.warn(`⚠️ KeepInCRM ${endpoint}: прибрано ${removed} повторів за id (дані змінювались під час вибірки)`);
+  }
+  return items;
 }
 
 /**
@@ -1708,7 +1716,38 @@ async function writePaidLedger(db: admin.firestore.Firestore | null, ledger: Pai
  * @param range межі вивантаження угод. Обидві null (або аргумент відсутній) —
  *        розрахунок за весь час, єдиний варіант із повними когортами.
  */
+export class SyncBusyError extends Error {}
+
+/**
+ * Одночасно — лише один прогін LTV.
+ *
+ * Його запускають три шляхи: нічний cron, старт сервера і кнопка на головній. Два
+ * прогони, що перетнулись, пишуть частини клієнтів кожен за своїми межами, і
+ * якщо за цей час в CRM щось змінилось, межі розходяться: клієнт на стику може
+ * лягти в дві частини одразу (дубль) або в жодну. Читання просто склеює всі
+ * частини, тож дубль потрапляв би в аналітику як окремий запис.
+ *
+ * Помилка кидається ДО спроби, а не всередині неї: інакше відмова «зайнято»
+ * записалась би у знімок як збій синхронізації.
+ */
+let ltvSyncRunning = false;
+
 export async function syncKeepInCRMLTV(
+  range?: { from?: string | null; to?: string | null },
+): Promise<any> {
+  if (ltvSyncRunning) {
+    console.log('⏭️ LTV синхронізація пропущена: попередня ще виконується.');
+    throw new SyncBusyError('LTV-синхронізація вже виконується — зачекайте, поки завершиться.');
+  }
+  ltvSyncRunning = true;
+  try {
+    return await runKeepInCRMLTV(range);
+  } finally {
+    ltvSyncRunning = false;
+  }
+}
+
+async function runKeepInCRMLTV(
   range?: { from?: string | null; to?: string | null },
 ): Promise<any> {
   // Приймаємо лише валідні дати — інакше зіпсований ввід тихо перетворив би
@@ -2947,7 +2986,7 @@ async function startServer() {
       const snapshot = await syncKeepInCRMLTV({ from, to });
       res.json({ success: true, snapshot });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      res.status(e instanceof SyncBusyError ? 409 : 500).json({ success: false, error: e.message });
     }
   });
 
