@@ -11,7 +11,7 @@ function check(name: string, actual: unknown, expected: unknown) {
 const idle = (): KeepInCRMSyncStatus => ({
   running: false, type: null, total: 0, done: 0, pct: 0, currentDate: '', startedAt: null, finishedAt: null, error: null,
   ltv: { running: false, trigger: null, range: null, phase: '', done: 0, total: 0, pct: null, startedAt: null, finishedAt: null, error: null },
-  today: false, rateLimitedUntil: null,
+  today: false, rateLimitedUntil: null, startupLtv: null,
 });
 
 console.log('\nІндикатор синхронізації');

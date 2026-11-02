@@ -3,13 +3,16 @@ import { useAppContext } from '../App';
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, isToday, subDays } from 'date-fns';
 import { uk } from 'date-fns/locale';
 import { TrendingUp, TrendingDown, Target, Calendar as CalendarIcon, Send, Loader2, RefreshCw, Users, Zap, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
-import { KeepInCRMHistoryResponse, KeepInCRMSourceStat, KeepInCRMAgreementStat } from '../types';
+import { KeepInCRMHistoryResponse } from '../types';
 import { getKeepInCRMHistory, triggerKeepInCRMSync, triggerKeepInCRMHistorySync, getKeepInCRMSyncStatus, getKeepInCRMLTV, triggerKeepInCRMSyncLTV } from '../api';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { DollarSign, Gem, ExternalLink, Wallet } from 'lucide-react';
 import PeriodPicker, { PeriodKey, PeriodValue, makePeriod, describePeriod } from './PeriodPicker';
 import LtvSyncDialog from './LtvSyncDialog';
 import SyncActivityBanner from './SyncActivityBanner';
+import KpiTile from './dashboard/KpiTile';
+import SourceTable from './dashboard/SourceTable';
+import { avgCheckChange } from '../lib/dashboardMetrics';
 import { useSyncActivity } from '../hooks/useSyncActivity';
 import {
   sumSpend, computeCac, cacBySource, previousRange,
@@ -327,71 +330,71 @@ export default function DashboardView() {
       {/* KeepInCRM Block */}
       <div className="flex flex-col gap-5 flex-shrink-0">
         <div className="bg-white rounded-[24px] shadow-sm border border-gray-100 overflow-hidden">
-        {/* Header */}
-        <div className="flex flex-wrap items-center gap-3 px-6 py-5">
-          {/* Icon + title */}
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm flex-shrink-0">
+        {/* Шапка: дві групи, які переносяться ЦІЛКОМ. Раніше кнопки й вибір періоду
+            були окремими елементами одного рядка і при нестачі місця розсипались поодинці. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-6 py-5">
+          <div className="flex items-center gap-3 min-w-[240px]">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm flex-shrink-0">
               <Zap className="w-4 h-4 text-white" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-sm font-bold text-gray-800 truncate">KeepInCRM Analytics</h3>
+              <h3 className="text-base font-bold text-gray-900 leading-tight">Аналітика KeepInCRM</h3>
               {kData && (
-                <p className="text-[11px] text-gray-400 mt-0.5">
+                <p className="text-xs text-gray-600 mt-0.5">
                   {kData.period.from === kData.period.to
-                    ? kData.period.from
-                    : `${kData.period.from} — ${kData.period.to}`
-                  }
-                  {' · '}{kData.entries.length} днів з даними
+                    ? ymdUa(kData.period.from)
+                    : `${ymdUa(kData.period.from)} — ${ymdUa(kData.period.to)}`}
+                  {' · '}{kData.entries.length} {kData.entries.length === 1 ? 'день' : 'днів'} з даними
                 </p>
               )}
             </div>
           </div>
 
-          {/* Period picker */}
-          <PeriodPicker
-            value={kPeriod}
-            onChange={setKPeriod}
-            presets={K_PRESETS}
-            disabled={kLoading && !kData}
-          />
+          <div className="flex flex-wrap items-center gap-3">
+            <PeriodPicker
+              value={kPeriod}
+              onChange={setKPeriod}
+              presets={K_PRESETS}
+              disabled={kLoading && !kData}
+            />
 
-          {/* Sync button (admin only) */}
-          {currentUser?.role === 'admin' && (
-            <div className="flex gap-2">
-              <button
-                onClick={handleKHistorySync}
-                disabled={hSyncRunning || kSyncing}
-                title={hSyncRunning ? `Синхронізація виконується (${hSyncDone}/${hSyncTotal} днів)` : 'Синхронізувати історію (30 днів)'}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-orange-600 bg-orange-50 hover:bg-orange-100 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${hSyncRunning ? 'animate-spin' : ''}`} />
-                {hSyncRunning ? `${hSyncDone}/${hSyncTotal} днів...` : 'Синх. історію (30д)'}
-              </button>
-              <button
-                onClick={() => setIsLtvSyncOpen(true)}
-                disabled={ltvBusy || hSyncRunning}
-                title={ltvRunning
-                  ? `LTV вже рахується${activity?.ltv.pct != null ? ` (${activity.ltv.pct}%)` : ''} — хід нижче`
-                  : 'Порахувати LTV за обраний період'}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${ltvBusy ? 'animate-spin' : ''}`} />
-                {ltvBusy
-                  ? (activity?.ltv.pct != null ? `LTV ${activity.ltv.pct}%` : 'Рахуємо...')
-                  : 'LTV'}
-              </button>
-              <button
-                onClick={handleKSync}
-                disabled={kSyncing || hSyncRunning}
-                title="Синхронізувати зараз"
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-violet-600 bg-violet-50 hover:bg-violet-100 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${kSyncing ? 'animate-spin' : ''}`} />
-                {kSyncing ? 'Онов...' : 'Оновити'}
-              </button>
-            </div>
-          )}
+            {/* Синхронізація — лише для адміна; одна група з однаковими кнопками */}
+            {currentUser?.role === 'admin' && (
+              <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Синхронізація з KeepInCRM">
+                <button
+                  onClick={handleKHistorySync}
+                  disabled={hSyncRunning || kSyncing}
+                  title={hSyncRunning ? `Синхронізація виконується (${hSyncDone}/${hSyncTotal} днів)` : 'Завантажити історію за останні 30 днів'}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold whitespace-nowrap text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-orange-500 ${hSyncRunning ? 'animate-spin' : ''}`} />
+                  {hSyncRunning ? `Історія ${hSyncDone}/${hSyncTotal}` : 'Історія 30 дн.'}
+                </button>
+                <button
+                  onClick={() => setIsLtvSyncOpen(true)}
+                  disabled={ltvBusy || hSyncRunning}
+                  title={ltvRunning
+                    ? `LTV вже рахується${activity?.ltv.pct != null ? ` (${activity.ltv.pct}%)` : ''} — хід нижче`
+                    : 'Порахувати LTV за обраний період'}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold whitespace-nowrap text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-purple-500 ${ltvBusy ? 'animate-spin' : ''}`} />
+                  {ltvBusy
+                    ? (activity?.ltv.pct != null ? `LTV ${activity.ltv.pct}%` : 'Рахуємо LTV…')
+                    : 'Порахувати LTV'}
+                </button>
+                <button
+                  onClick={handleKSync}
+                  disabled={kSyncing || hSyncRunning}
+                  title="Оновити дані за сьогодні"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold whitespace-nowrap text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-violet-500 ${kSyncing ? 'animate-spin' : ''}`} />
+                  {kSyncing ? 'Оновлюємо…' : 'Оновити'}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* History sync progress bar */}
@@ -450,174 +453,91 @@ export default function DashboardView() {
               <p className="text-xs mt-1">Додайте KEEPINCRM_API_KEY у змінні середовища.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
-
-              {/* Залучено (когорта періоду) */}
-              <KeepInCRMSourceCard
-                title="Залучено за період"
-                total={kData.aggregated.totalAcquired}
-                stats={kData.aggregated.acquiredBySource}
-                color="blue"
-                icon={<Users className="w-4 h-4" />}
-                change={kData.comparison?.acquiredChange ?? null}
-                trend={chartData.map(e => e.acquired)}
-              />
-
-              {/* Скільки з цієї когорти вже конвертувалось */}
-              <KeepInCRMSourceCard
-                title="Стали клієнтами"
-                total={kData.aggregated.totalClients}
-                stats={kData.aggregated.clientsBySource}
-                color="green"
-                icon={<Target className="w-4 h-4" />}
-                change={kData.comparison?.clientsChange ?? null}
-                trend={chartData.map(e => e.totalClientsToday || 0)}
-              />
-              
-              {/* Agreements */}
-              <KeepInCRMSourceCard
-                title="Угоди за період"
-                total={kData.aggregated.totalAgreements || 0}
-                stats={kData.aggregated.agreementsBySource || []}
-                color="yellow"
-                icon={<DollarSign className="w-4 h-4" />}
-                change={kData.comparison?.agreementsChange ?? null}
-                subTotal={kData.aggregated.totalAgreementsSum ? `${kData.aggregated.totalAgreementsSum.toLocaleString('uk-UA')} ₴` : undefined}
-                showSum
-                trend={chartData.map(e => e.totalAgreementsToday || 0)}
-              />
-
-              {/* Avg Deal Value */}
-              <AvgDealCard
-                totalSum={kData.aggregated.totalAgreementsSum ?? 0}
-                totalCount={kData.aggregated.totalAgreements ?? 0}
-                bySource={kData.aggregated.agreementsBySource ?? []}
-                sumChange={kData.comparison?.agreementsSumChange ?? null}
-                countChange={kData.comparison?.agreementsChange ?? null}
-              />
-
-              {/* Когортний LTV на горизонті 12 міс. ARPU лишається довідковим числом нижче. */}
-              <div className="flex flex-col">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">LTV клієнта</p>
-                {/* Картка веде на вкладку «Аналітика», а не відкриває вікно:
-                    туди ж можна зайти напряму з меню, і обидва шляхи мають
-                    приводити в одне й те саме місце. */}
-                <div 
+            <div className="@container">
+              {/* Брейкпоінти — від ширини КОНТЕЙНЕРА, а не вікна: збоку є меню, і шість
+                  плиток у ряд на вікні 1280 стискались би до ~150 px кожна. */}
+              <div className="grid grid-cols-2 @2xl:grid-cols-3 @6xl:grid-cols-6 gap-3">
+                <KpiTile
+                  label="Залучено"
+                  accent="#3b82f6"
+                  value={fmtNum(kData.aggregated.totalAcquired)}
+                  delta={kData.comparison?.acquiredChange}
+                  note="нових записів: ліди й клієнти"
+                  trend={chartData.map(e => e.acquired)}
+                />
+                <KpiTile
+                  label="Стали клієнтами"
+                  accent="#10b981"
+                  value={fmtNum(kData.aggregated.totalClients)}
+                  delta={kData.comparison?.clientsChange}
+                  note={`${fmtNum(kData.aggregated.totalAcquired - kData.aggregated.totalClients)} ще лідами`}
+                  trend={chartData.map(e => e.totalClientsToday || 0)}
+                />
+                <KpiTile
+                  label="Конверсія когорти"
+                  accent="#6366f1"
+                  value={String(kData.aggregated.avgConversionRate)}
+                  unit="%"
+                  delta={kData.comparison?.conversionChange}
+                  note={<>
+                    {fmtNum(kData.aggregated.totalClients)} з {fmtNum(kData.aggregated.totalAcquired)} залучених
+                    {immatureDates.length > 0 && (
+                      <span className="block mt-1 text-amber-800" title={`Когорти молодші за ${COHORT_MATURITY_DAYS} дн. ще накопичують конверсії, тому показник занижений`}>
+                        ⏳ {immatureDates.length === kData.entries.length
+                          ? 'весь період ще дозріває'
+                          : `останні ${immatureDates.length} дн. ще дозрівають`}
+                      </span>
+                    )}
+                  </>}
+                />
+                <KpiTile
+                  label="Угоди"
+                  accent="#f59e0b"
+                  value={fmtNum(kData.aggregated.totalAgreements ?? 0)}
+                  delta={kData.comparison?.agreementsChange}
+                  note={kData.aggregated.totalAgreementsSum ? `на ${uah(kData.aggregated.totalAgreementsSum)}` : 'без суми'}
+                  trend={chartData.map(e => e.totalAgreementsToday || 0)}
+                />
+                <KpiTile
+                  label="Середній чек"
+                  accent="#8b5cf6"
+                  value={(kData.aggregated.totalAgreements ?? 0) > 0
+                    ? fmtNum(Math.round((kData.aggregated.totalAgreementsSum ?? 0) / (kData.aggregated.totalAgreements ?? 1)))
+                    : '—'}
+                  unit={(kData.aggregated.totalAgreements ?? 0) > 0 ? '₴' : undefined}
+                  delta={avgCheckChange(kData.comparison?.agreementsSumChange, kData.comparison?.agreementsChange)}
+                  note={(kData.aggregated.totalAgreements ?? 0) > 0 ? `сума ÷ ${fmtNum(kData.aggregated.totalAgreements ?? 0)} угод` : 'за період немає угод'}
+                />
+                {/* Веде на вкладку «Аналітика»: туди ж можна зайти з меню, і обидва шляхи
+                    мають приводити в одне місце. */}
+                <KpiTile
+                  label={ltv12 ? 'LTV клієнта · 12 міс' : 'ARPU · за весь час'}
+                  accent="#d946ef"
+                  value={ltvLoading ? '…' : ltvData ? (ltv12 ? ltv12.ltv : (ltvData.ltv ?? 0)).toLocaleString('uk-UA') : '—'}
+                  unit={ltvData ? '₴' : undefined}
                   onClick={() => setActiveView('analytics')}
-                  className="flex-1 flex flex-col justify-center bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl border border-purple-100 p-5 relative overflow-hidden transition-all cursor-pointer hover:shadow-md hover:border-purple-300 group"
                   title="Відкрити розширену аналітику"
-                >
-                  {ltvLoading ? (
-                    <div className="flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-purple-400" /></div>
-                  ) : ltvData ? (
-                    <>
-                      <div className="flex items-center justify-between text-purple-600 mb-1 relative z-10">
-                        <div className="flex items-center">
-                          <Gem className="w-4 h-4 mr-1.5" />
-                          <span className="text-sm font-semibold tracking-wide">
-                            {ltv12 ? 'За 12 місяців' : 'ARPU · за весь час'}
-                          </span>
-                        </div>
-                        <ExternalLink className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
-                      </div>
-
-                      {ltv12 ? (
-                        <>
-                          <span className="text-3xl font-black text-gray-900 mt-1 relative z-10">
-                            {ltv12.ltv.toLocaleString('uk-UA')} ₴
-                          </span>
-                          <p className="text-xs text-gray-500 mt-2 font-medium relative z-10">
-                            по {ltv12.cohorts} зрілих когортах · {ltv12.clients} клієнтів
-                          </p>
-                          <p className="text-[11px] text-gray-400 mt-0.5 relative z-10">
-                            ARPU за весь час: {ltvData.ltv?.toLocaleString('uk-UA') ?? 0} ₴
-                          </p>
-                        </>
-                      ) : (
-                        <>
-                          <span className="text-3xl font-black text-gray-900 mt-1 relative z-10">
-                            {ltvData.ltv?.toLocaleString('uk-UA') ?? 0} ₴
-                          </span>
-                          <p className="text-xs text-gray-500 mt-2 font-medium relative z-10">
-                            Клієнтів, що купили: {ltvData.uniqueClientsCount ?? 0}
-                          </p>
-                          {/* Жодна когорта ще не прожила 12 міс — чесніше показати ARPU */}
-                          <p className="text-[11px] text-amber-600 mt-1 relative z-10">
-                            ⏳ Для LTV бракує когорт віком 12 міс.
-                          </p>
-                        </>
-                      )}
-
-                      {ltvData.scopedTo && (
-                        <p className="text-[11px] text-amber-600 mt-1 relative z-10">
-                          ⚠️ Дані лише за {describePeriod({ key: 'custom', ...ltvData.scopedTo })} — LTV занижений
-                        </p>
-                      )}
-
-
-                      <div className="absolute -right-6 -bottom-6 opacity-10 group-hover:scale-110 transition-transform duration-300">
-                        <Gem className="w-24 h-24 text-purple-600" />
-                      </div>
-                    </>
-                  ) : (
-                    <span className="text-sm text-gray-400 text-center relative z-10">Немає даних</span>
-                  )}
-                </div>
+                  note={ltvData
+                    ? (ltv12
+                      ? <>по {ltv12.cohorts} зрілих когортах · {fmtNum(ltv12.clients)} клієнтів<span className="block mt-1">ARPU за весь час: {(ltvData.ltv ?? 0).toLocaleString('uk-UA')} ₴</span></>
+                      : <>⏳ Для LTV бракує когорт віком 12 міс.<span className="block mt-1">Клієнтів, що купили: {fmtNum(ltvData.uniqueClientsCount ?? 0)}</span></>)
+                    : 'Немає даних'}
+                  badge={ltvData?.scopedTo
+                    ? <span className="text-[11px] font-bold text-amber-800 bg-amber-100 rounded px-1.5 py-0.5" title={`Дані лише ${describePeriod({ key: 'custom', ...ltvData.scopedTo })} — LTV занижений`}>⚠ неповний</span>
+                    : undefined}
+                />
               </div>
-
-              {/* Когортна конверсія */}
-              <div className="flex flex-col">
-                <p
-                  className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3"
-                  title="Яка частка записів, залучених у цей період, вже стала клієнтами"
-                >
-                  Конверсія когорти
-                </p>
-                <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-br from-violet-50 to-indigo-50 rounded-2xl border border-violet-100 p-6">
-                  <span className="text-5xl font-black text-violet-700 leading-none">
-                    {kData.aggregated.avgConversionRate}%
-                  </span>
-                  <p className="text-xs text-violet-500 mt-2 font-medium text-center">
-                    {kData.aggregated.totalClients} з {kData.aggregated.totalAcquired} залучених
-                  </p>
-                  <div className="w-full mt-4 bg-violet-100 rounded-full h-2">
-                    <div
-                      className="bg-gradient-to-r from-violet-500 to-indigo-500 h-2 rounded-full transition-all duration-700"
-                      style={{ width: `${Math.min(kData.aggregated.avgConversionRate, 100)}%` }}
-                    />
-                  </div>
-
-                  {/* Порівняння з попереднім періодом (null = ділення на нуль) */}
-                  {kData.comparison && kData.comparison.conversionChange !== null && (
-                    <div className={`mt-3 flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full ${
-                      kData.comparison.conversionChange >= 0
-                        ? 'bg-green-50 text-green-700'
-                        : 'bg-red-50 text-red-700'
-                    }`}>
-                      {kData.comparison.conversionChange >= 0
-                        ? <TrendingUp className="w-3 h-3" />
-                        : <TrendingDown className="w-3 h-3" />}
-                      {kData.comparison.conversionChange >= 0 ? '+' : ''}{kData.comparison.conversionChange}% відносно поп. пер.
-                    </div>
-                  )}
-
-                  {/* Свіжі когорти ще не встигли конвертнутись — попереджаємо явно */}
-                  {immatureDates.length > 0 && (
-                    <p
-                      className="mt-3 text-[10px] leading-snug text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5 text-center"
-                      title={`Когорти молодші за ${COHORT_MATURITY_DAYS} дн. ще накопичують конверсії, тому показник занижений`}
-                    >
-                      ⏳ {immatureDates.length === kData.entries.length
-                        ? 'Весь період ще дозріває'
-                        : `Останні ${immatureDates.length} дн. ще дозрівають`}
-                    </p>
-                  )}
-                </div>
-              </div>
-
             </div>
           )}
           </div>
+
+          {/* ── Джерела: один рядок — одне джерело, колонки — весь ланцюг ──── */}
+          {kData && (
+            <SourceTable
+              aggregated={kData.aggregated}
+              cac={cacData && canView('expenses') ? cacData.bySource : null}
+            />
+          )}
 
           {/* ── Юніт-економіка: CAC ──────────────────────────────────────── */}
           {/* Прив'язано до права на «Витрати», а не до ролі: CAC — це той самий
@@ -654,14 +574,32 @@ export default function DashboardView() {
           {/* Chart Section */}
           {kData && kData.entries.length > 0 && (
             <div className="bg-white rounded-[24px] shadow-sm border border-gray-100 p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-sm font-bold text-gray-800">Динаміка залучення та конверсії</h3>
+              <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 mb-5">
+                <div>
+                  <h3 className="text-base font-bold text-gray-900">Динаміка залучення та угод</h3>
+                  <p className="text-xs text-gray-600 mt-0.5">По днях обраного періоду; наведіть на графік, щоб побачити точні числа.</p>
+                </div>
+                {/* Легенда обов'язкова: три лінії одного кольорового ряду без підпису — загадка.
+                    Біля кожної — підсумок за період, щоб легенда була ще й довідкою. */}
+                <ul className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-gray-700">
+                  {[
+                    { color: '#3b82f6', label: 'Залучено', total: kData.aggregated.totalAcquired },
+                    { color: '#10b981', label: 'Стали клієнтами', total: kData.aggregated.totalClients },
+                    { color: '#f59e0b', label: 'Угоди', total: kData.aggregated.totalAgreements ?? 0 },
+                  ].map(l => (
+                    <li key={l.label} className="inline-flex items-center gap-1.5">
+                      <span aria-hidden className="inline-block w-4 h-[3px] rounded-full" style={{ backgroundColor: l.color }} />
+                      <span className="font-semibold">{l.label}</span>
+                      <span className="text-gray-500 tabular-nums">· {fmtNum(l.total)}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
               <div className="h-[280px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart
                     data={chartData}
-                    margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                    margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                   >
                     <defs>
                       <linearGradient id="colorLeads" x1="0" y1="0" x2="0" y2="1">
@@ -684,19 +622,20 @@ export default function DashboardView() {
                         const [, month, day] = val.split('-');
                         return `${day}.${month}`;
                       }}
-                      tick={{ fontSize: 11, fill: '#6b7280' }} 
+                      tick={{ fontSize: 12, fill: '#4b5563' }} 
                       tickLine={false}
                       axisLine={{ stroke: '#e5e7eb' }}
                       minTickGap={20}
                     />
                     <YAxis 
-                      tick={{ fontSize: 11, fill: '#6b7280' }} 
+                      tick={{ fontSize: 12, fill: '#4b5563' }} 
                       tickLine={false}
                       axisLine={false}
                       allowDecimals={false}
+                      width={76}
                     />
                     <Tooltip 
-                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', fontSize: '12px' }}
+                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', fontSize: '13px' }}
                       labelFormatter={(label) => `Дата: ${label}`}
                     />
                     <Area
@@ -734,14 +673,22 @@ export default function DashboardView() {
               </div>
 
               {/* Revenue Chart */}
-              <div className="flex items-center justify-between mt-8 mb-6">
-                <h3 className="text-sm font-bold text-gray-800">Дохід по днях (грн)</h3>
+              <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 mt-10 mb-5 pt-6 border-t border-gray-100">
+                <div>
+                  <h3 className="text-base font-bold text-gray-900">Сума угод по днях</h3>
+                  <p className="text-xs text-gray-600 mt-0.5">Законтрактовано в гривнях, за датою створення угоди.</p>
+                </div>
+                <p className="inline-flex items-center gap-1.5 text-xs text-gray-700">
+                  <span aria-hidden className="inline-block w-4 h-[3px] rounded-full" style={{ backgroundColor: '#8b5cf6' }} />
+                  <span className="font-semibold">Сума угод</span>
+                  <span className="text-gray-500 tabular-nums">· {uah(kData.aggregated.totalAgreementsSum ?? 0)}</span>
+                </p>
               </div>
               <div className="h-[280px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart
                     data={chartData}
-                    margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+                    margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                   >
                     <defs>
                       <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
@@ -756,20 +703,20 @@ export default function DashboardView() {
                         const [, month, day] = val.split('-');
                         return `${day}.${month}`;
                       }}
-                      tick={{ fontSize: 11, fill: '#6b7280' }} 
+                      tick={{ fontSize: 12, fill: '#4b5563' }} 
                       tickLine={false}
                       axisLine={{ stroke: '#e5e7eb' }}
                       minTickGap={20}
                     />
                     <YAxis 
                       tickFormatter={(val) => `${val.toLocaleString('uk-UA')} ₴`}
-                      tick={{ fontSize: 11, fill: '#6b7280' }} 
+                      tick={{ fontSize: 12, fill: '#4b5563' }} 
                       tickLine={false}
                       axisLine={false}
-                      width={80}
+                      width={76}
                     />
                     <Tooltip 
-                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', fontSize: '12px' }}
+                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', fontSize: '13px' }}
                       labelFormatter={(label) => `Дата: ${label}`}
                       formatter={(value: number) => [`${value.toLocaleString('uk-UA')} ₴`, 'Дохід']}
                     />
@@ -837,7 +784,7 @@ export default function DashboardView() {
                       className="text-xs p-2.5 rounded-lg border bg-purple-50 border-purple-200 text-purple-800 cursor-pointer hover:shadow-md hover:-translate-y-px transition relative group"
                     >
                       <div className="font-semibold leading-tight pr-4 line-clamp-2">{e.title}</div>
-                      <span className="text-[9px] opacity-70 mt-1.5 block uppercase font-bold tracking-wide">Подія</span>
+                      <span className="text-[11px] opacity-70 mt-1.5 block uppercase font-bold tracking-wide">Подія</span>
                     </div>
                   ))}
 
@@ -849,7 +796,7 @@ export default function DashboardView() {
                       className="text-xs p-2.5 rounded-lg border bg-blue-50 border-blue-200 text-blue-800 cursor-pointer hover:shadow-md hover:-translate-y-px transition relative group"
                     >
                       <div className="font-semibold leading-tight line-clamp-2">{c.focus || c.description}</div>
-                      <span className="text-[9px] opacity-70 mt-1.5 block uppercase font-bold tracking-wide">Пост</span>
+                      <span className="text-[11px] opacity-70 mt-1.5 block uppercase font-bold tracking-wide">Пост</span>
                     </div>
                   ))}
 
@@ -862,7 +809,7 @@ export default function DashboardView() {
                     >
                       <div className="font-semibold leading-tight line-clamp-2">{c.title}</div>
                       <div className="mt-2 flex items-center justify-between">
-                        <span className="text-[9px] opacity-70 uppercase font-bold tracking-wide">Дедлайн</span>
+                        <span className="text-[11px] opacity-70 uppercase font-bold tracking-wide">Дедлайн</span>
                         {c.assigneeId && state.users.find(u => u.id === c.assigneeId) && (
                           <img 
                             src={state.users.find(u => u.id === c.assigneeId)?.avatar} 
@@ -902,6 +849,9 @@ export default function DashboardView() {
 // ── CAC / юніт-економіка ──────────────────────────────────────────────────────
 
 const uah = (n: number) => `${Math.round(n).toLocaleString('uk-UA')} ₴`;
+const fmtNum = (n: number) => n.toLocaleString('uk-UA');
+/** '2026-11-02' → '02.11.2026' */
+const ymdUa = (s: string) => s.split('-').reverse().join('.');
 
 interface CacSectionProps {
   scope: CacScope;
@@ -925,15 +875,16 @@ function CacSection({
   const { cac, cpl, prevCac, cacChange, cacImproved, ltvToCac, newClients } = result;
 
   const scopeLabel = scope === 'ads' ? `Категорія «${AD_SPEND_CATEGORY}»` : 'Усі витрати відділу';
-  const maxSourceCac = Math.max(...bySource.matched.map(s => s.cac ?? 0), 1);
 
   return (
     <div className="bg-white rounded-[24px] shadow-sm border border-gray-100 p-6">
       {/* Header + перемикач бази витрат */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
         <div className="flex items-center gap-2">
-          <h3 className="text-sm font-bold text-gray-800">Юніт-економіка</h3>
-          <span className="text-[11px] text-gray-400">за той самий період</span>
+          <div>
+            <h3 className="text-base font-bold text-gray-900">Юніт-економіка</h3>
+            <p className="text-xs text-gray-600 mt-0.5">Витрати ÷ клієнти за той самий період</p>
+          </div>
         </div>
         <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
           {(['ads', 'all'] as CacScope[]).map(s => (
@@ -953,317 +904,108 @@ function CacSection({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-
-        {/* CAC */}
-        <div className="bg-gradient-to-br from-sky-50 to-cyan-50 rounded-2xl border border-sky-100 p-4 flex flex-col">
-          <div className="flex items-start justify-between">
-            <p
-              className="text-[11px] font-semibold text-sky-700 uppercase tracking-wider"
-              title="Витрати періоду ÷ клієнти, залучені в цьому ж періоді"
-            >
-              CAC · вартість клієнта
-            </p>
-            <div className="w-7 h-7 rounded-lg bg-sky-100 text-sky-600 flex items-center justify-center flex-shrink-0">
-              <Wallet className="w-4 h-4" />
-            </div>
-          </div>
-
-          {cac === null ? (
-            <>
-              <span className="text-2xl font-black text-gray-300 mt-3 leading-none">—</span>
-              <p className="text-[11px] text-gray-400 mt-2 leading-snug">
-                За період немає клієнтів — ділити нема на що
-              </p>
-            </>
-          ) : (
-            <>
-              <div className="mt-2 flex items-baseline gap-2 flex-wrap">
-                <span className="text-3xl font-black text-sky-800 leading-none">
-                  {cac.toLocaleString('uk-UA')}
-                </span>
-                <span className="text-xs font-bold text-sky-400">₴</span>
-                {cacChange !== null && (
-                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full flex items-center gap-0.5 ${
-                    cacImproved ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                  }`}
-                    title={`Попередній період: ${uah(prevCac ?? 0)} за клієнта. Для CAC зниження — це добре.`}
-                  >
-                    {cacChange <= 0 ? <TrendingDown className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
-                    {cacChange > 0 ? '+' : ''}{cacChange}%
+      <div className="@container">
+        <div className="grid grid-cols-2 @3xl:grid-cols-4 gap-3">
+          <KpiTile
+            label="CAC · вартість клієнта"
+            accent="#0ea5e9"
+            title="Витрати періоду ÷ клієнти, залучені в цьому ж періоді"
+            value={cac === null ? '—' : cac.toLocaleString('uk-UA')}
+            unit={cac === null ? undefined : '₴'}
+            delta={cac === null ? undefined : (hasComparison ? cacChange : undefined)}
+            deltaGood="down"
+            note={cac === null
+              ? 'За період немає клієнтів — ділити нема на що'
+              : <>{uah(spend.total)} ÷ {newClients.toLocaleString('uk-UA')} клієнт(ів)
+                  {!hasComparison && <span className="block mt-1">Немає з чим порівняти</span>}
+                  {cacChange !== null && prevCac !== null && <span className="block mt-1">Було {uah(prevCac)} · зниження — це добре</span>}</>}
+          />
+          <KpiTile
+            label="Вартість ліда"
+            accent="#6366f1"
+            title="Витрати періоду ÷ усі залучені записи (ліди + клієнти)"
+            value={cpl === null ? '—' : cpl.toLocaleString('uk-UA')}
+            unit={cpl === null ? undefined : '₴'}
+            note={cpl === null ? 'За період нікого не залучено' : 'скільки коштує один залучений запис'}
+          />
+          <KpiTile
+            label="LTV : CAC"
+            accent={ltvToCac === null ? '#9ca3af' : ltvToCac >= 3 ? '#10b981' : ltvToCac >= 1 ? '#f59e0b' : '#ef4444'}
+            title="Скільки грошей приносить клієнт на кожну гривню залучення"
+            value={ltvToCac === null ? '—' : `${ltvToCac.toLocaleString('uk-UA')}×`}
+            note={ltvToCac === null
+              ? 'Потрібні і CAC, і порахований LTV'
+              : <>
+                  {ltvToCac >= 3
+                    ? 'Здорова економіка (бенчмарк ≥ 3×)'
+                    : ltvToCac >= 1
+                      ? 'Окупається, але запасу мало (норма ≥ 3×)'
+                      : 'Клієнт коштує дорожче, ніж приносить'}
+                  {/* Шкала 0–5×: мітка на 3× — бенчмарк здорової економіки */}
+                  <span className="relative block mt-2 h-2 rounded-full bg-gray-100" title="Мітка — бенчмарк 3×">
+                    <span
+                      className={`block h-2 rounded-full ${ltvToCac >= 3 ? 'bg-emerald-500' : ltvToCac >= 1 ? 'bg-amber-500' : 'bg-red-500'}`}
+                      style={{ width: `${Math.min(100, (ltvToCac / 5) * 100)}%` }}
+                    />
+                    <span className="absolute -top-0.5 h-3 w-0.5 rounded bg-gray-500" style={{ left: '60%' }} />
                   </span>
-                )}
-              </div>
-              <p className="text-[11px] text-sky-600/80 mt-2 leading-snug">
-                {uah(spend.total)} ÷ {newClients.toLocaleString('uk-UA')} клієнт(ів)
-              </p>
-              {!hasComparison && (
-                <p className="text-[10px] text-gray-400 mt-1">Немає з чим порівняти</p>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* CPL */}
-        <div className="bg-gradient-to-br from-indigo-50 to-blue-50 rounded-2xl border border-indigo-100 p-4 flex flex-col">
-          <div className="flex items-start justify-between">
-            <p
-              className="text-[11px] font-semibold text-indigo-700 uppercase tracking-wider"
-              title="Витрати періоду ÷ усі залучені записи (ліди + клієнти)"
-            >
-              Вартість ліда
-            </p>
-            <div className="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center flex-shrink-0">
-              <Users className="w-4 h-4" />
-            </div>
-          </div>
-          {cpl === null ? (
-            <>
-              <span className="text-2xl font-black text-gray-300 mt-3 leading-none">—</span>
-              <p className="text-[11px] text-gray-400 mt-2">За період нікого не залучено</p>
-            </>
-          ) : (
-            <>
-              <div className="mt-2 flex items-baseline gap-2">
-                <span className="text-3xl font-black text-indigo-800 leading-none">
-                  {cpl.toLocaleString('uk-UA')}
-                </span>
-                <span className="text-xs font-bold text-indigo-400">₴</span>
-              </div>
-              <p className="text-[11px] text-indigo-600/80 mt-2 leading-snug">
-                Скільки коштує один залучений запис
-              </p>
-            </>
-          )}
-        </div>
-
-        {/* LTV : CAC */}
-        <div className="bg-gradient-to-br from-purple-50 to-fuchsia-50 rounded-2xl border border-purple-100 p-4 flex flex-col">
-          <div className="flex items-start justify-between">
-            <p
-              className="text-[11px] font-semibold text-purple-700 uppercase tracking-wider"
-              title="Скільки грошей приносить клієнт на кожну гривню залучення"
-            >
-              LTV : CAC
-            </p>
-            <div className="w-7 h-7 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center flex-shrink-0">
-              <Gem className="w-4 h-4" />
-            </div>
-          </div>
-          {ltvToCac === null ? (
-            <>
-              <span className="text-2xl font-black text-gray-300 mt-3 leading-none">—</span>
-              <p className="text-[11px] text-gray-400 mt-2 leading-snug">
-                Потрібні і CAC, і порахований LTV
-              </p>
-            </>
-          ) : (
-            <>
-              <div className="mt-2 flex items-baseline gap-2">
-                <span className={`text-3xl font-black leading-none ${
-                  ltvToCac >= 3 ? 'text-emerald-700' : ltvToCac >= 1 ? 'text-amber-600' : 'text-red-600'
-                }`}>
-                  {ltvToCac.toLocaleString('uk-UA')}×
-                </span>
-              </div>
-              <p className="text-[11px] text-purple-600/80 mt-2 leading-snug">
-                {ltvToCac >= 3
-                  ? 'Здорова економіка (бенчмарк ≥ 3×)'
-                  : ltvToCac >= 1
-                    ? 'Окупається, але запасу мало (норма ≥ 3×)'
-                    : 'Клієнт коштує дорожче, ніж приносить'}
-              </p>
-              {/* Шкала 0–5×: мітка на 3× — бенчмарк здорової економіки */}
-              <div className="relative mt-3 h-2 rounded-full bg-purple-100" title="Мітка — бенчмарк 3×">
-                <div
-                  className={`h-2 rounded-full ${ltvToCac >= 3 ? 'bg-emerald-500' : ltvToCac >= 1 ? 'bg-amber-500' : 'bg-red-500'}`}
-                  style={{ width: `${Math.min(100, (ltvToCac / 5) * 100)}%` }}
-                />
-                <span className="absolute -top-0.5 h-3 w-0.5 rounded bg-gray-500" style={{ left: '60%' }} />
-              </div>
-              <p className="text-[10px] text-gray-400 mt-2">База: {ltvBasis}</p>
-            </>
-          )}
-        </div>
-
-        {/* Витрати періоду */}
-        <div className="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-2xl border border-emerald-100 p-4 flex flex-col">
-          <div className="flex items-start justify-between">
-            <p className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wider">
-              Витрати періоду
-            </p>
-            <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center flex-shrink-0">
-              <DollarSign className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-black text-emerald-800 leading-none">
-              {spend.total.toLocaleString('uk-UA')}
-            </span>
-            <span className="text-xs font-bold text-emerald-400">₴</span>
-          </div>
-          <p className="text-[11px] text-emerald-600/80 mt-2 leading-snug">
-            {scopeLabel} · {spend.count} запис(ів)
-          </p>
-          <button
-            onClick={onOpenExpenses}
-            className="mt-auto pt-2 text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 transition self-start"
-          >
-            Відкрити витрати <ExternalLink className="w-3 h-3" />
-          </button>
+                  <span className="block mt-1.5">База: {ltvBasis}</span>
+                </>}
+          />
+          <KpiTile
+            label="Витрати періоду"
+            accent="#14b8a6"
+            value={spend.total.toLocaleString('uk-UA')}
+            unit="₴"
+            note={<>
+              {scopeLabel} · {spend.count} запис(ів)
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={onOpenExpenses}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') onOpenExpenses(); }}
+                className="mt-1.5 inline-flex items-center gap-1 font-semibold text-teal-800 hover:text-teal-950 cursor-pointer"
+              >
+                Відкрити витрати <ExternalLink className="w-3 h-3" />
+              </span>
+            </>}
+          />
         </div>
       </div>
 
       {/* Застереження — краще пояснити перекос, ніж дати повірити в рівне число */}
       <div className="mt-3 space-y-1.5">
         {spend.count === 0 && (
-          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 leading-snug">
+          <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-snug">
             За цей період витрат не заведено{scope === 'ads' ? ` в категорії «${AD_SPEND_CATEGORY}»` : ''} — CAC рахується від нуля.
             Додайте витрати в розділі «Витрати», щоб число стало реальним.
           </p>
         )}
         {ratesUnset && (
-          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 leading-snug">
+          <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-snug">
             У періоді є витрати не в гривні, а курс не задано — використано типовий.
             Задайте курс у «Витрати → Налаштування».
           </p>
         )}
         {immatureDays > 0 && cac !== null && (
-          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 leading-snug">
+          <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-snug">
             ⏳ {immatureDays === periodDays ? 'Весь період' : `Останні ${immatureDays} дн.`} ще дозрівають:
             частина залучених не встигла стати клієнтами, тож CAC поки завищений.
           </p>
         )}
       </div>
 
-      {/* CAC по джерелах */}
-      {bySource.matched.length > 0 && (
-        <div className="mt-5">
-          <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-3">
-            CAC по джерелах
-          </p>
-          <div className="space-y-2.5">
-            {bySource.matched.map(s => (
-              <div key={s.source} className="flex items-center gap-3">
-                <span className="w-28 text-xs text-gray-600 truncate shrink-0" title={s.source}>{s.source}</span>
-                <div className="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-sky-400 to-cyan-500 transition-all duration-500"
-                    style={{ width: `${Math.max(((s.cac ?? 0) / maxSourceCac) * 100, 4)}%` }}
-                  />
-                </div>
-                <span className="text-xs font-bold text-gray-800 tabular-nums w-24 text-right shrink-0">
-                  {s.cac === null ? '—' : uah(s.cac)}
-                </span>
-                <span className="text-[10px] text-gray-400 w-28 text-right shrink-0 hidden sm:block">
-                  {uah(s.spend)} / {s.clients} кл.
-                </span>
-              </div>
-            ))}
-          </div>
-          {(bySource.unmatchedSpend > 0 || bySource.unmatchedClients > 0) && (
-            <p className="text-[10px] text-gray-400 mt-2.5 leading-snug">
-              Поза розбивкою:
-              {bySource.unmatchedSpend > 0 && ` ${uah(bySource.unmatchedSpend)} витрат на джерела, яких немає в CRM`}
-              {bySource.unmatchedSpend > 0 && bySource.unmatchedClients > 0 && ' ·'}
-              {bySource.unmatchedClients > 0 && ` ${bySource.unmatchedClients} клієнт(ів) із джерел без витрат`}
-              . Назви джерел у витратах і в CRM мають збігатись.
-            </p>
-          )}
-        </div>
+      {/* CAC по кожному джерелу — колонка таблиці «Джерела» вище. Тут лишається те,
+          що в таблицю не лягає: гроші й клієнти, які не вдалося зіставити. */}
+      {(bySource.unmatchedSpend > 0 || bySource.unmatchedClients > 0) && (
+        <p className="mt-3 text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 leading-snug">
+          Поза розбивкою CAC по джерелах:
+          {bySource.unmatchedSpend > 0 && ` ${uah(bySource.unmatchedSpend)} витрат на джерела, яких немає в CRM`}
+          {bySource.unmatchedSpend > 0 && bySource.unmatchedClients > 0 && ' ·'}
+          {bySource.unmatchedClients > 0 && ` ${bySource.unmatchedClients} клієнт(ів) із джерел без витрат`}
+          . Назви джерел у витратах і в CRM мають збігатись.
+        </p>
       )}
-    </div>
-  );
-}
-
-// ── Avg Deal Value Card ───────────────────────────────────────────────────────
-
-interface AvgDealCardProps {
-  totalSum: number;
-  totalCount: number;
-  bySource: { source: string; count: number; totalSum: number }[];
-  sumChange: number | null;
-  countChange: number | null;
-}
-
-function AvgDealCard({ totalSum, totalCount, bySource, sumChange }: AvgDealCardProps) {
-  const avg = totalCount > 0 ? Math.round(totalSum / totalCount) : 0;
-
-  // Avg check по кожному джерелу, відсортований спаданням
-  const sourceAvgs = bySource
-    .filter(s => s.count > 0)
-    .map(s => ({ source: s.source, avg: Math.round(s.totalSum / s.count), count: s.count }))
-    .sort((a, b) => b.avg - a.avg);
-
-  const maxAvg = sourceAvgs.length > 0 ? sourceAvgs[0].avg : 1;
-
-  return (
-    <div className="flex flex-col">
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Середній чек</p>
-      <div className="flex-1 bg-gradient-to-br from-rose-50 to-pink-50 rounded-2xl border border-rose-100 p-4">
-
-        {/* Main value */}
-        <div className="flex items-start justify-between mb-5">
-          <div className="flex gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-rose-100 text-rose-600 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <TrendingUp className="w-4 h-4" />
-            </div>
-            <div className="flex flex-col min-w-0">
-              {totalCount > 0 ? (
-                <div className="flex items-baseline gap-1.5 flex-wrap">
-                  <span className="text-3xl font-black text-rose-700 leading-none">
-                    {avg.toLocaleString('uk-UA')}
-                  </span>
-                  <span className="text-sm font-bold text-rose-400">₴</span>
-                </div>
-              ) : (
-                <span className="text-sm text-gray-400 italic mt-1">Немає угод</span>
-              )}
-              {totalCount > 0 && (
-                <span className="text-[10px] text-gray-400 font-semibold mt-1.5 uppercase tracking-wider">
-                  з {totalCount} угод
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Change badge */}
-          {sumChange !== null && (
-            <span className={`shrink-0 text-[11px] font-bold px-2 py-1 rounded-md flex items-center gap-0.5 ${
-              sumChange >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-            }`}>
-              {sumChange >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-              {sumChange >= 0 ? '+' : ''}{sumChange}%
-            </span>
-          )}
-        </div>
-
-        {/* Per-source avg check */}
-        {sourceAvgs.length === 0 ? (
-          <p className="text-xs text-gray-400 italic">Дані відсутні</p>
-        ) : (
-          <div className="mt-2">
-            {sourceAvgs.slice(0, 4).map(s => (
-              <div key={s.source} className="mb-3 last:mb-0">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[11px] text-gray-600 font-medium truncate flex-1 pr-2" title={s.source}>
-                    {s.source}
-                  </span>
-                  <span className="text-[11px] font-bold text-rose-700 shrink-0 whitespace-nowrap">
-                    {s.avg.toLocaleString('uk-UA')} ₴
-                  </span>
-                </div>
-                <div className="w-full bg-rose-100/50 rounded-full h-1.5 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-rose-400 to-pink-500 transition-all duration-500"
-                    style={{ width: `${Math.max(2, (s.avg / maxAvg) * 100)}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -1436,7 +1178,7 @@ function SalesFunnel({ acquired, clients, agreements, agreementsSum, acquiredCha
                   )}
                 </div>
                 {s.note && (
-                  <p className="text-[10px] text-gray-400 mt-1 leading-snug">{s.note}</p>
+                  <p className="text-[11px] text-gray-400 mt-1 leading-snug">{s.note}</p>
                 )}
               </div>
 
@@ -1455,199 +1197,18 @@ function SalesFunnel({ acquired, clients, agreements, agreementsSum, acquiredCha
 
           {/* Когортна конверсія — єдиний перехід, який ці дані дозволяють виміряти */}
           <div className="rounded-2xl bg-gray-50 border border-gray-100 px-4 py-3 text-center">
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
               Залучений → Клієнт
             </p>
             <p className="text-2xl font-black text-gray-800 mt-1">
               {conv1}<span className="text-sm font-semibold text-gray-400">%</span>
             </p>
-            <p className="text-[10px] text-gray-400 mt-0.5">
+            <p className="text-[11px] text-gray-400 mt-0.5">
               {clients.toLocaleString('uk-UA')} з {acquired.toLocaleString('uk-UA')} залучених
             </p>
           </div>
         </div>
 
-      </div>
-    </div>
-  );
-}
-
-// ── Міні-графік тренду для плиток ────────────────────────────────────────────
-
-function Spark({ points, color }: { points: number[]; color: string }) {
-  const w = 120, h = 32;
-  const max = Math.max(...points), min = Math.min(...points);
-  const span = max - min || 1;
-  const d = points
-    .map((v, i) => `${i ? 'L' : 'M'}${((i * w) / (points.length - 1)).toFixed(1)} ${(h - 4 - ((v - min) / span) * (h - 8)).toFixed(1)}`)
-    .join(' ');
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-8" aria-hidden="true">
-      <path d={d} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-    </svg>
-  );
-}
-
-const SPARK_COLORS = { blue: '#3b82f6', green: '#10b981', yellow: '#f59e0b' } as const;
-
-// ── KeepInCRM Source Bar Card ─────────────────────────────────────────────────
-
-interface SourceCardProps {
-  title: string;
-  total: number;
-  stats: (KeepInCRMSourceStat | KeepInCRMAgreementStat)[];
-  color: 'blue' | 'green' | 'yellow';
-  icon: React.ReactNode;
-  change?: number | null;  // % зміна відносно попереднього періоду
-  subTotal?: string;       // додатковий текст під тоталом (напр. сума в грн)
-  showSum?: boolean;       // показати суму по кожному джерелу (для угод)
-  trend?: number[];        // значення по днях періоду — для міні-графіка
-}
-
-function KeepInCRMSourceCard({ title, total, stats, color, icon, change, subTotal, showSum, trend }: SourceCardProps) {
-  const [isExpanded, setIsExpanded] = React.useState(false);
-
-  const colors = {
-    blue: {
-      bg: 'from-blue-50 to-sky-50',
-      border: 'border-blue-100',
-      text: 'text-blue-700',
-      bar: 'bg-gradient-to-r from-blue-400 to-sky-500',
-      barBg: 'bg-blue-100',
-      icon: 'bg-blue-100 text-blue-600',
-      label: 'text-blue-500',
-    },
-    green: {
-      bg: 'from-emerald-50 to-teal-50',
-      border: 'border-emerald-100',
-      text: 'text-emerald-700',
-      bar: 'bg-gradient-to-r from-emerald-400 to-teal-500',
-      barBg: 'bg-emerald-100',
-      icon: 'bg-emerald-100 text-emerald-600',
-      label: 'text-emerald-500',
-    },
-    yellow: {
-      bg: 'from-amber-50 to-yellow-50',
-      border: 'border-amber-100',
-      text: 'text-amber-700',
-      bar: 'bg-gradient-to-r from-amber-400 to-yellow-500',
-      barBg: 'bg-amber-100',
-      icon: 'bg-amber-100 text-amber-600',
-      label: 'text-amber-500',
-    }
-  }[color] || {
-    bg: 'from-gray-50 to-gray-100',
-    border: 'border-gray-200',
-    text: 'text-gray-700',
-    bar: 'bg-gray-400',
-    barBg: 'bg-gray-200',
-    icon: 'bg-gray-200 text-gray-600',
-    label: 'text-gray-500',
-  };
-
-  const maxCount = stats.length > 0 ? Math.max(...stats.map(s => s.count)) : 1;
-  const activeStats = stats.filter(s => s.count > 0);
-  const hiddenCount = stats.length - activeStats.length;
-  
-  // Якщо немає активних, але є приховані — показуємо приховані, інакше показуємо те що є
-  const displayedStats = isExpanded ? stats : activeStats;
-
-  return (
-    <div className="flex flex-col">
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">{title}</p>
-      <div className={`flex-1 bg-gradient-to-br ${colors.bg} rounded-2xl border ${colors.border} p-4`}>
-        {/* Total */}
-        <div className="flex items-start justify-between mb-5">
-          <div className="flex gap-2.5">
-            <div className={`w-8 h-8 rounded-lg ${colors.icon} flex items-center justify-center flex-shrink-0 mt-0.5`}>
-              {icon}
-            </div>
-            <div className="flex flex-col min-w-0">
-              <div className="flex items-baseline gap-1.5 flex-wrap">
-                <span className={`text-3xl font-black ${colors.text} leading-none`}>
-                  {total}
-                </span>
-                {subTotal && (
-                  <span className={`text-sm font-bold ${colors.label} whitespace-nowrap`}>
-                    {subTotal}
-                  </span>
-                )}
-              </div>
-              {(!change || change === null) && (
-                <span className="text-[10px] text-gray-400 font-semibold mt-1.5 uppercase tracking-wider">
-                  за період
-                </span>
-              )}
-            </div>
-          </div>
-          {change !== null && change !== undefined && (
-            <span className={`shrink-0 flex items-center gap-0.5 text-[11px] font-bold px-2 py-1 rounded-md ${
-              change >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-            }`}>
-              {change >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-              {change >= 0 ? '+' : ''}{change}%
-            </span>
-          )}
-        </div>
-
-        {trend && trend.length > 1 && (
-          <div className="mb-4 -mt-1 rounded-2xl bg-white/60 px-2.5 py-1">
-            <Spark points={trend} color={SPARK_COLORS[color]} />
-          </div>
-        )}
-
-        {/* Source bars */}
-        {stats.length === 0 ? (
-          <p className="text-xs text-gray-400 italic">Дані відсутні</p>
-        ) : (
-          <div className="mt-2">
-            {displayedStats.length === 0 && !isExpanded ? (
-               <p className="text-[11px] text-gray-400 italic">Немає джерел з даними &gt; 0</p>
-            ) : (
-              displayedStats.map(s => {
-                const agr = s as KeepInCRMAgreementStat;
-                const hasSum = showSum && typeof agr.totalSum === 'number' && agr.totalSum > 0;
-                return (
-                  <div key={s.source} className="mb-3 last:mb-0">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-[11px] text-gray-600 font-medium truncate flex-1 pr-2" title={s.source}>
-                        {s.source}
-                      </span>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {hasSum && (
-                          <span className="text-[10px] text-gray-400 font-semibold whitespace-nowrap">
-                            {agr.totalSum.toLocaleString('uk-UA')} ₴
-                          </span>
-                        )}
-                        <span className={`text-[11px] font-bold ${colors.text} min-w-[16px] text-right`}>{s.count}</span>
-                      </div>
-                    </div>
-                    <div className="w-full bg-gray-100/50 rounded-full h-1.5 overflow-hidden">
-                      <div 
-                        className={`h-full rounded-full ${colors.bar}`}
-                        style={{ width: `${Math.max(2, (s.count / maxCount) * 100)}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })
-            )}
-
-            {/* Toggle button */}
-            {hiddenCount > 0 && (
-              <button
-                onClick={() => setIsExpanded(!isExpanded)}
-                className={`mt-4 flex items-center justify-center w-full gap-1.5 text-[10px] font-bold uppercase tracking-wider py-2 rounded-lg transition ${colors.label} bg-white/40 hover:bg-white border border-white/60`}
-              >
-                {isExpanded ? (
-                  <>Приховати джерела <ChevronUp className="w-3.5 h-3.5" /></>
-                ) : (
-                  <>Показати ще {hiddenCount} джерел <ChevronDown className="w-3.5 h-3.5" /></>
-                )}
-              </button>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

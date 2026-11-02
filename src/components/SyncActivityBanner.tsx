@@ -80,6 +80,12 @@ export default function SyncActivityBanner({ status, lastLtvAt, historyShownElse
             Останній розрахунок LTV завершився помилкою: {ltv.error}
           </span>
         )}
+        {/* Що сервер вирішив на старті: це і є відповідь на «а раптом він знову вантажить усе?» */}
+        {status.startupLtv && (
+          <span title={`Рішення ухвалено ${new Date(status.startupLtv.at).toLocaleString('uk-UA')}`}>
+            Старт сервера: LTV {status.startupLtv.run ? 'перераховано' : 'не перераховувався'} — {status.startupLtv.reason}
+          </span>
+        )}
       </div>
     );
   }

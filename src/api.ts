@@ -501,6 +501,8 @@ export interface KeepInCRMSyncStatus {
   ltv: LtvSyncStatus;
   /** Іде «сьогоднішнє» оновлення (кожні 30 хв або кнопка «Оновити») */
   today: boolean;
+  /** Що вирішено щодо LTV на старті сервера й чому; null, поки рішення не ухвалено */
+  startupLtv: { run: boolean; reason: string; at: string } | null;
   /** Момент (мс), до якого CRM просила почекати після ліміту; null — пауз немає */
   rateLimitedUntil: number | null;
 }

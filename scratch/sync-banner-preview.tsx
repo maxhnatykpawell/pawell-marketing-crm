@@ -8,7 +8,7 @@ import type { KeepInCRMSyncStatus } from '../src/api';
 const base = (): KeepInCRMSyncStatus => ({
   running: false, type: null, total: 0, done: 0, pct: 0, currentDate: '', startedAt: null, finishedAt: null, error: null,
   ltv: { running: false, trigger: null, range: null, phase: '', done: 0, total: 0, pct: null, startedAt: null, finishedAt: null, error: null },
-  today: false, rateLimitedUntil: null,
+  today: false, rateLimitedUntil: null, startupLtv: null,
 });
 const ago = (s: number) => new Date(Date.now() - s * 1000).toISOString();
 

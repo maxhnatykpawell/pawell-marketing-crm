@@ -21,6 +21,7 @@ import { chunkBySize } from './src/lib/clientAnalytics';
 import { kyivMonthOf, kyivDayBounds } from './src/lib/kyivTime';
 import { dedupeById } from './src/lib/dedupeById';
 import { createSlotLimiter } from './src/lib/rateLimiter';
+import { decideStartupLtv, LtvMeta } from './src/lib/startupSync';
 import { PaidLedger, PaidLedgerMeta, applyPaid, cashMonth, extractAgreementPaid } from './src/lib/paidLedger';
 import {
   FunnelRecord, FunnelSpeedMeta, FunnelSpeedState, RawClient, RawDeal, RawPayment,
@@ -1786,6 +1787,26 @@ async function writePaidLedger(db: admin.firestore.Firestore | null, ledger: Pai
  * @param range межі вивантаження угод. Обидві null (або аргумент відсутній) —
  *        розрахунок за весь час, єдиний варіант із повними когортами.
  */
+/**
+ * Службові поля знімка LTV: коли востаннє рахувався й чи впав. Лише вони — самих
+ * клієнтів (мегабайти) на старті тягнути не треба.
+ */
+async function readLtvMeta(): Promise<LtvMeta | null> {
+  const db = initFirebase();
+  const d: any = db
+    ? (await db.collection(CRM_COLLECTION).doc('keepincrm_ltv_snapshot').get()).data()
+    : (await getDb()).keepincrm_ltv;
+  if (!d) return null;
+  return {
+    lastSyncedAt: d.lastSyncedAt ?? null,
+    lastSyncError: d.lastSyncError ?? null,
+    lastSyncErrorAt: d.lastSyncErrorAt ?? null,
+  };
+}
+
+/** Що вирішили щодо LTV на старті — видно в /sync-status і на головній */
+let startupLtvDecision: { run: boolean; reason: string; at: string } | null = null;
+
 export class SyncBusyError extends Error {}
 
 /**
@@ -2837,7 +2858,20 @@ async function startServer() {
   // дорогий, і запускати його на кожен рестарт сервера не варто.
   loadFunnelSpeed().then(d => { if (!d) syncFunnelSpeed({ full: true }); }).catch(() => {});
   syncKeepInCRM().catch(() => { /* помилка записується в снімок */ });
-  syncKeepInCRMLTV(undefined, 'startup').catch(() => {});
+  // LTV на старті — лише якщо знімка немає або пропущено нічний прогін. Раніше він
+  // рахувався на КОЖЕН старт: кожен деплой тягнув усі угоди з CRM наново.
+  readLtvMeta()
+    .then(meta => {
+      const decision = decideStartupLtv(meta);
+      startupLtvDecision = { ...decision, at: new Date().toISOString() };
+      console.log(`🚦 Старт сервера · LTV: ${decision.run ? 'рахуємо' : 'пропускаємо'} — ${decision.reason}`);
+      return decision.run ? syncKeepInCRMLTV(undefined, 'startup') : undefined;
+    })
+    .catch(err => {
+      // Не змогли прочитати знімок — краще не вантажити наосліп, ніж бити в CRM на кожному рестарті
+      startupLtvDecision = { run: false, reason: `не вдалось перевірити знімок: ${err?.message || err}`, at: new Date().toISOString() };
+      console.warn('🚦 Старт сервера · LTV пропущено:', err?.message || err);
+    });
   syncKeepInCRMContactTasks(addDaysToYmd(todayKyiv(), -1), todayKyiv()).catch(() => {});
 
   // ── Auth Routes ──────────────────────────────────────────────────────────────
@@ -3238,6 +3272,8 @@ async function startServer() {
           : null,
       },
       today: todaySyncRunning > 0,
+      /** Що вирішено щодо LTV на старті сервера й чому; null, поки рішення не ухвалено */
+      startupLtv: startupLtvDecision,
       /** Момент (мс), до якого CRM просила почекати після ліміту; null — пауз немає */
       rateLimitedUntil: keepinRateWaitUntil > Date.now() ? keepinRateWaitUntil : null,
     });
