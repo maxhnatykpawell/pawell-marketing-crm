@@ -9,6 +9,8 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { DollarSign, Gem, ExternalLink, Wallet } from 'lucide-react';
 import PeriodPicker, { PeriodKey, PeriodValue, makePeriod, describePeriod } from './PeriodPicker';
 import LtvSyncDialog from './LtvSyncDialog';
+import SyncActivityBanner from './SyncActivityBanner';
+import { useSyncActivity } from '../hooks/useSyncActivity';
 import {
   sumSpend, computeCac, cacBySource, previousRange,
   DEFAULT_CURRENCY_RATES, AD_SPEND_CATEGORY, COHORT_MATURITY_DAYS,
@@ -94,6 +96,23 @@ export default function DashboardView() {
 
   useEffect(() => { loadLTV(); }, [loadLTV]);
 
+  /**
+   * Що зараз синхронізується на сервері — незалежно від того, хто це запустив.
+   * LTV рахується фоном, тож і «чи йде», і «чи закінчилось» береться звідси, а не
+   * з відповіді на кнопку.
+   */
+  const { status: activity, refresh: refreshActivity } = useSyncActivity();
+  const ltvRunning = activity?.ltv.running ?? false;
+  /** Кнопка зайнята і поки летить запит на старт, і поки сервер рахує */
+  const ltvBusy = ltvSyncing || ltvRunning;
+
+  // Прогін закінчився (хоч і не нами — нічний, чи з іншої вкладки): підтягуємо свіже число
+  const wasLtvRunning = React.useRef(false);
+  useEffect(() => {
+    if (wasLtvRunning.current && !ltvRunning) loadLTV();
+    wasLtvRunning.current = ltvRunning;
+  }, [ltvRunning, loadLTV]);
+
   /** Polling: читає /api/keepincrm/sync-status кожні 1.5с поки синх активний */
   const startPolling = useCallback((currentPeriod: PeriodValue) => {
     if (pollRef.current) return;
@@ -151,9 +170,11 @@ export default function DashboardView() {
     setLtvSyncing(true);
     setLtvError(null);
     try {
-      const res = await triggerKeepInCRMSyncLTV(period.from, period.to);
-      setLtvData(res.snapshot);
+      // Запуск фоновий: відповідь лише підтверджує старт. Хід видно у смузі
+      // нижче, а свіже число підтягнеться саме, коли сервер закінчить.
+      await triggerKeepInCRMSyncLTV(period.from, period.to);
       setIsLtvSyncOpen(false);
+      await refreshActivity();
     } catch (e: any) {
       setLtvError(e.message || 'Не вдалось порахувати LTV');
     } finally {
@@ -349,12 +370,16 @@ export default function DashboardView() {
               </button>
               <button
                 onClick={() => setIsLtvSyncOpen(true)}
-                disabled={ltvSyncing || hSyncRunning}
-                title="Порахувати LTV за обраний період"
+                disabled={ltvBusy || hSyncRunning}
+                title={ltvRunning
+                  ? `LTV вже рахується${activity?.ltv.pct != null ? ` (${activity.ltv.pct}%)` : ''} — хід нижче`
+                  : 'Порахувати LTV за обраний період'}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${ltvSyncing ? 'animate-spin' : ''}`} />
-                {ltvSyncing ? 'Рахуємо...' : 'LTV'}
+                <RefreshCw className={`w-3.5 h-3.5 ${ltvBusy ? 'animate-spin' : ''}`} />
+                {ltvBusy
+                  ? (activity?.ltv.pct != null ? `LTV ${activity.ltv.pct}%` : 'Рахуємо...')
+                  : 'LTV'}
               </button>
               <button
                 onClick={handleKSync}
@@ -388,6 +413,12 @@ export default function DashboardView() {
             </div>
           </div>
         )}
+        {/* Усі фонові роботи з CRM разом: LTV, історія, нічний перерахунок, пауза через ліміт */}
+        <SyncActivityBanner
+          status={activity}
+          lastLtvAt={ltvData?.lastSyncedAt ?? null}
+          historyShownElsewhere={hSyncRunning}
+        />
         {hSyncError && !hSyncRunning && (
           <div className="px-6 pb-3 pt-2">
             <div className="flex items-center gap-2 text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">

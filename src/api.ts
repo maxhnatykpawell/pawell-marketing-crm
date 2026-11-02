@@ -471,10 +471,26 @@ export const triggerKeepInCRMHistorySync = async (days: number = 30): Promise<{ 
   return data;
 };
 
-/** Прочитати поточний стан фонової синхронізації (для polling прогресу). */
-export const getKeepInCRMSyncStatus = async (): Promise<{
+/** Стан розрахунку LTV на сервері */
+export interface LtvSyncStatus {
   running: boolean;
-  type: 'history' | 'snapshot' | null;
+  trigger: 'manual' | 'cron' | 'startup' | null;
+  /** Період вивантаження; null — за весь час */
+  range: { from: string | null; to: string | null } | null;
+  /** Людська назва етапу */
+  phase: string;
+  done: number;
+  total: number;
+  /** null — етап не вимірюється сторінками (наприклад, збереження) */
+  pct: number | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+}
+
+export interface KeepInCRMSyncStatus {
+  running: boolean;
+  type: 'history' | 'snapshot' | 'cohort' | null;
   total: number;
   done: number;
   pct: number;
@@ -482,7 +498,15 @@ export const getKeepInCRMSyncStatus = async (): Promise<{
   startedAt: string | null;
   finishedAt: string | null;
   error: string | null;
-}> => {
+  ltv: LtvSyncStatus;
+  /** Іде «сьогоднішнє» оновлення (кожні 30 хв або кнопка «Оновити») */
+  today: boolean;
+  /** Момент (мс), до якого CRM просила почекати після ліміту; null — пауз немає */
+  rateLimitedUntil: number | null;
+}
+
+/** Прочитати поточний стан фонових синхронізацій (для polling прогресу). */
+export const getKeepInCRMSyncStatus = async (): Promise<KeepInCRMSyncStatus> => {
   const res = await fetch('/api/keepincrm/sync-status', { headers: authHeaders() });
   if (!res.ok) throw new Error('Failed to get sync status');
   return res.json();
@@ -538,11 +562,14 @@ export const getKeepInCRMLTV = async (): Promise<any | null> => {
  *
  * Обидва null означають розрахунок за весь час — єдиний варіант, у якому когорти
  * повні. Будь-який діапазон обрізає історію покупок і занижує LTV.
+ *
+ * Прогін іде фоном: відповідь лише підтверджує запуск, а хід і результат
+ * читаються з `getKeepInCRMSyncStatus().ltv`.
  */
 export const triggerKeepInCRMSyncLTV = async (
   from?: string | null,
   to?: string | null,
-): Promise<{ success: boolean; snapshot: any }> => {
+): Promise<{ success: boolean; started: boolean }> => {
   const res = await fetch('/api/keepincrm/sync-ltv', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },

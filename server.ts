@@ -1323,6 +1323,12 @@ function todayKyiv(): string {
 const KEEPIN_REQUESTS_PER_MIN = 80;
 const keepinLimiter = createSlotLimiter();
 
+/**
+ * До якого моменту (мс) CRM просила почекати після 429. Лише для показу в
+ * інтерфейсі: без цього пауза виглядає як «зависла синхронізація».
+ */
+let keepinRateWaitUntil = 0;
+
 /** Видає запитам слоти через рівні проміжки; чекати можна з кількох місць одразу */
 function keepinThrottle(perMinute: number = KEEPIN_REQUESTS_PER_MIN): Promise<void> {
   return keepinLimiter.take(perMinute);
@@ -1355,7 +1361,10 @@ async function keepinGet(url: string, label: string): Promise<any> {
       ? (Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 120) * 1000 : 30_000)
       : 1000 * attempt;
     console.warn(`⏳ KeepInCRM ${label} [${res.status}]: пауза ${Math.round(waitMs / 1000)} с, спроба ${attempt}`);
-    if (limited) keepinLimiter.pauseUntil(Date.now() + waitMs);
+    if (limited) {
+      keepinLimiter.pauseUntil(Date.now() + waitMs);
+      keepinRateWaitUntil = Date.now() + waitMs;
+    }
     await new Promise(r => setTimeout(r, waitMs));
   }
 }
@@ -1364,7 +1373,12 @@ async function keepinGet(url: string, label: string): Promise<any> {
  * Запитати всі сторінки ендпоінту з пагінацією.
  * Кей передає API-ключ одночасно через заголовок X-Auth-Token і query-параметр token.
  */
-async function keepinFetchAll(endpoint: string, params: Record<string, string> = {}): Promise<any[]> {
+async function keepinFetchAll(
+  endpoint: string,
+  params: Record<string, string> = {},
+  /** Викликається після кожної сторінки — для відображення прогресу */
+  onProgress?: (page: number, totalPages: number) => void,
+): Promise<any[]> {
   const base = keepinCRMBaseUrl();
   const apiKey = KEEPINCRM_API_KEY();
   const allItems: any[] = [];
@@ -1393,6 +1407,7 @@ async function keepinFetchAll(endpoint: string, params: Record<string, string> =
     allItems.push(...items);
 
     const lastPage: number = body.pagination?.total_pages ?? body.last_page ?? 1;
+    onProgress?.(page, lastPage);
     if (page >= lastPage) break;
     page++;
   }
@@ -1534,6 +1549,24 @@ function groupAgreementsBySource(agreements: any[], allSourceNames: string[] = [
  *        /sources на кожен день під час пакетної ре-синхронізації.
  */
 async function syncKeepInCRM(
+  targetDate?: string,
+  opts: { sourceNames?: string[] } = {},
+): Promise<{ ok: boolean; error?: string }> {
+  // Лічимо лише «сьогоднішній» прогін (кожні 30 хв і кнопка «Оновити»). Дні, які
+  // проходить історія, — частина її прогресу і окремо в інтерфейсі не показуються.
+  if (targetDate) return runKeepInCRM(targetDate, opts);
+  todaySyncRunning++;
+  try {
+    return await runKeepInCRM(targetDate, opts);
+  } finally {
+    todaySyncRunning--;
+  }
+}
+
+/** Скільки «сьогоднішніх» синхронізацій виконується зараз — для індикатора на головній */
+let todaySyncRunning = 0;
+
+async function runKeepInCRM(
   targetDate?: string,
   opts: { sourceNames?: string[] } = {},
 ): Promise<{ ok: boolean; error?: string }> {
@@ -1767,20 +1800,61 @@ export class SyncBusyError extends Error {}
  * Помилка кидається ДО спроби, а не всередині неї: інакше відмова «зайнято»
  * записалась би у знімок як збій синхронізації.
  */
-let ltvSyncRunning = false;
+/**
+ * Стан прогону LTV, який бачить інтерфейс (через /sync-status).
+ *
+ * Раніше про те, що LTV зараз рахується, знала лише вкладка, що його запустила, —
+ * нічний прогін чи кнопка в іншій вкладці лишались невидимими, і єдиним
+ * свідченням була відмова «вже виконується». Тепер стан живе на сервері.
+ */
+interface LtvSyncState {
+  running: boolean;
+  /** Хто запустив: ручна кнопка, нічний cron чи старт сервера */
+  trigger: 'manual' | 'cron' | 'startup' | null;
+  /** Який період вивантажується; null — за весь час */
+  range: { from: string | null; to: string | null } | null;
+  /** Людська назва етапу */
+  phase: string;
+  /** Сторінок завантажено / всього — коли етап вимірюється сторінками */
+  done: number;
+  total: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+}
+
+const ltvState: LtvSyncState = {
+  running: false, trigger: null, range: null, phase: '', done: 0, total: 0,
+  startedAt: null, finishedAt: null, error: null,
+};
 
 export async function syncKeepInCRMLTV(
   range?: { from?: string | null; to?: string | null },
+  trigger: 'manual' | 'cron' | 'startup' = 'cron',
 ): Promise<any> {
-  if (ltvSyncRunning) {
+  if (ltvState.running) {
     console.log('⏭️ LTV синхронізація пропущена: попередня ще виконується.');
     throw new SyncBusyError('LTV-синхронізація вже виконується — зачекайте, поки завершиться.');
   }
-  ltvSyncRunning = true;
+  Object.assign(ltvState, {
+    running: true,
+    trigger,
+    range: range && (range.from || range.to) ? { from: range.from ?? null, to: range.to ?? null } : null,
+    phase: 'Підключення до CRM',
+    done: 0,
+    total: 0,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    error: null,
+  });
   try {
     return await runKeepInCRMLTV(range);
+  } catch (err: any) {
+    ltvState.error = err?.message || String(err);
+    throw err;
   } finally {
-    ltvSyncRunning = false;
+    ltvState.running = false;
+    ltvState.finishedAt = new Date().toISOString();
   }
 }
 
@@ -1799,7 +1873,14 @@ async function runKeepInCRMLTV(
     if (from) params['q[created_at_gteq]'] = kyivDayBounds(from).gteq;
     if (to)   params['q[created_at_lteq]'] = kyivDayBounds(to).lteq;
 
-    const allAgreementsRaw = await keepinFetchAll('/agreements', params);
+    ltvState.phase = 'Завантаження угод з CRM';
+    const allAgreementsRaw = await keepinFetchAll('/agreements', params, (page, totalPages) => {
+      ltvState.done = page;
+      ltvState.total = totalPages;
+    });
+    // Далі мережі немає: рахуємо й пишемо в базу. Окремий етап, щоб лінія не
+    // стояла на 100 % «завантаження», поки йде збереження клієнтів.
+    ltvState.phase = 'Розрахунок і збереження';
 
     // Журнал оплат: «Сплачено» без дат, тож касовий місяць — це прогін, що
     // побачив приріст. Поки поле ще ні разу не приходило, журнал не стартує —
@@ -2568,7 +2649,7 @@ function setupKeepInCRMLTVCron() {
   // Запуск раз на добу о 03:00 ночі
   const cronExpr = '0 3 * * *';
   keepinCRMLTVCronTask = cron.schedule(cronExpr, async () => {
-    await syncKeepInCRMLTV().catch(() => {});
+    await syncKeepInCRMLTV(undefined, 'cron').catch(() => {});
   }, { timezone: 'Europe/Kyiv' });
   
   console.log(`📈 KeepInCRM LTV синхронізація: щодоби (${cronExpr})`);
@@ -2756,7 +2837,7 @@ async function startServer() {
   // дорогий, і запускати його на кожен рестарт сервера не варто.
   loadFunnelSpeed().then(d => { if (!d) syncFunnelSpeed({ full: true }); }).catch(() => {});
   syncKeepInCRM().catch(() => { /* помилка записується в снімок */ });
-  syncKeepInCRMLTV().catch(() => {});
+  syncKeepInCRMLTV(undefined, 'startup').catch(() => {});
   syncKeepInCRMContactTasks(addDaysToYmd(todayKyiv(), -1), todayKyiv()).catch(() => {});
 
   // ── Auth Routes ──────────────────────────────────────────────────────────────
@@ -3004,14 +3085,20 @@ async function startServer() {
   });
 
   /** POST /api/keepincrm/sync-ltv — примусова ручна синхронізація LTV */
-  app.post('/api/keepincrm/sync-ltv', requireAuth, requireAdmin, async (req, res) => {
-    try {
-      const { from, to } = req.body || {};
-      const snapshot = await syncKeepInCRMLTV({ from, to });
-      res.json({ success: true, snapshot });
-    } catch (e: any) {
-      res.status(e instanceof SyncBusyError ? 409 : 500).json({ success: false, error: e.message });
+  app.post('/api/keepincrm/sync-ltv', requireAuth, requireAdmin, (req, res) => {
+    // Фоном: за тротлінгом прогін триває хвилини, а відповідь, що висить стільки
+    // ж, упирається в таймаут хостингу — інтерфейс показав би помилку, хоча
+    // синхронізація жива. Хід і результат видно через /sync-status.
+    if (ltvState.running) {
+      return res.status(409).json({
+        success: false,
+        error: 'LTV-синхронізація вже виконується — її хід видно на головній.',
+        state: ltvState,
+      });
     }
+    const { from, to } = req.body || {};
+    syncKeepInCRMLTV({ from, to }, 'manual').catch(() => { /* помилка лежить у ltvState і в знімку */ });
+    res.status(202).json({ success: true, started: true });
   });
 
   /**
@@ -3142,6 +3229,17 @@ async function startServer() {
       finishedAt:  syncState.finishedAt,
       error:       syncState.error,
       pct: syncState.total > 0 ? Math.round((syncState.done / syncState.total) * 100) : 0,
+      // Решта фонових робіт: поля вище лишаються як були, щоб не ламати поточні екрани
+      ltv: {
+        ...ltvState,
+        // Відсоток лише поки міряється сторінками; на етапі збереження — без нього
+        pct: ltvState.running && ltvState.total > 0 && ltvState.phase.startsWith('Завантаження')
+          ? Math.round((ltvState.done / ltvState.total) * 100)
+          : null,
+      },
+      today: todaySyncRunning > 0,
+      /** Момент (мс), до якого CRM просила почекати після ліміту; null — пауз немає */
+      rateLimitedUntil: keepinRateWaitUntil > Date.now() ? keepinRateWaitUntil : null,
     });
   });
 
