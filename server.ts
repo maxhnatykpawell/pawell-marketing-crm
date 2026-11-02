@@ -20,6 +20,7 @@ import { buildCohortLtv } from './src/lib/cohortLtv';
 import { chunkBySize } from './src/lib/clientAnalytics';
 import { kyivMonthOf, kyivDayBounds } from './src/lib/kyivTime';
 import { dedupeById } from './src/lib/dedupeById';
+import { createSlotLimiter } from './src/lib/rateLimiter';
 import { PaidLedger, PaidLedgerMeta, applyPaid, cashMonth, extractAgreementPaid } from './src/lib/paidLedger';
 import {
   FunnelRecord, FunnelSpeedMeta, FunnelSpeedState, RawClient, RawDeal, RawPayment,
@@ -1313,6 +1314,53 @@ function todayKyiv(): string {
 }
 
 /**
+ * Ліміт KeepInCRM — 100 запитів на хвилину на ключ («Rate limit exceeded»).
+ *
+ * Беремо 80: решту лишаємо запасу на запити, що йдуть повз цей модуль, і на
+ * похибку годинника. Лічильник один на процес — усі синхронізації (LTV, історія,
+ * контакти, воронка) ходять тим самим ключем і діляться однією чергою.
+ */
+const KEEPIN_REQUESTS_PER_MIN = 80;
+const keepinLimiter = createSlotLimiter();
+
+/** Видає запитам слоти через рівні проміжки; чекати можна з кількох місць одразу */
+function keepinThrottle(perMinute: number = KEEPIN_REQUESTS_PER_MIN): Promise<void> {
+  return keepinLimiter.take(perMinute);
+}
+
+/**
+ * Один GET до KeepInCRM у межах ліміту, з повтором.
+ *
+ *  - 429: ліміт хвилинний, тож чекаємо (за заголовком Retry-After, інакше 30 с) і
+ *    пробуємо знову. Пауза діє на ВСІ запити, а не лише на цей — інакше сусідня
+ *    синхронізація продовжить бити в той самий ліміт.
+ *  - 5xx: тимчасовий збій на боці CRM — кілька повторів із наростаючою паузою.
+ *  - решта 4xx (401, 404…) повторенням не лікується — одразу помилка.
+ */
+async function keepinGet(url: string, label: string): Promise<any> {
+  for (let attempt = 1; ; attempt++) {
+    await keepinThrottle();
+    const res = await fetch(url, { headers: keepinCRMHeaders() });
+    if (res.ok) return res.json();
+
+    const limited = res.status === 429;
+    const errText = await res.text().catch(() => '');
+    const retryable = limited || res.status >= 500;
+    if (!retryable || attempt >= (limited ? 6 : 4)) {
+      throw new Error(`KeepInCRM ${label} [${res.status}]: ${errText}`);
+    }
+
+    const retryAfter = Number(res.headers.get('retry-after'));
+    const waitMs = limited
+      ? (Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 120) * 1000 : 30_000)
+      : 1000 * attempt;
+    console.warn(`⏳ KeepInCRM ${label} [${res.status}]: пауза ${Math.round(waitMs / 1000)} с, спроба ${attempt}`);
+    if (limited) keepinLimiter.pauseUntil(Date.now() + waitMs);
+    await new Promise(r => setTimeout(r, waitMs));
+  }
+}
+
+/**
  * Запитати всі сторінки ендпоінту з пагінацією.
  * Кей передає API-ключ одночасно через заголовок X-Auth-Token і query-параметр token.
  */
@@ -1336,20 +1384,9 @@ async function keepinFetchAll(endpoint: string, params: Record<string, string> =
       console.log(`🔍 KeepInCRM запит: ${url}  |ключ наявний: ${!!apiKey}`);
     }
 
-    const res = await fetch(url, {
-      headers: {
-        'X-Auth-Token': apiKey,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-    });
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      throw new Error(`KeepInCRM ${endpoint} [${res.status}]: ${errText}`);
-    }
-
-    const body = await res.json();
+    // Кожна сторінка — через спільний темп: без нього синхронізація LTV чи історії
+    // вибирала ліміт за секунди й отримувала «Rate limit exceeded»
+    const body = await keepinGet(url, `${endpoint} стор. ${page}`);
 
     // В KeepInCRM масив знаходиться в `body.items`, а пагінація в `body.pagination.total_pages`
     const items: any[] = Array.isArray(body) ? body : (body.items ?? body.data ?? []);
@@ -1992,21 +2029,8 @@ const funnelSpeedState: FunnelSpeedState = {
 
 let funnelSpeedCache: { records: FunnelRecord[]; meta: FunnelSpeedMeta } | null = null;
 
-/**
- * Ліміт KeepInCRM — 100 запитів на хвилину на ключ («Rate limit exceeded»).
- * Беремо 80, а решту лишаємо іншим синхронізаціям, які ходять тим самим ключем.
- */
-const FUNNEL_REQUESTS_PER_MIN = 80;
-let keepinNextSlot = 0;
-
-/** Видає запитам слоти через рівні проміжки; чекати можна з кількох місць одразу */
-async function keepinThrottle(perMinute: number): Promise<void> {
-  const gap = 60_000 / perMinute;
-  const start = Math.max(Date.now(), keepinNextSlot);
-  keepinNextSlot = start + gap;
-  const wait = start - Date.now();
-  if (wait > 0) await new Promise(r => setTimeout(r, wait));
-}
+/** Воронка ходить у тому самому ліміті, що й решта синхронізацій (див. keepinThrottle) */
+const FUNNEL_REQUESTS_PER_MIN = KEEPIN_REQUESTS_PER_MIN;
 
 /**
  * Усі сторінки ендпоінту з мапінгом на льоту, у межах ліміту запитів.
