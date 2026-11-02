@@ -42,8 +42,9 @@ const blankForm = (): { label: string; enabled: boolean; schedule: RecurrenceSch
 // ── Форма правила ─────────────────────────────────────────────────────────────
 
 function AutomationForm({
-  initial, onSave, onCancel, isSaving, error,
+  initial, onSave, onCancel, isSaving, error, lockAssigneeId,
 }: {
+  lockAssigneeId?: string;
   initial: ReturnType<typeof blankForm>;
   onSave: (data: ReturnType<typeof blankForm>) => void;
   onCancel: () => void;
@@ -51,7 +52,8 @@ function AutomationForm({
   error: string | null;
 }) {
   const { state } = useAppContext();
-  const [form, setForm] = useState(initial);
+  const [form, setForm] = useState(() =>
+    lockAssigneeId ? { ...initial, template: { ...initial.template, assigneeId: lockAssigneeId } } : initial);
   const [subtaskDraft, setSubtaskDraft] = useState('');
 
   const schedule = form.schedule;
@@ -254,10 +256,11 @@ function AutomationForm({
             <select
               value={template.assigneeId || ''}
               onChange={e => patchTemplate({ assigneeId: e.target.value || null })}
+              disabled={!!lockAssigneeId}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 bg-white"
             >
               <option value="">— без виконавця —</option>
-              {(state.users || []).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+              {(state.users || []).filter(u => !lockAssigneeId || u.id === lockAssigneeId).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
           </div>
 
@@ -398,10 +401,10 @@ function AutomationForm({
 // ── Рядок правила ─────────────────────────────────────────────────────────────
 
 function AutomationRow({
-  automation, isAdmin, busy, onToggle, onRun, onEdit, onDelete, onOpenCard,
+  automation, canManage, busy, onToggle, onRun, onEdit, onDelete, onOpenCard,
 }: {
   automation: TaskAutomation;
-  isAdmin: boolean;
+  canManage: boolean;
   busy: boolean;
   onToggle: () => void;
   onRun: () => void;
@@ -435,7 +438,7 @@ function AutomationRow({
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
-          {isAdmin && (
+          {canManage && (
             <>
               <button
                 onClick={onRun}
@@ -602,7 +605,7 @@ export default function AutomationsView() {
             Задачі, які створюються самі за розкладом — щоб рутину не доводилось щоразу заводити руками
           </p>
         </div>
-        {isAdmin && !isAdding && !editingId && (
+        {!isAdding && !editingId && (
           <button
             onClick={() => { setIsAdding(true); setFormError(null); }}
             className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition"
@@ -619,6 +622,7 @@ export default function AutomationsView() {
       {isAdding && (
         <AutomationForm
           initial={blankForm()}
+          lockAssigneeId={isAdmin ? undefined : currentUser.userId}
           onSave={handleCreate}
           onCancel={() => { setIsAdding(false); setFormError(null); }}
           isSaving={isSaving}
@@ -631,9 +635,7 @@ export default function AutomationsView() {
           <Bot className="w-8 h-8 text-gray-300 mx-auto mb-2" />
           <p className="text-sm font-medium text-gray-500">Правил ще немає</p>
           <p className="text-xs text-gray-400 mt-1">
-            {isAdmin
-              ? 'Створіть правило — і задача з’являтиметься на дошці сама'
-              : 'Правила налаштовує адміністратор'}
+            Створіть правило — і задача з’являтиметься на дошці сама
           </p>
         </div>
       )}
@@ -644,6 +646,7 @@ export default function AutomationsView() {
             <AutomationForm
               key={automation.id}
               initial={toForm(automation)}
+              lockAssigneeId={isAdmin ? undefined : currentUser.userId}
               onSave={data => handleUpdate(automation.id, data)}
               onCancel={() => { setEditingId(null); setFormError(null); }}
               isSaving={isSaving}
@@ -653,7 +656,7 @@ export default function AutomationsView() {
             <AutomationRow
               key={automation.id}
               automation={automation}
-              isAdmin={isAdmin}
+              canManage={isAdmin || automation.template.assigneeId === currentUser.userId}
               busy={busyId === automation.id}
               onToggle={() => handleToggle(automation)}
               onRun={() => handleRun(automation)}

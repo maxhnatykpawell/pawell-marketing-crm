@@ -3547,9 +3547,15 @@ async function startServer() {
   // ── Автоматизації задач ──────────────────────────────────────────────────────
 
   /**
-   * Правила бачить уся команда, а змінює лише адмін: повторювана задача
-   * створюється комусь у роботу, і людині варто розуміти, звідки вона взялась.
+   * Правила бачить уся команда; змінює адмін (усі) або відповідальний (свої).
    */
+  /**
+   * Адмін керує будь-якими правилами. Інші учасники — лише тими, де вони
+   * відповідальні (виконавець у шаблоні), і не можуть призначати задачі іншим.
+   */
+  const canManageAutomation = (req: any, automation: TaskAutomation): boolean =>
+    req.user?.role === 'admin' || (!!req.user?.userId && automation.template?.assigneeId === req.user.userId);
+
   app.get('/api/automations', requireAuth, async (_req, res) => {
     try {
       const state = await getDb();
@@ -3557,7 +3563,7 @@ async function startServer() {
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.post('/api/automations', requireAuth, requireAdmin, async (req: any, res) => {
+  app.post('/api/automations', requireAuth, async (req: any, res) => {
     try {
       const { label, schedule, template, enabled } = req.body || {};
       if (!label?.trim()) { res.status(400).json({ error: 'Вкажіть назву правила' }); return; }
@@ -3565,6 +3571,10 @@ async function startServer() {
       if (!template?.listId) { res.status(400).json({ error: 'Оберіть список, у який лягатиме задача' }); return; }
       const invalid = validateRecurrence(schedule);
       if (invalid) { res.status(400).json({ error: invalid }); return; }
+
+      if (req.user?.role !== 'admin' && template.assigneeId !== req.user?.userId) {
+        res.status(403).json({ error: 'Ви можете створювати автоматизації лише для себе' }); return;
+      }
 
       const state = await getDb();
       const automation: TaskAutomation = {
@@ -3587,14 +3597,17 @@ async function startServer() {
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.put('/api/automations/:id', requireAuth, requireAdmin, async (req, res) => {
+  app.put('/api/automations/:id', requireAuth, async (req: any, res) => {
     try {
       const { id } = req.params;
       const state = await getDb();
       const existing = (state.taskAutomations || []).find((a: TaskAutomation) => a.id === id);
       if (!existing) { res.status(404).json({ error: 'Правило не знайдено' }); return; }
 
+      if (!canManageAutomation(req, existing)) { res.status(403).json({ error: 'Це правило належить іншому учаснику' }); return; }
+
       const next: TaskAutomation = { ...existing, ...req.body, id };
+      if (!canManageAutomation(req, next)) { res.status(403).json({ error: 'Ви можете призначати автоматизації лише на себе' }); return; }
       const invalid = validateRecurrence(next.schedule);
       if (invalid) { res.status(400).json({ error: invalid }); return; }
       if (!next.template?.title?.trim()) { res.status(400).json({ error: 'Вкажіть назву задачі' }); return; }
@@ -3608,10 +3621,13 @@ async function startServer() {
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.delete('/api/automations/:id', requireAuth, requireAdmin, async (req, res) => {
+  app.delete('/api/automations/:id', requireAuth, async (req: any, res) => {
     try {
       const { id } = req.params;
       const state = await getDb();
+      const target = (state.taskAutomations || []).find((a: TaskAutomation) => a.id === id);
+      if (!target) { res.status(404).json({ error: 'Правило не знайдено' }); return; }
+      if (!canManageAutomation(req, target)) { res.status(403).json({ error: 'Це правило належить іншому учаснику' }); return; }
       const automations = (state.taskAutomations || []).filter((a: TaskAutomation) => a.id !== id);
       await persistAutomations(automations);
       const task = automationCronTasks.get(id);
@@ -3628,13 +3644,14 @@ async function startServer() {
    * коли сервер лежав. lastRunAt оновлюється навмисно: інакше «кожні N днів»
    * після ручного запуску створило б другу таку саму картку наступного ранку.
    */
-  app.post('/api/automations/:id/run', requireAuth, requireAdmin, async (req, res) => {
+  app.post('/api/automations/:id/run', requireAuth, async (req: any, res) => {
     try {
       const { id } = req.params;
       const now = new Date();
       const state = await getDb();
       const automation = (state.taskAutomations || []).find((a: TaskAutomation) => a.id === id);
       if (!automation) { res.status(404).json({ error: 'Правило не знайдено' }); return; }
+      if (!canManageAutomation(req, automation)) { res.status(403).json({ error: 'Це правило належить іншому учаснику' }); return; }
 
       const result = await runTaskAutomation(automation, state, now);
       if (result.error) {
