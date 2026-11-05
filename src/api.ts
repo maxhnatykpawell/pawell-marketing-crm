@@ -706,6 +706,50 @@ export const askAssistant = async (message: string): Promise<AssistantReply> => 
   return res.json();
 };
 
+// ── Асистент проєкту ──────────────────────────────────────────────────────────
+
+export type ProjectActionTool =
+  | 'propose_create_card' | 'propose_update_card' | 'propose_add_comment' | 'propose_update_project';
+
+/** Пропозиція асистента проєкту. Кожну людина затверджує окремо */
+export interface ProjectAssistantAction {
+  id: string;
+  tool: ProjectActionTool;
+  payload: Record<string, any>;
+  summary: string;
+}
+
+export interface ProjectAssistantReply {
+  reply: string;
+  actions: ProjectAssistantAction[];
+  /** Що асистент реально відкривав для відповіді — щоб відповідь можна було перевірити */
+  sources: { type: 'file' | 'card'; name: string }[];
+  usedTools: string[];
+}
+
+export const askProjectAssistant = async (projectId: string, message: string): Promise<ProjectAssistantReply> => {
+  const res = await fetch('/api/assistant/project/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ projectId, message }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || 'Асистент не відповів');
+  }
+  return res.json();
+};
+
+export const getProjectAssistantHistory = async (projectId: string): Promise<AssistantMessage[]> => {
+  const res = await fetch(`/api/assistant/history?projectId=${encodeURIComponent(projectId)}`, { headers: authHeaders() });
+  if (!res.ok) return [];
+  return (await res.json()).messages || [];
+};
+
+export const clearProjectAssistantHistory = async (projectId: string): Promise<void> => {
+  await fetch(`/api/assistant/history?projectId=${encodeURIComponent(projectId)}`, { method: 'DELETE', headers: authHeaders() });
+};
+
 export const getAssistantHistory = async (): Promise<AssistantMessage[]> => {
   const res = await fetch('/api/assistant/history', { headers: authHeaders() });
   if (!res.ok) return [];

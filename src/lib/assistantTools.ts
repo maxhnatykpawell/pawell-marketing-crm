@@ -222,7 +222,7 @@ export function findUserByName(state: AppState, name: string) {
   return users.find(u => norm(u.name) === n) || users.find(u => norm(u.name).includes(n));
 }
 
-const findListByTitle = (state: AppState, title: string) => {
+export const findListByTitle = (state: AppState, title: string) => {
   const n = norm(title);
   if (!n) return undefined;
   const lists = state.lists || [];

@@ -4,6 +4,7 @@ import BoardList from './BoardList';
 import CardModal from './CardModal';
 import { Plus, Trash2, DownloadCloud, FolderKanban, Filter, CalendarRange, Target, FileText, Info, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 import TrelloImportModal from './TrelloImportModal';
+import ProjectAssistant from './ProjectAssistant';
 import { DragDropContext, Droppable, DropResult } from '@hello-pangea/dnd';
 
 export default function Board() {
@@ -209,6 +210,9 @@ export default function Board() {
             <CalendarRange className="w-4 h-4" />
             Діаграма Ганта →
           </button>
+
+          {/* Асистент одного проєкту: з'являється, лише коли проєкт вибрано, і знає тільки його */}
+          {activeProjectId && <ProjectAssistant projectId={activeProjectId} />}
         </div>
       )}
 
