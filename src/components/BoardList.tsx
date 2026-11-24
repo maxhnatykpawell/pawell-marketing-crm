@@ -212,7 +212,15 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
             </h3>
           )}
           {canManage && (
-            <div className="relative">
+            <div className="relative flex items-center">
+            {/* Швидке перейменування: окрема іконка, щоб не шукати пункт у меню «⋯» */}
+            <button
+              onClick={() => { setRenameValue(displayTitle); setIsRenaming(true); }}
+              title={project ? 'Перейменувати колонку (лише в цьому проєкті)' : 'Перейменувати колонку'}
+              className="p-1.5 hover:bg-gray-200 rounded-md text-gray-500 opacity-0 group-hover:opacity-100 transition"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
             <button
               onClick={e => {
                 if (menuOpen) { setMenuOpen(false); return; }
