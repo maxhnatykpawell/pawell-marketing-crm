@@ -29,6 +29,7 @@ import { useChat } from './hooks/useChat';
 import type { AssistantAction } from './api';
 import { canViewSection, ALL_VIEW_IDS, DEFAULT_ALLOWED_VIEWS } from './lib/views';
 import { canAccessProject, scopeStateToUser } from './lib/projectAccess';
+import { parseDeepLink, applyDeepLink } from './lib/deepLink';
 import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet, MessageSquare, Gem, Bot } from 'lucide-react';
 
 // 'gantt' і 'event-details' — не вкладки меню, а сторінки всередині «Проєктів»
@@ -208,6 +209,38 @@ export default function App() {
       }
     }
   }, [activeView, state, currentUser]);
+
+  // ── Глибокі посилання ────────────────────────────────────────────────────────
+  // 1) Після завантаження даних один раз застосовуємо ціль з адреси (?view=…&project=…&card=…).
+  const deepLinkAppliedRef = React.useRef(false);
+  useEffect(() => {
+    if (deepLinkAppliedRef.current || !state || !currentUser) return;
+    deepLinkAppliedRef.current = true;
+    const t = parseDeepLink(window.location.search);
+    if (t.board && (state.boards || []).some(b => b.id === t.board)) setActiveBoardId(t.board);
+    if (t.project && (state.projects || []).some(p => p.id === t.project)) setActiveProjectId(t.project);
+    if (t.event && (state.events || []).some(e => e.id === t.event)) setActiveEventId(t.event);
+    if (t.view) setActiveView(t.view as ActiveView); // недоступний розділ відсікає ефект прав вище
+    if (t.card) {
+      setActiveView('board');
+      setOpenCardId(t.card);
+    }
+  }, [state, currentUser]);
+
+  // 2) Далі адреса постійно відображає поточне місце — її можна копіювати просто з рядка браузера.
+  useEffect(() => {
+    if (!deepLinkAppliedRef.current || !currentUser) return;
+    const next = applyDeepLink(window.location.search, {
+      view: activeView,
+      project: activeView === 'board' || activeView === 'gantt' ? activeProjectId : null,
+      board: activeView === 'board' ? activeBoardId : null,
+      event: activeView === 'event-details' ? activeEventId : null,
+      card: null,
+    });
+    if (next !== window.location.search) {
+      window.history.replaceState(null, '', `${window.location.pathname}${next}${window.location.hash}`);
+    }
+  }, [activeView, activeProjectId, activeBoardId, activeEventId, currentUser]);
 
   const logout = useCallback(() => {
     localStorage.removeItem('auth_token');

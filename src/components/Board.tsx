@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
 import BoardList from './BoardList';
 import CardModal from './CardModal';
-import { Plus, Trash2, DownloadCloud, FolderKanban, Filter, CalendarRange, Target, FileText, Info, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
+import { Plus, Trash2, DownloadCloud, FolderKanban, Filter, CalendarRange, Target, FileText, Info, ChevronDown, ChevronUp, ExternalLink, Link2, Check } from 'lucide-react';
+import { buildShareLink } from '../lib/deepLink';
 import TrelloImportModal from './TrelloImportModal';
 import ProjectAssistant from './ProjectAssistant';
 import { DragDropContext, Droppable, DropResult } from '@hello-pangea/dnd';
@@ -19,6 +20,7 @@ export default function Board() {
   const [filterOverdue, setFilterOverdue] = useState(false);
   const [notifCard, setNotifCard] = useState<typeof state.cards[0] | null>(null);
   const [isProjectInfoOpen, setIsProjectInfoOpen] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   // When openCardId is set (from notification click), find the card and open its modal
   useEffect(() => {
@@ -77,7 +79,11 @@ export default function Board() {
       const toListId = destination.droppableId;
       
       let destVisibleCards = state.cards
-        .filter(c => c.listId === toListId && (activeProjectId ? c.projectId === activeProjectId : !c.projectId))
+        .filter(c => c.listId === toListId && (
+          activeProjectId
+            ? c.projectId === activeProjectId
+            : (!c.projectId || (!!filterAssigneeId && filterAssigneeId !== 'unassigned'))
+        ))
         .filter(c => {
           if (filterAssigneeId) {
             if (filterAssigneeId === 'unassigned') {
@@ -210,6 +216,23 @@ export default function Board() {
             <CalendarRange className="w-4 h-4" />
             Діаграма Ганта →
           </button>
+
+          {/* Посилання на вибраний проєкт — щоб колега одразу потрапив у нього, а не шукав по вкладках */}
+          {activeProjectId && (
+            <button
+              onClick={async () => {
+                const link = buildShareLink(window.location.origin, window.location.pathname, { view: 'board', project: activeProjectId, board: activeBoardId });
+                try { await navigator.clipboard.writeText(link); } catch { window.prompt('Скопіюйте посилання:', link); return; }
+                setLinkCopied(true);
+                setTimeout(() => setLinkCopied(false), 2000);
+              }}
+              title="Скопіювати посилання на цей проєкт"
+              className="shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition flex items-center gap-1.5 bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
+            >
+              {linkCopied ? <Check className="w-4 h-4 text-green-600" /> : <Link2 className="w-4 h-4" />}
+              {linkCopied ? 'Скопійовано' : 'Посилання'}
+            </button>
+          )}
 
           {/* Асистент одного проєкту: з'являється, лише коли проєкт вибрано, і знає тільки його */}
           {activeProjectId && <ProjectAssistant projectId={activeProjectId} />}

@@ -20,7 +20,7 @@ interface Props {
 }
 
 export default function BoardCard({ card, selectionMode, isSelected, onToggleSelect, index }: Props) {
-  const { state, updateCard, hasEditRights } = useAppContext();
+  const { state, updateCard, hasEditRights, activeProjectId } = useAppContext();
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   /**
@@ -128,6 +128,17 @@ export default function BoardCard({ card, selectionMode, isSelected, onToggleSel
           <div className="h-1 w-full shrink-0" style={{ backgroundColor: project.color }} title={`Проєкт: ${project.title}`} />
         )}
         <div className="p-3">
+          {project && !activeProjectId && (
+            <div className="mb-2">
+              <span
+                className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold text-white truncate max-w-full"
+                style={{ backgroundColor: project.color }}
+                title={`Проєкт: ${project.title}`}
+              >
+                📁 {project.title}
+              </span>
+            </div>
+          )}
           {cardTags.length > 0 && (
             <div className="flex flex-wrap gap-1 mb-2">
               {cardTags.map(tag => (

@@ -11,6 +11,7 @@ import {
   User as UserIcon, Check, AlertTriangle, Link2, ExternalLink, Loader2,
   GripVertical, SquarePlus, Layers
 } from 'lucide-react';
+import { buildShareLink } from '../lib/deepLink';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
 import TagPicker from './TagPicker';
@@ -159,6 +160,7 @@ const AttachmentRow = React.memo(function AttachmentRow({
 
 export default function CardModal({ card, onClose }: Props) {
   const { state, updateCard, deleteCard, addCard, confirmAction, currentUser, hasEditRights } = useAppContext();
+  const [cardLinkCopied, setCardLinkCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const currentUserRecord = state.users.find(u => u.id === currentUser?.userId) || state.users[0];
@@ -497,6 +499,18 @@ export default function CardModal({ card, onClose }: Props) {
             </button>
             <button className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition" title="Більше">
               <MoreHorizontal className="w-4.5 h-4.5" />
+            </button>
+            <button
+              onClick={async () => {
+                const link = buildShareLink(window.location.origin, window.location.pathname, { view: 'board', project: card.projectId, card: card.id });
+                try { await navigator.clipboard.writeText(link); } catch { window.prompt('Скопіюйте посилання:', link); return; }
+                setCardLinkCopied(true);
+                setTimeout(() => setCardLinkCopied(false), 2000);
+              }}
+              className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition"
+              title={cardLinkCopied ? 'Скопійовано' : 'Скопіювати посилання на задачу'}
+            >
+              {cardLinkCopied ? <Check className="w-4.5 h-4.5 text-green-600" /> : <Link2 className="w-4.5 h-4.5" />}
             </button>
             <button
               onClick={onClose}

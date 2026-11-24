@@ -25,7 +25,12 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
 
   // Filter and sort cards
   const cards = state.cards
-    .filter(c => c.listId === list.id && (activeProjectId ? c.projectId === activeProjectId : !c.projectId))
+    .filter(c => c.listId === list.id && (
+      activeProjectId
+        ? c.projectId === activeProjectId
+        // На загальній дошці з обраним виконавцем показуємо і його проєктні задачі (для ранкових планувань)
+        : (!c.projectId || (!!filterAssigneeId && filterAssigneeId !== 'unassigned'))
+    ))
     .filter(c => {
       if (filterAssigneeId) {
         if (filterAssigneeId === 'unassigned') {

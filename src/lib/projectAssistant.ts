@@ -85,6 +85,8 @@ export interface ProjectToolContext {
   loadFile: (file: ProjectFileRef) => Promise<LoadedFile>;
   /** Для ідентифікаторів пропозицій; у тестах підставляється лічильник */
   newId?: () => string;
+  /** Розмір сторінки файла в символах; менший для моделей із малим контекстом */
+  pageChars?: number;
 }
 
 /**
@@ -473,7 +475,7 @@ export async function runProjectReadTool(
       const loaded = await ctx.loadFile(file);
       if ('error' in loaded) return { name: file.name, error: loaded.error };
 
-      const page = pageOfText(loaded.text, Number(args.offset) || 0);
+      const page = pageOfText(loaded.text, Number(args.offset) || 0, ctx.pageChars);
       if (!page.text && page.totalChars === 0) return { name: file.name, error: 'Файл порожній або в ньому немає тексту' };
       return {
         name: file.name,

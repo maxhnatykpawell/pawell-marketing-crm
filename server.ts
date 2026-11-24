@@ -36,6 +36,8 @@ import {
   resolveRights, availableTools, runReadTool, prepareAction, isWriteTool,
   AssistantUser, ToolContext,
 } from './src/lib/assistantTools';
+import { readLlmSetup, createLocalProvider, withFallback, LlmProvider, LlmMessage } from './src/lib/llm';
+import { createGeminiProvider } from './src/lib/llmGemini';
 import {
   availableProjectTools, runProjectReadTool, prepareProjectActions, isProjectWriteTool,
   canUseProjectAssistant, projectBrief,
@@ -4019,24 +4021,33 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
    */
   const ASSISTANT_MAX_STEPS = 6;
 
-  /** JSON Schema → типи Gemini. Різниця лише в регістрі назв типів */
-  const GEMINI_TYPES: Record<string, Type> = {
-    object: Type.OBJECT, string: Type.STRING, number: Type.NUMBER,
-    integer: Type.INTEGER, boolean: Type.BOOLEAN, array: Type.ARRAY,
-  };
-
-  function toGeminiSchema(schema: any): any {
-    if (!schema || typeof schema !== 'object') return schema;
-    const out: any = { ...schema };
-    if (typeof schema.type === 'string') out.type = GEMINI_TYPES[schema.type] ?? Type.STRING;
-    if (schema.properties) {
-      out.properties = Object.fromEntries(
-        Object.entries(schema.properties).map(([k, v]) => [k, toGeminiSchema(v)]),
-      );
+  /**
+   * Яка модель відповідає асистентам — обирається в .env (LLM_PROVIDER):
+   * хмарна Gemini або модель на власному ПК через OpenAI-сумісний API.
+   * Читаємо один раз на старті: помилка в налаштуваннях має спливти в логу
+   * одразу, а не на першому запитанні користувача.
+   */
+  const assistantLlm: { provider: LlmProvider } | { error: string } = (() => {
+    const setup = readLlmSetup(process.env);
+    const geminiKey = process.env.GEMINI_API_KEY;
+    if (setup.kind === 'error') return { error: `Асистент не налаштований: ${setup.message}` };
+    if (setup.kind === 'gemini') {
+      return geminiKey
+        ? { provider: createGeminiProvider(geminiKey) }
+        : { error: 'Асистент не налаштований: немає GEMINI_API_KEY' };
     }
-    if (schema.items) out.items = toGeminiSchema(schema.items);
-    return out;
-  }
+    const local = createLocalProvider(setup.config);
+    if (setup.fallbackToGemini && geminiKey) {
+      return {
+        provider: withFallback(local, createGeminiProvider(geminiKey), e =>
+          console.warn(`⚠️ Локальна модель недоступна (${e.message}) — відповідає Gemini`)),
+      };
+    }
+    return { provider: local };
+  })();
+  console.log('error' in assistantLlm
+    ? `🤖 Асистент вимкнено: ${assistantLlm.error}`
+    : `🤖 Модель асистента: ${assistantLlm.provider.name}`);
 
   /** Скільки повідомлень тримати в історії — далі старі просто відрізаються */
   const ASSISTANT_HISTORY_LIMIT = 100;
@@ -4123,11 +4134,11 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
    */
   app.post('/api/assistant/chat', requireAuth, async (req, res) => {
     const jwtUser = (req as any).user as JWTPayload;
-    const geminiApiKey = process.env.GEMINI_API_KEY;
-    if (!geminiApiKey) {
-      res.status(503).json({ error: 'Асистент не налаштований: немає GEMINI_API_KEY' });
+    if ('error' in assistantLlm) {
+      res.status(503).json({ error: assistantLlm.error });
       return;
     }
+    const llm = assistantLlm.provider;
 
     const question = String(req.body?.message ?? '').trim();
     if (!question) { res.status(400).json({ error: 'Порожнє запитання' }); return; }
@@ -4160,9 +4171,10 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
       const ctx: ToolContext = { state: scopeStateToUser(state, user), ltv, now: new Date(), user, rights };
 
       const history = await loadAssistantHistory(user.userId);
-      const contents: any[] = [
-        ...history.map((m: any) => ({ role: m.role, parts: [{ text: m.text }] })),
-        { role: 'user', parts: [{ text: question }] },
+      const messages: LlmMessage[] = [
+        ...history.slice(-llm.historyLimit).map((m: any): LlmMessage =>
+          m.role === 'model' ? { role: 'assistant', text: m.text } : { role: 'user', text: m.text }),
+        { role: 'user', text: question },
       ];
 
       const systemInstruction = [
@@ -4177,67 +4189,45 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
         `5. Якщо даних немає через права доступу — скажи, що не маєш доступу, і не вгадуй, що там могло бути.`,
       ].join('\n');
 
-      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-      const declarations = tools.map(t => ({
-        name: t.name,
-        description: t.description,
-        // Схема в бібліотеці — звичайний JSON Schema з малими літерами, бо вона
-        // навмисно нічого не знає про Gemini. Переклад у типи SDK робиться тут,
-        // на межі: зміниш модель — переписуєш лише цей рядок.
-        parameters: toGeminiSchema(t.parameters),
-      }));
+      // Схеми інструментів у бібліотеці — звичайний JSON Schema; переклад у формат
+      // конкретної моделі робить її адаптер (src/lib/llm*.ts)
+      const llmTools = tools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
 
       const usedTools: string[] = [];
       let action: any = null;
       let reply = '';
 
       for (let step = 0; step < ASSISTANT_MAX_STEPS; step++) {
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents,
-          config: {
-            systemInstruction,
-            tools: declarations.length ? [{ functionDeclarations: declarations }] : undefined,
-          },
-        });
+        const turn = await llm.complete(systemInstruction, messages, llmTools);
 
-        const calls = response.functionCalls;
-        if (!calls || calls.length === 0) {
-          reply = response.text || '';
+        if (turn.toolCalls.length === 0) {
+          reply = turn.text;
           break;
         }
 
-        contents.push({ role: 'model', parts: calls.map(c => ({ functionCall: c })) });
+        messages.push({ role: 'assistant', text: turn.text, toolCalls: turn.toolCalls });
 
-        const responses: any[] = [];
-        for (const call of calls) {
-          const name = call.name || '';
-          const args = (call.args || {}) as Record<string, any>;
+        for (const call of turn.toolCalls) {
+          const { name, args } = call;
           usedTools.push(name);
 
           if (isWriteTool(name)) {
             // Дія не виконується — готуємо пропозицію й виходимо з циклу
             const prepared = prepareAction(name, args, ctx);
             if ('error' in prepared) {
-              responses.push({ functionResponse: { name, response: { error: prepared.error } } });
+              messages.push({ role: 'tool', callId: call.id, name, result: { error: prepared.error } });
               continue;
             }
             action = prepared;
-            responses.push({
-              functionResponse: {
-                name,
-                response: { status: 'очікує підтвердження людини', summary: prepared.summary },
-              },
+            messages.push({
+              role: 'tool', callId: call.id, name,
+              result: { status: 'очікує підтвердження людини', summary: prepared.summary },
             });
             continue;
           }
 
-          responses.push({
-            functionResponse: { name, response: { result: runReadTool(name, args, ctx) } },
-          });
+          messages.push({ role: 'tool', callId: call.id, name, result: { result: runReadTool(name, args, ctx) } });
         }
-
-        contents.push({ role: 'user', parts: responses });
       }
 
       if (!reply && action) reply = `Пропоную: ${action.summary}`;
@@ -4288,7 +4278,8 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
   /** PDF читає сама модель: вона бере й сканований документ, чого парсер не вміє */
   async function pdfToText(bytes: Uint8Array): Promise<string> {
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error('Немає GEMINI_API_KEY');
+    // Локальна модель PDF не читає, тож цей єдиний шлях лишається за Gemini
+    if (!apiKey) throw new Error('Для читання PDF потрібен GEMINI_API_KEY (локальна модель PDF не розбирає). Word, Excel, текст і CSV читаються й без нього');
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
@@ -4444,11 +4435,11 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
    */
   app.post('/api/assistant/project/chat', requireAuth, async (req, res) => {
     const jwtUser = (req as any).user as JWTPayload;
-    const geminiApiKey = process.env.GEMINI_API_KEY;
-    if (!geminiApiKey) {
-      res.status(503).json({ error: 'Асистент не налаштований: немає GEMINI_API_KEY' });
+    if ('error' in assistantLlm) {
+      res.status(503).json({ error: assistantLlm.error });
       return;
     }
+    const llm = assistantLlm.provider;
 
     const question = String(req.body?.message ?? '').trim();
     if (!question) { res.status(400).json({ error: 'Порожнє запитання' }); return; }
@@ -4481,12 +4472,15 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
         rights,
         loadFile: loadProjectFile,
         newId: () => randomUUID(),
+        // Локальна модель має менший контекст — файл віддається меншими сторінками
+        pageChars: llm.filePageChars,
       };
 
       const history = await loadAssistantHistory(user.userId, projectId);
-      const contents: any[] = [
-        ...history.map((m: any) => ({ role: m.role, parts: [{ text: m.text }] })),
-        { role: 'user', parts: [{ text: question }] },
+      const messages: LlmMessage[] = [
+        ...history.slice(-llm.historyLimit).map((m: any): LlmMessage =>
+          m.role === 'model' ? { role: 'assistant', text: m.text } : { role: 'user', text: m.text }),
+        { role: 'user', text: question },
       ];
 
       const systemInstruction = [
@@ -4509,12 +4503,7 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
         tools.some(t => t.writes) ? '' : `9. У користувача немає прав на редагування — ти можеш лише відповідати, пропозицій дій немає.`,
       ].filter(l => l !== '').join('\n');
 
-      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-      const declarations = tools.map(t => ({
-        name: t.name,
-        description: t.description,
-        parameters: toGeminiSchema(t.parameters),
-      }));
+      const llmTools = tools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
 
       const usedTools: string[] = [];
       const actions: ProjectAction[] = [];
@@ -4522,30 +4511,19 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
       let reply = '';
 
       for (let step = 0; step < PROJECT_ASSISTANT_MAX_STEPS; step++) {
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents,
-          config: {
-            systemInstruction,
-            tools: declarations.length ? [{ functionDeclarations: declarations }] : undefined,
-          },
-        });
+        const turn = await llm.complete(systemInstruction, messages, llmTools);
+        if (turn.toolCalls.length === 0) { reply = turn.text; break; }
 
-        const calls = response.functionCalls;
-        if (!calls || calls.length === 0) { reply = response.text || ''; break; }
+        messages.push({ role: 'assistant', text: turn.text, toolCalls: turn.toolCalls });
 
-        contents.push({ role: 'model', parts: calls.map(c => ({ functionCall: c })) });
-
-        const responses: any[] = [];
-        for (const call of calls) {
-          const name = call.name || '';
-          const args = (call.args || {}) as Record<string, any>;
+        for (const call of turn.toolCalls) {
+          const { name, args } = call;
           usedTools.push(name);
 
           if (isProjectWriteTool(name)) {
             const prepared = prepareProjectActions(name, args, ctx);
             if ('error' in prepared) {
-              responses.push({ functionResponse: { name, response: { error: prepared.error } } });
+              messages.push({ role: 'tool', callId: call.id, name, result: { error: prepared.error } });
               continue;
             }
             for (const a of prepared.actions) {
@@ -4553,14 +4531,12 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
               const dup = actions.some(x => x.tool === a.tool && JSON.stringify(x.payload) === JSON.stringify(a.payload));
               if (!dup) actions.push(a);
             }
-            responses.push({
-              functionResponse: {
-                name,
-                response: {
-                  status: 'очікує підтвердження людини',
-                  proposals: prepared.actions.map(a => a.summary),
-                  rejected: prepared.errors,
-                },
+            messages.push({
+              role: 'tool', callId: call.id, name,
+              result: {
+                status: 'очікує підтвердження людини',
+                proposals: prepared.actions.map(a => a.summary),
+                rejected: prepared.errors,
               },
             });
             continue;
@@ -4573,10 +4549,8 @@ ${subtasks && subtasks.length > 0 ? subtasks.map((s: any) => '- ' + s.title).joi
           if (name === 'get_card_details' && result?.title && !result.error) {
             if (!sources.some(s => s.type === 'card' && s.name === result.title)) sources.push({ type: 'card', name: result.title });
           }
-          responses.push({ functionResponse: { name, response: { result } } });
+          messages.push({ role: 'tool', callId: call.id, name, result: { result } });
         }
-
-        contents.push({ role: 'user', parts: responses });
       }
 
       if (!reply && actions.length) reply = `Пропоную ${actions.length} ${actions.length === 1 ? 'зміну' : 'змін'} — перегляньте нижче.`;
