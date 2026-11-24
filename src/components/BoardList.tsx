@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { List } from '../types';
 import { useAppContext } from '../App';
 import BoardCard from './BoardCard';
@@ -26,6 +27,7 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
   const [isAdding, setIsAdding] = useState(false);
   const [newCardTitle, setNewCardTitle] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState({ top: 0, right: 8 });
   const [limit, setLimit] = useState(10);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
@@ -211,17 +213,26 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
           )}
           {canManage && (
             <div className="relative">
-            <button 
-              onClick={() => setMenuOpen(!menuOpen)}
-              className="p-1.5 hover:bg-gray-200 rounded-md text-gray-500 opacity-0 group-hover:opacity-100 transition"
+            <button
+              onClick={e => {
+                if (menuOpen) { setMenuOpen(false); return; }
+                // Меню малюємо поверх сторінки (portal), бо контейнер дошки обрізає все, що виходить за колонку
+                const r = e.currentTarget.getBoundingClientRect();
+                setMenuPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+                setMenuOpen(true);
+              }}
+              className={`p-1.5 hover:bg-gray-200 rounded-md text-gray-500 transition ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
             >
               <MoreHorizontal className="w-4 h-4" />
             </button>
-          
-          {menuOpen && (
+
+          {menuOpen && createPortal(
             <>
-              <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-              <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-20">
+              <div className="fixed inset-0 z-[60]" onClick={() => setMenuOpen(false)} />
+              <div
+                className="fixed w-60 bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-[70] overflow-y-auto"
+                style={{ top: menuPos.top, right: menuPos.right, maxHeight: `calc(100vh - ${menuPos.top}px - 8px)` }}
+              >
                 <button
                   onClick={() => {
                     setMenuOpen(false);
@@ -299,7 +310,8 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
                   {project ? 'Прибрати колонку з проєкту' : 'Видалити колонку'}
                 </button>
               </div>
-            </>
+            </>,
+            document.body,
           )}
         </div>
         )}
