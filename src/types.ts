@@ -322,6 +322,8 @@ export interface ProjectInfoFile {
   id: string;
   name: string;
   url: string;
+  /** 'file' — завантажено в наше сховище, 'link' — зовнішнє посилання. У старих записів поля немає. */
+  kind?: 'file' | 'link';
 }
 
 export interface Project {

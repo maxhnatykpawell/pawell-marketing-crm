@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
 import BoardList from './BoardList';
 import CardModal from './CardModal';
-import { Plus, Trash2, DownloadCloud, FolderKanban, Filter, CalendarRange, Target, FileText, Info, ChevronDown, ChevronUp, ExternalLink, Link2, Check, RotateCcw, Pencil } from 'lucide-react';
+import { Plus, Trash2, DownloadCloud, FolderKanban, Filter, CalendarRange, Target, FileText, Info, ChevronDown, ChevronUp, Link2, Check, RotateCcw, Pencil } from 'lucide-react';
 import ProjectModal from './ProjectModal';
+import ProjectInfoFiles from './ProjectInfoFiles';
 import { canManageProjectAccess } from '../lib/projectAccess';
 import { buildShareLink } from '../lib/deepLink';
 import { applyProjectListOrder, reorderListIds } from '../lib/listOrder';
@@ -287,7 +288,8 @@ export default function Board() {
         const hasDescription = !!activeProject.description?.trim();
         const hasFiles = (activeProject.infoFiles?.length ?? 0) > 0;
         const hasAnyInfo = hasGoal || hasDescription || hasFiles;
-        if (!hasAnyInfo) return null;
+        // Редактору банер показуємо й порожнім — щоб було куди додати файли
+        if (!hasAnyInfo && !canEditActiveProject) return null;
         return (
           <div
             className="mb-4 rounded-xl border overflow-hidden transition-all"
@@ -327,33 +329,7 @@ export default function Board() {
                     </div>
                   </div>
                 )}
-                {hasFiles && (
-                  <div className="flex items-start gap-2">
-                    <FileText className="w-4 h-4 mt-0.5 shrink-0" style={{ color: activeProject.color }} />
-                    <div>
-                      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Інфо-файли</div>
-                      <div className="flex flex-wrap gap-2">
-                        {activeProject.infoFiles!.map(file => (
-                          <a
-                            key={file.id}
-                            href={file.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border transition hover:shadow-sm"
-                            style={{
-                              color: activeProject.color,
-                              borderColor: activeProject.color + '40',
-                              backgroundColor: activeProject.color + '08',
-                            }}
-                          >
-                            <ExternalLink className="w-3.5 h-3.5" />
-                            {file.name}
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
+                <ProjectInfoFiles project={activeProject} canEdit={canEditActiveProject} />
               </div>
             )}
           </div>
