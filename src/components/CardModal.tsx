@@ -9,7 +9,7 @@ import {
   FolderKanban, Clock, Sparkles, Plus, Tag, Users, MessageSquare,
   Image, Image as ImageIcon, Eye, MoreHorizontal, Circle, CheckCircle2, ChevronDown,
   User as UserIcon, Check, AlertTriangle, Link2, ExternalLink, Loader2,
-  GripVertical, SquarePlus, Layers
+  GripVertical, SquarePlus, Layers, Pencil
 } from 'lucide-react';
 import { buildShareLink } from '../lib/deepLink';
 import { format } from 'date-fns';
@@ -187,6 +187,8 @@ export default function CardModal({ card, onClose }: Props) {
   /** Контекстне меню пункту: id + позиція курсора. */
   const [subtaskMenu, setSubtaskMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [subtaskDatesOpen, setSubtaskDatesOpen] = useState<string | null>(null);
+  const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null);
+  const [editingSubtaskTitle, setEditingSubtaskTitle] = useState('');
   const [linkUrl, setLinkUrl] = useState('');
   const [linkName, setLinkName] = useState('');
   const [fetchedTitle, setFetchedTitle] = useState<string | null>(null);
@@ -320,6 +322,26 @@ export default function CardModal({ card, onClose }: Props) {
   };
 
   /** Строки пункту переліку — та сама пара полів, що малює смужку на Ганті. */
+  const startRenameSubtask = (subtaskId: string) => {
+    if (!hasEditRights) return;
+    const st = (state.cards.find(c => c.id === card.id) || card).subtasks?.find(s => s.id === subtaskId);
+    if (!st) return;
+    setEditingSubtaskTitle(st.title);
+    setEditingSubtaskId(subtaskId);
+  };
+
+  /** Порожню назву не приймаємо — лишається стара, щоб пункт не став безіменним */
+  const commitRenameSubtask = () => {
+    const id = editingSubtaskId;
+    const title = editingSubtaskTitle.trim();
+    setEditingSubtaskId(null);
+    if (!id || !title) return;
+    const currentSubtasks = (state.cards.find(c => c.id === card.id) || card).subtasks || [];
+    const existing = currentSubtasks.find(s => s.id === id);
+    if (!existing || existing.title === title) return;
+    handleUpdate({ subtasks: currentSubtasks.map(s => (s.id === id ? { ...s, title } : s)) });
+  };
+
   const updateSubtaskDates = (subtaskId: string, patch: { startDate?: string | null; deadline?: string | null }) => {
     if (!hasEditRights) return;
     const currentSubtasks = (state.cards.find(c => c.id === card.id) || card).subtasks || [];
@@ -1020,9 +1042,27 @@ export default function CardModal({ card, onClose }: Props) {
                               : <div className="w-4 h-4 border-2 border-gray-300 rounded opacity-50" />}
                           </div>
                         )}
-                        <span className={`text-sm flex-1 ${st.completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>
-                          {st.title}
-                        </span>
+                        {editingSubtaskId === st.id ? (
+                          <input
+                            autoFocus
+                            value={editingSubtaskTitle}
+                            onChange={e => setEditingSubtaskTitle(e.target.value)}
+                            onBlur={commitRenameSubtask}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') commitRenameSubtask();
+                              if (e.key === 'Escape') setEditingSubtaskId(null);
+                            }}
+                            className="flex-1 min-w-0 px-2 py-0.5 text-sm text-gray-800 bg-white border border-blue-400 rounded-md outline-none focus:ring-2 focus:ring-blue-500/30"
+                          />
+                        ) : (
+                          <span
+                            onClick={() => startRenameSubtask(st.id)}
+                            title={hasEditRights ? 'Клікніть, щоб перейменувати' : undefined}
+                            className={`text-sm flex-1 ${hasEditRights ? 'cursor-text hover:text-blue-700' : ''} ${st.completed ? 'line-through text-gray-400' : 'text-gray-700'}`}
+                          >
+                            {st.title}
+                          </span>
+                        )}
 
                         {/* Строки пункту: чіп, якщо дати стоять, і календарик — щоб їх поставити */}
                         <div className="relative shrink-0">
@@ -1188,6 +1228,13 @@ export default function CardModal({ card, onClose }: Props) {
                         top: Math.min(subtaskMenu.y, window.innerHeight - 140),
                       }}
                     >
+                      <button
+                        onClick={() => { startRenameSubtask(subtaskMenu.id); setSubtaskMenu(null); }}
+                        className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                      >
+                        <Pencil className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        Перейменувати
+                      </button>
                       <button
                         onClick={() => convertSubtasksToCards([subtaskMenu.id])}
                         className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"

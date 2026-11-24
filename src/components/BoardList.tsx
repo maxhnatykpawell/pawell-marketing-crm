@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { List } from '../types';
 import { useAppContext } from '../App';
 import BoardCard from './BoardCard';
-import { Plus, MoreHorizontal, Trash2, Eye, EyeOff, CheckSquare, X, Check, ArrowDownAZ } from 'lucide-react';
+import { Plus, MoreHorizontal, Trash2, Eye, EyeOff, CheckSquare, X, Check, ArrowDownAZ, Pencil } from 'lucide-react';
 import { Draggable, Droppable } from '@hello-pangea/dnd';
 import { cn } from '../utils';
 
@@ -22,6 +22,14 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
   const [limit, setLimit] = useState(10);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(list.title);
+
+  const commitRename = () => {
+    const title = renameValue.trim();
+    if (title && title !== list.title) updateList(list.id, { title });
+    setIsRenaming(false);
+  };
 
   // Filter and sort cards
   const cards = state.cards
@@ -148,10 +156,29 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
         </div>
       ) : (
         <div className="px-4 py-3 flex items-center justify-between group min-h-[48px]">
-          <h3 className="font-semibold text-gray-800 tracking-tight flex items-center gap-2">
-            {list.title}
-            {list.excludeFromAI && <EyeOff className="w-3.5 h-3.5 text-gray-400" title="Виключено зі звіту ШІ" />}
-          </h3>
+          {isRenaming ? (
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={e => setRenameValue(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={e => {
+                if (e.key === 'Enter') commitRename();
+                if (e.key === 'Escape') { setRenameValue(list.title); setIsRenaming(false); }
+              }}
+              onMouseDown={e => e.stopPropagation()}
+              className="flex-1 min-w-0 mr-2 px-2 py-1 text-sm font-semibold text-gray-800 bg-white border border-blue-400 rounded-md outline-none focus:ring-2 focus:ring-blue-500/30"
+            />
+          ) : (
+            <h3
+              className="font-semibold text-gray-800 tracking-tight flex items-center gap-2"
+              onDoubleClick={() => { if (hasEditRights) { setRenameValue(list.title); setIsRenaming(true); } }}
+              title={hasEditRights ? 'Двічі клікніть, щоб перейменувати' : undefined}
+            >
+              {list.title}
+              {list.excludeFromAI && <EyeOff className="w-3.5 h-3.5 text-gray-400" title="Виключено зі звіту ШІ" />}
+            </h3>
+          )}
           {hasEditRights && (
             <div className="relative">
             <button 
@@ -166,7 +193,18 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
               <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
               <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-20">
                 <button
-                  onClick={() => { 
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setRenameValue(list.title);
+                    setIsRenaming(true);
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center"
+                >
+                  <Pencil className="w-4 h-4 mr-2 text-gray-500" />
+                  Перейменувати колонку
+                </button>
+                <button
+                  onClick={() => {
                     setMenuOpen(false);
                     setSelectionMode(true);
                     setSelectedCardIds([]);
