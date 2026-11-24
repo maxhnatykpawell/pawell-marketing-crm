@@ -5,17 +5,24 @@ import BoardCard from './BoardCard';
 import { Plus, MoreHorizontal, Trash2, Eye, EyeOff, CheckSquare, X, Check, ArrowDownAZ, Pencil } from 'lucide-react';
 import { Draggable, Droppable } from '@hello-pangea/dnd';
 import { cn } from '../utils';
+import { projectListTitle } from '../lib/listOrder';
 
 interface Props {
   list: List;
   filterAssigneeId?: string | null;
   filterTagId?: string | null;
   filterOverdue?: boolean;
+  /** Чи може людина керувати колонкою (перейменувати, видалити, переставити): редактор або керівник проєкту */
+  canManageColumns?: boolean;
   index: number;
 }
 
-export default function BoardList({ list, filterAssigneeId, filterTagId, filterOverdue, index }: Props) {
-  const { state, addCard, deleteList, clearList, updateList, updateCard, deleteCard, confirmAction, hasEditRights, activeProjectId } = useAppContext();
+export default function BoardList({ list, filterAssigneeId, filterTagId, filterOverdue, index, canManageColumns }: Props) {
+  const { state, addCard, deleteList, clearList, updateList, updateProject, updateCard, deleteCard, confirmAction, hasEditRights, activeProjectId } = useAppContext();
+  const canManage = canManageColumns ?? hasEditRights;
+  // Усередині проєкту колонку міняємо лише для нього: колонки дошки спільні, тож чіпати їх не можна
+  const project = activeProjectId ? (state.projects || []).find(p => p.id === activeProjectId) : undefined;
+  const displayTitle = projectListTitle(list, project);
   const [isAdding, setIsAdding] = useState(false);
   const [newCardTitle, setNewCardTitle] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -23,12 +30,35 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
   const [isRenaming, setIsRenaming] = useState(false);
-  const [renameValue, setRenameValue] = useState(list.title);
+  const [renameValue, setRenameValue] = useState(displayTitle);
 
   const commitRename = () => {
     const title = renameValue.trim();
-    if (title && title !== list.title) updateList(list.id, { title });
     setIsRenaming(false);
+    if (!title || title === displayTitle) return;
+    if (project) {
+      const next = { ...(project.listTitles || {}) };
+      // Повернули назву дошки — власну назву в проєкті прибираємо
+      if (title === list.title) delete next[list.id]; else next[list.id] = title;
+      updateProject(project.id, { listTitles: next });
+    } else {
+      updateList(list.id, { title });
+    }
+  };
+
+  /** Прибрати колонку з проєкту: ховаємо її тут і видаляємо лише задачі цього проєкту в ній */
+  const removeFromProject = () => {
+    if (!project) return;
+    state.cards
+      .filter(c => c.listId === list.id && c.projectId === project.id)
+      .forEach(c => deleteCard(c.id));
+    updateProject(project.id, { hiddenListIds: Array.from(new Set([...(project.hiddenListIds || []), list.id])) });
+  };
+
+  /** «Видалити всі задачі»: у проєкті — тільки задачі цього проєкту, а не всієї колонки дошки */
+  const clearProjectCards = () => {
+    if (!project) return;
+    state.cards.filter(c => c.listId === list.id && c.projectId === project.id).forEach(c => deleteCard(c.id));
   };
 
   // Filter and sort cards
@@ -91,7 +121,7 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
   };
 
   return (
-    <Draggable draggableId={list.id} index={index} isDragDisabled={!hasEditRights}>
+    <Draggable draggableId={list.id} index={index} isDragDisabled={!canManage}>
       {(providedList, snapshotList) => (
         <div 
           ref={providedList.innerRef}
@@ -164,7 +194,7 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
               onBlur={commitRename}
               onKeyDown={e => {
                 if (e.key === 'Enter') commitRename();
-                if (e.key === 'Escape') { setRenameValue(list.title); setIsRenaming(false); }
+                if (e.key === 'Escape') { setRenameValue(displayTitle); setIsRenaming(false); }
               }}
               onMouseDown={e => e.stopPropagation()}
               className="flex-1 min-w-0 mr-2 px-2 py-1 text-sm font-semibold text-gray-800 bg-white border border-blue-400 rounded-md outline-none focus:ring-2 focus:ring-blue-500/30"
@@ -172,14 +202,14 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
           ) : (
             <h3
               className="font-semibold text-gray-800 tracking-tight flex items-center gap-2"
-              onDoubleClick={() => { if (hasEditRights) { setRenameValue(list.title); setIsRenaming(true); } }}
-              title={hasEditRights ? 'Двічі клікніть, щоб перейменувати' : undefined}
+              onDoubleClick={() => { if (canManage) { setRenameValue(displayTitle); setIsRenaming(true); } }}
+              title={canManage ? 'Двічі клікніть, щоб перейменувати' : undefined}
             >
-              {list.title}
+              {displayTitle}
               {list.excludeFromAI && <EyeOff className="w-3.5 h-3.5 text-gray-400" title="Виключено зі звіту ШІ" />}
             </h3>
           )}
-          {hasEditRights && (
+          {canManage && (
             <div className="relative">
             <button 
               onClick={() => setMenuOpen(!menuOpen)}
@@ -195,13 +225,13 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
                 <button
                   onClick={() => {
                     setMenuOpen(false);
-                    setRenameValue(list.title);
+                    setRenameValue(displayTitle);
                     setIsRenaming(true);
                   }}
                   className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center"
                 >
                   <Pencil className="w-4 h-4 mr-2 text-gray-500" />
-                  Перейменувати колонку
+                  {project ? 'Перейменувати (лише в проєкті)' : 'Перейменувати колонку'}
                 </button>
                 <button
                   onClick={() => {
@@ -221,21 +251,28 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
                   <ArrowDownAZ className="w-4 h-4 mr-2 text-gray-500" />
                   Сортувати за датою
                 </button>
-                <button
-                  onClick={() => { 
-                    setMenuOpen(false);
-                    updateList(list.id, { excludeFromAI: !list.excludeFromAI });
-                  }}
-                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center"
-                >
-                  {list.excludeFromAI ? <Eye className="w-4 h-4 mr-2 text-gray-500" /> : <EyeOff className="w-4 h-4 mr-2 text-gray-500" />}
-                  {list.excludeFromAI ? 'Включити в звіт ШІ' : 'Виключити зі звіту ШІ'}
-                </button>
+                {/* Це налаштування самої колонки дошки, тому в проєкті його не показуємо */}
+                {!project && (
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      updateList(list.id, { excludeFromAI: !list.excludeFromAI });
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center"
+                  >
+                    {list.excludeFromAI ? <Eye className="w-4 h-4 mr-2 text-gray-500" /> : <EyeOff className="w-4 h-4 mr-2 text-gray-500" />}
+                    {list.excludeFromAI ? 'Включити в звіт ШІ' : 'Виключити зі звіту ШІ'}
+                  </button>
+                )}
                 <div className="h-px bg-gray-100 my-1"></div>
                 <button
                   onClick={() => { 
                     setMenuOpen(false);
-                    confirmAction('Видалити всі задачі в цій колонці?', () => clearList(list.id));
+                    if (project) {
+                      confirmAction('Видалити всі задачі цього проєкту в цій колонці? Задачі інших проєктів не зачіпаються.', clearProjectCards);
+                    } else {
+                      confirmAction('Видалити всі задачі в цій колонці?', () => clearList(list.id));
+                    }
                   }}
                   className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center"
                 >
@@ -246,12 +283,20 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
                 <button
                   onClick={() => { 
                     setMenuOpen(false);
-                    confirmAction('Ви впевнені, що хочете видалити колонку та всі її задачі?', () => deleteList(list.id));
+                    if (project) {
+                      const n = state.cards.filter(c => c.listId === list.id && c.projectId === project.id).length;
+                      confirmAction(
+                        `Прибрати колонку «${displayTitle}» з цього проєкту${n ? ` разом з його задачами в ній (${n})` : ''}? В інших проєктах і на дошці вона залишиться.`,
+                        removeFromProject,
+                      );
+                    } else {
+                      confirmAction('Ви впевнені, що хочете видалити колонку та всі її задачі?', () => deleteList(list.id));
+                    }
                   }}
                   className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center"
                 >
                   <Trash2 className="w-4 h-4 mr-2" />
-                  Видалити колонку
+                  {project ? 'Прибрати колонку з проєкту' : 'Видалити колонку'}
                 </button>
               </div>
             </>

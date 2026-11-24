@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
 import BoardList from './BoardList';
 import CardModal from './CardModal';
-import { Plus, Trash2, DownloadCloud, FolderKanban, Filter, CalendarRange, Target, FileText, Info, ChevronDown, ChevronUp, Link2, Check, RotateCcw, Pencil } from 'lucide-react';
+import { Plus, Trash2, DownloadCloud, FolderKanban, Filter, CalendarRange, Target, FileText, Info, ChevronDown, ChevronUp, Link2, Check, RotateCcw, Pencil, Eye } from 'lucide-react';
 import ProjectModal from './ProjectModal';
 import ProjectInfoFiles from './ProjectInfoFiles';
 import { canManageProjectAccess } from '../lib/projectAccess';
 import { buildShareLink } from '../lib/deepLink';
-import { applyProjectListOrder, reorderListIds } from '../lib/listOrder';
+import { visibleProjectLists, reorderListIds, projectListTitle } from '../lib/listOrder';
 import TrelloImportModal from './TrelloImportModal';
 import ProjectAssistant from './ProjectAssistant';
 import { DragDropContext, Droppable, DropResult } from '@hello-pangea/dnd';
@@ -26,6 +26,7 @@ export default function Board() {
   const [notifCard, setNotifCard] = useState<typeof state.cards[0] | null>(null);
   const [isProjectInfoOpen, setIsProjectInfoOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [isHiddenListsOpen, setIsHiddenListsOpen] = useState(false);
 
   // When openCardId is set (from notification click), find the card and open its modal
   useEffect(() => {
@@ -55,8 +56,15 @@ export default function Board() {
   const canEditActiveProject = !!activeProjectForOrder && hasEditRights &&
     (canManageProjectAccess(activeProjectForOrder, currentUser || { userId: '' }) ||
       activeProjectForOrder.managerIds.includes(currentUser?.userId || ''));
+  // Колонки може міняти редактор, а в проєкті — ще й його керівник (навіть без загального права редагування)
+  const isActiveProjectManager = !!activeProjectForOrder && activeProjectForOrder.managerIds.includes(currentUser?.userId || '');
+  const canManageColumns = hasEditRights || isActiveProjectManager;
   const hasCustomListOrder =!!activeProjectForOrder?.listOrder?.length;
-  const sortedLists = applyProjectListOrder<typeof currentBoardLists[number]>(currentBoardLists,activeProjectForOrder?.listOrder);
+  // Колонки, прибрані з цього проєкту, тут не показуємо; на дошці й в інших проєктах вони лишаються
+  const sortedLists = visibleProjectLists<typeof currentBoardLists[number]>(currentBoardLists, activeProjectForOrder);
+  const hiddenProjectLists = activeProjectForOrder
+    ? currentBoardLists.filter(l => activeProjectForOrder.hiddenListIds?.includes(l.id))
+    : [];
 
   const handleAddList = (e: React.FormEvent) => {
     e.preventDefault();
@@ -264,7 +272,7 @@ export default function Board() {
           )}
 
           {/* Повернення до шаблонного порядку колонок, якщо в проєкті його змінили */}
-          {activeProjectId && hasCustomListOrder && hasEditRights && (
+          {activeProjectId && hasCustomListOrder && canManageColumns && (
             <button
               onClick={() => updateProject(activeProjectId, { listOrder: [] })}
               title="Власний порядок колонок цього проєкту. Натисніть, щоб повернути шаблонний порядок дошки"
@@ -273,6 +281,42 @@ export default function Board() {
               <RotateCcw className="w-4 h-4" />
               Шаблонний порядок
             </button>
+          )}
+
+          {/* Повернення колонок, які прибрали з цього проєкту */}
+          {activeProjectForOrder && canManageColumns && hiddenProjectLists.length > 0 && (
+            <div className="relative shrink-0">
+              <button
+                onClick={() => setIsHiddenListsOpen(o => !o)}
+                title="Колонки, прибрані з цього проєкту"
+                className="px-3 py-1.5 rounded-lg text-sm font-medium transition flex items-center gap-1.5 bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
+              >
+                <Eye className="w-4 h-4" />
+                Приховані колонки ({hiddenProjectLists.length})
+              </button>
+              {isHiddenListsOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setIsHiddenListsOpen(false)} />
+                  <div className="absolute left-0 top-full mt-1 w-64 bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-20">
+                    {hiddenProjectLists.map(l => (
+                      <button
+                        key={l.id}
+                        onClick={() => {
+                          updateProject(activeProjectForOrder.id, {
+                            hiddenListIds: (activeProjectForOrder.hiddenListIds || []).filter(id => id !== l.id),
+                          });
+                          if (hiddenProjectLists.length === 1) setIsHiddenListsOpen(false);
+                        }}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center justify-between gap-2"
+                      >
+                        <span className="truncate">{projectListTitle(l, activeProjectForOrder)}</span>
+                        <span className="text-xs text-blue-600 shrink-0">Повернути</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           )}
 
           {/* Асистент одного проєкту: з'являється, лише коли проєкт вибрано, і знає тільки його */}
@@ -393,6 +437,7 @@ export default function Board() {
                     filterAssigneeId={filterAssigneeId}
                     filterTagId={filterTagId}
                     filterOverdue={filterOverdue}
+                    canManageColumns={canManageColumns}
                   />
                 ))}
                 {provided.placeholder}

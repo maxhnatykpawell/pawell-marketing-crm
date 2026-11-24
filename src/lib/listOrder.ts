@@ -28,3 +28,21 @@ export function reorderListIds(currentIds: string[], draggedId: string, targetId
   next.splice(to, 0, removed);
   return next;
 }
+
+/** Колонки, видимі в проєкті: у його порядку і без прибраних з нього. */
+export function visibleProjectLists<T extends OrderedList>(
+  lists: readonly T[],
+  project?: { listOrder?: readonly string[]; hiddenListIds?: readonly string[] } | null,
+): T[] {
+  const ordered = applyProjectListOrder(lists, project?.listOrder);
+  const hidden = new Set(project?.hiddenListIds || []);
+  return hidden.size ? ordered.filter(l => !hidden.has(l.id)) : ordered;
+}
+
+/** Назва колонки в проєкті: власна, якщо задана, інакше назва з дошки. */
+export function projectListTitle(
+  list: { id: string; title: string },
+  project?: { listTitles?: Record<string, string> } | null,
+): string {
+  return project?.listTitles?.[list.id]?.trim() || list.title;
+}

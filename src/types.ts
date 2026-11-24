@@ -357,6 +357,10 @@ export interface Project {
   completedRequirements?: Record<string, boolean>;
   /** Власний порядок колонок-етапів у цьому проєкті (id колонок). Порожньо — шаблонний порядок дошки. */
   listOrder?: string[];
+  /** Колонки, прибрані з цього проєкту. На дошку й інші проєкти це не впливає. */
+  hiddenListIds?: string[];
+  /** Власні назви колонок у цьому проєкті: id колонки → назва. */
+  listTitles?: Record<string, string>;
 }
 
 export interface ProcessRequirement {
