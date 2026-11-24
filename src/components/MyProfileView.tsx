@@ -1,7 +1,8 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useAppContext } from '../App';
 import { changePassword } from '../api';
 import { uploadFile } from '../api';
+import { createPortal } from 'react-dom';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
 import { Card } from '../types';
@@ -11,7 +12,7 @@ import {
   CheckCircle2, AlertCircle, Lock, Eye, EyeOff, Check,
   LogOut, Calendar, Edit2, ArrowRight, Kanban,
   ChevronRight, Tag, CheckSquare, MessageSquare, Paperclip,
-  Settings, Sparkles, Camera
+  Settings, Sparkles, Camera, X
 } from 'lucide-react';
 
 /**
@@ -39,6 +40,23 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
   const [pwError, setPwError] = useState('');
   const [pwSuccess, setPwSuccess] = useState(false);
   const [pwLoading, setPwLoading] = useState(false);
+
+  // Зміна пароля — не на видноті: ховається за шестернею й відкривається діалогом
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const closeSettings = () => {
+    setIsSettingsOpen(false);
+    // Нічого з уведеного не лишаємо в пам'яті форми
+    setPwForm({ current: '', next: '', confirm: '' });
+    setShowPw({ current: false, next: false, confirm: false });
+    setPwError('');
+    setPwSuccess(false);
+  };
+  useEffect(() => {
+    if (!isSettingsOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeSettings(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isSettingsOpen]);
 
   // Profile edit
   const [editName, setEditName] = useState(false);
@@ -118,6 +136,7 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
       await changePassword(pwForm.current, pwForm.next);
       setPwSuccess(true);
       setPwForm({ current: '', next: '', confirm: '' });
+      setTimeout(() => closeSettings(), 1600);
     } catch (err: any) {
       setPwError(err.message || 'Помилка зміни пароля');
     } finally {
@@ -199,6 +218,15 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
                 onChange={handleAvatarUpload}
               />
             </div>
+            <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              aria-label="Налаштування акаунта"
+              title="Налаштування акаунта"
+              className="w-11 h-11 flex items-center justify-center text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition border border-gray-200"
+            >
+              <Settings className="w-5 h-5" />
+            </button>
             <button
               onClick={logout}
               className="flex items-center gap-2 px-4 py-2.5 min-h-[44px] text-sm font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition border border-gray-200 hover:border-red-200"
@@ -206,6 +234,7 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
               <LogOut className="w-4 h-4" />
               Вийти
             </button>
+            </div>
           </div>
 
           <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
@@ -469,66 +498,6 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
 
         {/* Right — Password + Info */}
         <div className="space-y-6">
-          {/* Change Password */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
-              <h3 className="font-bold text-gray-800 flex items-center gap-2 text-sm">
-                <Lock className="w-4 h-4 text-gray-500" />
-                Змінити пароль
-              </h3>
-            </div>
-            <form onSubmit={handlePasswordChange} className="px-5 py-5 space-y-3">
-              {[
-                { key: 'current', label: 'Поточний пароль', showKey: 'current' as const },
-                { key: 'next', label: 'Новий пароль', showKey: 'next' as const },
-                { key: 'confirm', label: 'Підтвердити пароль', showKey: 'confirm' as const },
-              ].map(({ key, label, showKey }) => (
-                <div key={key}>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
-                  <div className="relative">
-                    <input
-                      type={showPw[showKey] ? 'text' : 'password'}
-                      value={(pwForm as any)[key]}
-                      onChange={e => { setPwForm({ ...pwForm, [key]: e.target.value }); setPwError(''); setPwSuccess(false); }}
-                      placeholder="••••••••"
-                      className="w-full px-3 pr-9 py-2 text-sm border border-gray-200 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPw({ ...showPw, [showKey]: !showPw[showKey] })}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                      tabIndex={-1}
-                    >
-                      {showPw[showKey] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                </div>
-              ))}
-
-              {pwError && (
-                <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
-                  <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                  <p className="text-xs text-red-600">{pwError}</p>
-                </div>
-              )}
-              {pwSuccess && (
-                <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" />
-                  <p className="text-xs text-green-600">Пароль успішно змінено!</p>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={pwLoading}
-                className="w-full flex items-center justify-center gap-2 py-2.5 bg-gray-900 hover:bg-gray-800 text-white text-sm font-semibold rounded-xl transition disabled:opacity-60"
-              >
-                {pwLoading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Lock className="w-4 h-4" />}
-                Зберегти пароль
-              </button>
-            </form>
-          </div>
-
           {/* Profile info */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
             <h3 className="font-bold text-gray-800 flex items-center gap-2 text-sm mb-4">
@@ -558,6 +527,91 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
           </div>
         </div>
       </div>
+
+      {isSettingsOpen && createPortal(
+        <div
+          className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/40"
+          onClick={closeSettings}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="account-settings-title"
+            onClick={e => e.stopPropagation()}
+            className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[92dvh] overflow-y-auto pb-safe"
+          >
+            <div className="flex items-center justify-between pl-5 pr-2 pt-2 pb-1 border-b border-gray-100">
+              <h2 id="account-settings-title" className="font-bold text-gray-900 flex items-center gap-2">
+                <Settings className="w-4 h-4 text-gray-500" />
+                Налаштування акаунта
+              </h2>
+              <button onClick={closeSettings} aria-label="Закрити" className="w-11 h-11 flex items-center justify-center text-gray-500 hover:bg-gray-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="px-5 pt-4">
+              <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                <Lock className="w-4 h-4 text-gray-500" />
+                Змінити пароль
+              </h3>
+              <p className="text-xs text-gray-500 mt-1">Новий пароль має містити щонайменше 6 символів.</p>
+            </div>
+            <form onSubmit={handlePasswordChange} className="px-5 pt-3 pb-5 space-y-3">
+              {[
+                { key: 'current', label: 'Поточний пароль', showKey: 'current' as const },
+                { key: 'next', label: 'Новий пароль', showKey: 'next' as const },
+                { key: 'confirm', label: 'Підтвердити пароль', showKey: 'confirm' as const },
+              ].map(({ key, label, showKey }) => (
+                <div key={key}>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
+                  <div className="relative">
+                    <input
+                      type={showPw[showKey] ? 'text' : 'password'}
+                      value={(pwForm as any)[key]}
+                      onChange={e => { setPwForm({ ...pwForm, [key]: e.target.value }); setPwError(''); setPwSuccess(false); }}
+                      placeholder="••••••••"
+                      autoComplete={key === 'current' ? 'current-password' : 'new-password'}
+                      className="w-full px-3 pr-11 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPw({ ...showPw, [showKey]: !showPw[showKey] })}
+                      aria-label={showPw[showKey] ? 'Сховати пароль' : 'Показати пароль'}
+                      className="absolute right-0 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center text-gray-400 hover:text-gray-600"
+                    >
+                      {showPw[showKey] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              {pwError && (
+                <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                  <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                  <p className="text-xs text-red-600">{pwError}</p>
+                </div>
+              )}
+              {pwSuccess && (
+                <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                  <p className="text-xs text-green-600">Пароль успішно змінено!</p>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={pwLoading}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-gray-900 hover:bg-gray-800 text-white text-sm font-semibold rounded-xl transition disabled:opacity-60"
+              >
+                {pwLoading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Lock className="w-4 h-4" />}
+                Зберегти пароль
+              </button>
+            </form>
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {/* Card Modal */}
       {selectedCard && (
