@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
 import BoardList from './BoardList';
 import CardModal from './CardModal';
-import { Plus, Trash2, DownloadCloud, FolderKanban, Filter, CalendarRange, Target, FileText, Info, ChevronDown, ChevronUp, ExternalLink, Link2, Check, RotateCcw } from 'lucide-react';
+import { Plus, Trash2, DownloadCloud, FolderKanban, Filter, CalendarRange, Target, FileText, Info, ChevronDown, ChevronUp, ExternalLink, Link2, Check, RotateCcw, Pencil } from 'lucide-react';
+import ProjectModal from './ProjectModal';
+import { canManageProjectAccess } from '../lib/projectAccess';
 import { buildShareLink } from '../lib/deepLink';
 import { applyProjectListOrder, reorderListIds } from '../lib/listOrder';
 import TrelloImportModal from './TrelloImportModal';
@@ -10,7 +12,8 @@ import ProjectAssistant from './ProjectAssistant';
 import { DragDropContext, Droppable, DropResult } from '@hello-pangea/dnd';
 
 export default function Board() {
-  const { state, addList, activeBoardId, setActiveBoardId, activeProjectId, setActiveProjectId, setActiveView, addBoard, deleteBoard, confirmAction, hasEditRights, moveList, moveCard, openCardId, setOpenCardId, updateProject } = useAppContext();
+  const { state, addList, activeBoardId, setActiveBoardId, activeProjectId, setActiveProjectId, setActiveView, addBoard, deleteBoard, confirmAction, hasEditRights, moveList, moveCard, openCardId, setOpenCardId, updateProject, currentUser } = useAppContext();
+  const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [isAddingList, setIsAddingList] = useState(false);
   const [newListTitle, setNewListTitle] = useState('');
   const [isAddingBoard, setIsAddingBoard] = useState(false);
@@ -47,7 +50,11 @@ export default function Board() {
 
   // У проєкті колонки йдуть у його власному порядку (якщо задано), інакше — шаблонному порядку дошки
   const activeProjectForOrder = activeProjectId ? projects.find(p => p.id === activeProjectId) : undefined;
-  const hasCustomListOrder = !!activeProjectForOrder?.listOrder?.length;
+  // Той самий доступ, що й у списку проєктів: власник/керівник або хто керує доступом
+  const canEditActiveProject = !!activeProjectForOrder && hasEditRights &&
+    (canManageProjectAccess(activeProjectForOrder, currentUser || { userId: '' }) ||
+      activeProjectForOrder.managerIds.includes(currentUser?.userId || ''));
+  const hasCustomListOrder =!!activeProjectForOrder?.listOrder?.length;
   const sortedLists = applyProjectListOrder<typeof currentBoardLists[number]>(currentBoardLists,activeProjectForOrder?.listOrder);
 
   const handleAddList = (e: React.FormEvent) => {
@@ -240,6 +247,18 @@ export default function Board() {
             >
               {linkCopied ? <Check className="w-4 h-4 text-green-600" /> : <Link2 className="w-4 h-4" />}
               {linkCopied ? 'Скопійовано' : 'Посилання'}
+            </button>
+          )}
+
+          {/* Швидке редагування інфо проєкту (мета, опис, файли, учасники) просто з дошки */}
+          {canEditActiveProject && (
+            <button
+              onClick={() => setIsProjectModalOpen(true)}
+              title="Редагувати інфо проєкту: назву, мету, опис, файли, доступ"
+              className="shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition flex items-center gap-1.5 bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
+            >
+              <Pencil className="w-4 h-4" />
+              Редагувати
             </button>
           )}
 
@@ -452,6 +471,10 @@ export default function Board() {
       )}
 
       {/* Card modal opened from a notification */}
+      {isProjectModalOpen && activeProjectForOrder && (
+        <ProjectModal project={activeProjectForOrder} onClose={() => setIsProjectModalOpen(false)} />
+      )}
+
       {notifCard && (
         <CardModal card={notifCard} onClose={() => setNotifCard(null)} />
       )}
