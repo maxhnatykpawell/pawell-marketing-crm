@@ -25,6 +25,8 @@ import Celebration from './components/Celebration';
 import { celebrate } from './lib/celebrate';
 import AssistantPanel from './components/AssistantPanel';
 import ChatView from './components/ChatView';
+import MobileShell, { MobileVersionPill } from './components/mobile/MobileShell';
+import { useIsMobile } from './hooks/useIsMobile';
 import { useChat } from './hooks/useChat';
 import type { AssistantAction } from './api';
 import { canViewSection, ALL_VIEW_IDS, DEFAULT_ALLOWED_VIEWS } from './lib/views';
@@ -66,7 +68,7 @@ interface AppContextType {
   addUserGroup: (group: Omit<UserGroup, 'id'>) => string | undefined;
   updateUserGroup: (id: string, updates: Partial<UserGroup>) => void;
   deleteUserGroup: (id: string) => void;
-  updateSettings: (updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule' | 'expenseCategories' | 'expenseSources' | 'rfmThresholds' | 'currencyRates'>>) => void;
+  updateSettings: (updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule' | 'aiReportEnabled' | 'expenseCategories' | 'expenseSources' | 'rfmThresholds' | 'currencyRates'>>) => void;
   addEvent: (item: Omit<EventItem, 'id'>) => void;
   updateEvent: (id: string, updates: Partial<EventItem>) => void;
   deleteEvent: (id: string) => void;
@@ -145,6 +147,8 @@ export default function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [openCardId, setOpenCardId] = useState<string | null>(null);
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  // Телефон → окрема спрощена версія (задачі, чат, кабінет); інакше повний інтерфейс
+  const isMobile = useIsMobile();
 
   // Use a ref so callbacks always have the latest currentUser without re-creating on every render
   const currentUserRef = React.useRef<AuthUser | null>(null);
@@ -709,7 +713,7 @@ export default function App() {
     deleteEntity('userGroups', id).catch(console.error);
   }, [state]);
 
-  const updateSettings = useCallback((updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule' | 'expenseCategories' | 'expenseSources' | 'rfmThresholds' | 'currencyRates'>>) => {
+  const updateSettings = useCallback((updates: Partial<Pick<AppState, 'contentPlanChannels' | 'contentPlanStatuses' | 'contentPlanColumns' | 'aiReportSchedule' | 'aiReportEnabled' | 'expenseCategories' | 'expenseSources' | 'rfmThresholds' | 'currencyRates'>>) => {
     if (!state) return;
     saveState({ ...state, ...updates });
   }, [state, saveState]);
@@ -1022,7 +1026,7 @@ export default function App() {
         addCard/updateCard, якими користується інтерфейс. Окремого шляху запису
         не існує навмисно: усе, що вміє асистент, обмежене тим, що вміє людина.
       */}
-      <AssistantPanel
+      {!isMobile && <AssistantPanel
         onApplyAction={(action: AssistantAction) => {
           if (!hasEditRights) return 'Дію не застосовано: немає прав на редагування.';
 
@@ -1039,9 +1043,13 @@ export default function App() {
 
           return 'Невідома дія — нічого не змінено.';
         }}
-      />
+      />}
 
       <div className="min-h-screen bg-blue-50/50 flex flex-col font-sans text-gray-900">
+        {isMobile ? (
+          <MobileShell chat={chat} notifications={myNotifications} unreadCount={unreadCount} isOffline={isOffline} />
+        ) : (<>
+        <MobileVersionPill />
         {/* Header */}
         <header className="bg-white border-b border-gray-200 px-4 py-2.5 flex items-center justify-between sticky top-0 z-10 w-full print:hidden">
           {/* Left: logo + nav */}
@@ -1220,6 +1228,7 @@ export default function App() {
           {activeView === 'payroll' && <PayrollView />}
           {activeView === 'chat' && <ChatView chat={chat} />}
         </main>
+        </>)}
 
         {/* Modals */}
         {isTeamManagerOpen && <TeamManager onClose={() => setIsTeamManagerOpen(false)} />}
@@ -1233,12 +1242,12 @@ export default function App() {
               <h3 className="text-lg font-bold text-gray-900 mb-2">Підтвердження дії</h3>
               <p className="text-gray-600 mb-6">{confirmDialog.message}</p>
               <div className="flex justify-end space-x-3">
-                <button onClick={() => setConfirmDialog(null)} className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition">
+                <button onClick={() => setConfirmDialog(null)} className="px-4 py-3 sm:py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition">
                   Скасувати
                 </button>
                 <button
                   onClick={() => { confirmDialog.onConfirm(); setConfirmDialog(null); }}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition"
+                  className="px-4 py-3 sm:py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition"
                 >
                   Підтвердити
                 </button>

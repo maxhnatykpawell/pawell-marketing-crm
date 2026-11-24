@@ -496,16 +496,15 @@ export default function CardModal({ card, onClose }: Props) {
    */
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-12 bg-gray-900/50 backdrop-blur-sm overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-start justify-center sm:p-4 sm:pt-12 bg-gray-900/50 backdrop-blur-sm overflow-y-auto"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col overflow-hidden mb-8"
-        style={{ minHeight: 480 }}
+        className="bg-white sm:rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col sm:overflow-hidden sm:mb-8 min-h-full sm:min-h-[480px]"
         onClick={e => e.stopPropagation()}
       >
         {/* ── Top bar ── */}
-        <div className="flex items-center justify-between px-5 pt-4 pb-2">
+        <div className="flex items-center justify-between px-4 sm:px-5 pt-3 sm:pt-4 pb-2 pt-safe sticky top-0 z-10 bg-white sm:static">
           {/* List badge */}
           <button className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">
             {list?.title || 'Без списку'}
@@ -513,13 +512,13 @@ export default function CardModal({ card, onClose }: Props) {
           </button>
 
           <div className="flex items-center gap-1">
-            <button className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition" title="Обкладинка">
+            <button className="hidden sm:block p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition" title="Обкладинка">
               <Image className="w-4.5 h-4.5" />
             </button>
-            <button className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition" title="Переглянути">
+            <button className="hidden sm:block p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition" title="Переглянути">
               <Eye className="w-4.5 h-4.5" />
             </button>
-            <button className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition" title="Більше">
+            <button className="hidden sm:block p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition" title="Більше">
               <MoreHorizontal className="w-4.5 h-4.5" />
             </button>
             <button
@@ -529,25 +528,26 @@ export default function CardModal({ card, onClose }: Props) {
                 setCardLinkCopied(true);
                 setTimeout(() => setCardLinkCopied(false), 2000);
               }}
-              className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition"
+              className="p-3 sm:p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition"
               title={cardLinkCopied ? 'Скопійовано' : 'Скопіювати посилання на задачу'}
             >
               {cardLinkCopied ? <Check className="w-4.5 h-4.5 text-green-600" /> : <Link2 className="w-4.5 h-4.5" />}
             </button>
             <button
               onClick={onClose}
-              className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition ml-1"
+              aria-label="Закрити картку"
+              className="p-3 sm:p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition ml-1"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        {/* ── Two-column body ── */}
-        <div className="flex flex-1 overflow-hidden">
+        {/* ── Тіло: на телефоні одна колонка, від sm — дві ── */}
+        <div className="flex flex-col sm:flex-row flex-1 sm:overflow-hidden">
 
           {/* ══ LEFT COLUMN ══ */}
-          <div className="flex-1 px-6 py-3 overflow-y-auto hidden-scrollbar space-y-5">
+          <div className="flex-1 px-4 sm:px-6 py-3 sm:overflow-y-auto hidden-scrollbar space-y-5">
 
             {/* Title */}
             <div className="flex items-start gap-3">
@@ -1350,7 +1350,7 @@ export default function CardModal({ card, onClose }: Props) {
           </div>
 
           {/* ══ RIGHT COLUMN — Comments ══ */}
-          <div className="w-72 shrink-0 border-l border-gray-100 bg-gray-50/60 flex flex-col overflow-hidden">
+          <div className="w-full sm:w-72 sm:shrink-0 border-t sm:border-t-0 sm:border-l border-gray-100 bg-gray-50/60 flex flex-col sm:overflow-hidden pb-safe">
             <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <MessageSquare className="w-4 h-4 text-gray-500" />

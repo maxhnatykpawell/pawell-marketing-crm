@@ -383,7 +383,19 @@ export default function AdminSettingsPanel() {
               Розклад ШІ-звіту
             </h4>
             <p className="text-xs text-gray-500 mb-3">Оберіть час, коли бот автоматично надсилатиме щоденний звіт у Telegram.</p>
-            <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 mb-3 text-sm text-gray-700 cursor-pointer select-none w-fit">
+              <input
+                type="checkbox"
+                checked={state?.aiReportEnabled === true}
+                onChange={e => updateSettings({ aiReportEnabled: e.target.checked })}
+                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+              />
+              Надсилати щоденний ШІ-звіт
+              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${state?.aiReportEnabled === true ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                {state?.aiReportEnabled === true ? 'Увімкнено' : 'Вимкнено'}
+              </span>
+            </label>
+            <div className={`flex items-center gap-3 ${state?.aiReportEnabled === true ? '' : 'opacity-50'}`}>
               <input
                 type="time"
                 value={scheduleTime}

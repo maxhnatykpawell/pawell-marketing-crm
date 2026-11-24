@@ -164,7 +164,7 @@ const SETTINGS_DOC = 'settings';
  * Налаштування, які з'явились пізніше і можуть бути відсутні у клієнта.
  * Раніше вони не потрапляли в білий список saveDb і мовчки не зберігались.
  */
-const OPTIONAL_SETTINGS_KEYS = ['expenseCategories', 'expenseSources', 'rfmThresholds', 'currencyRates', 'taskAutomations'];
+const OPTIONAL_SETTINGS_KEYS = ['expenseCategories', 'expenseSources', 'rfmThresholds', 'currencyRates', 'taskAutomations', 'aiReportEnabled'];
 
 const DEFAULT_PAYROLL_SETTINGS = {
   labels: {
@@ -545,11 +545,25 @@ async function generateAndSendDailyReport(state: any) {
 
 let currentCronTask: any = null;
 
-function setupTelegramCron(scheduleExpr: string = '0 8 * * *') {
+/**
+ * Щоденний ШІ-звіт у Telegram. Вимкнений за замовчуванням: вмикається лише
+ * явно (aiReportEnabled === true) в «Налаштуваннях системи». Вимкнений звіт не
+ * ставить cron зовсім, тож не витрачає ні ресурсів, ні запитів до Gemini.
+ */
+function isAiReportEnabled(value: unknown): boolean {
+  return value === true;
+}
+
+function setupTelegramCron(scheduleExpr: string = '0 8 * * *', enabled: boolean = false) {
   if (currentCronTask) {
     currentCronTask.stop();
+    currentCronTask = null;
   }
-  
+
+  if (!enabled) {
+    console.log('📅 Щоденний ШІ-звіт вимкнено.');
+    return;
+  }
   if (!scheduleExpr) return;
   
   try {
@@ -2853,7 +2867,7 @@ async function startServer() {
   initFirebase();
   await bootstrapAdmin();
   const initialState = await getDb();
-  setupTelegramCron(initialState.aiReportSchedule || '0 8 * * *');
+  setupTelegramCron(initialState.aiReportSchedule || '0 8 * * *', isAiReportEnabled(initialState.aiReportEnabled));
   setupAnnouncementCrons(initialState.announcements || []);
   setupAnnouncementCleanupCron();
   setupPersonalNotificationCrons(initialState.personalNotifications || DEFAULT_PERSONAL_NOTIFICATIONS);
@@ -3035,8 +3049,11 @@ async function startServer() {
     await saveDb(req.body);
 
     // Check if AI schedule changed
-    if (req.body.aiReportSchedule && req.body.aiReportSchedule !== oldState.aiReportSchedule) {
-      setupTelegramCron(req.body.aiReportSchedule);
+    // Якщо клієнт не надіслав прапорець, лишається збережений — застаріла вкладка не вмикає звіт мимоволі
+    const nextAiEnabled = isAiReportEnabled(req.body.aiReportEnabled ?? oldState.aiReportEnabled);
+    const nextAiSchedule = req.body.aiReportSchedule || oldState.aiReportSchedule || '0 8 * * *';
+    if (nextAiSchedule !== oldState.aiReportSchedule || nextAiEnabled !== isAiReportEnabled(oldState.aiReportEnabled)) {
+      setupTelegramCron(nextAiSchedule, nextAiEnabled);
     }
     // Re-setup announcement crons if changed
     if (req.body.announcements) {

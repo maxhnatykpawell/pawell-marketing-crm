@@ -15,14 +15,28 @@ import { splitMentions, mentionQueryAt, applyMention, suggestMentions } from '..
 import MentionSuggestions from './MentionSuggestions';
 import {
   MessageSquare, Hash, Lock, Plus, Send, Search, X, Check,
-  Pencil, Trash2, Loader2, Users as UsersIcon, ChevronUp,
+  Pencil, Trash2, Loader2, Users as UsersIcon, ChevronUp, ChevronLeft,
 } from 'lucide-react';
 
 interface Props {
   chat: UseChat;
+  /**
+   * Телефон: замість двох колонок — по одному екрану. Спершу список розмов,
+   * після вибору — сама розмова з кнопкою «Назад».
+   */
+  mobile?: boolean;
 }
 
-export default function ChatView({ chat }: Props) {
+export default function ChatView({ chat, mobile = false }: Props) {
+  const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
+  /** Відкрити розмову; на телефоні ще й перейти на екран розмови */
+  const openConversation = (id: string) => {
+    chat.openConversation(id);
+    if (mobile) setMobileThreadOpen(true);
+  };
+  const showList = !mobile || !mobileThreadOpen;
+  const showThread = !mobile || mobileThreadOpen;
+
   const { state, currentUser } = useAppContext();
   const users = state.users || [];
   const myId = currentUser?.userId ?? '';
@@ -56,7 +70,8 @@ export default function ChatView({ chat }: Props) {
 
   // Перше відкриття — стаємо в найсвіжішу розмову, щоб не дивитись у порожнечу
   useEffect(() => {
-    if (!chat.activeId && chat.conversations.length > 0) {
+    // На телефоні починаємо зі списку розмов, а не з першої розмови
+    if (!mobile && !chat.activeId && chat.conversations.length > 0) {
       chat.openConversation(chat.conversations[0].id);
     }
   }, [chat.conversations, chat.activeId]);
@@ -64,10 +79,10 @@ export default function ChatView({ chat }: Props) {
   return (
     // flex-1 + min-h-0, а не h-full: батьківський <main> — колонка, і без
     // min-h-0 стрічка розпирала б сторінку замість того, щоб прокручуватись
-    <div className="flex-1 min-h-0 flex bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+    <div className={`flex-1 min-h-0 flex bg-white overflow-hidden ${mobile ? '' : 'rounded-xl shadow-sm border border-gray-200'}`}>
 
       {/* ── Список розмов ── */}
-      <aside className="w-64 lg:w-72 border-r border-gray-200 flex flex-col bg-gray-50/60 shrink-0">
+      <aside className={`${showList ? 'flex' : 'hidden'} ${mobile ? 'w-full' : 'w-64 lg:w-72 border-r border-gray-200 shrink-0'} flex-col bg-gray-50/60`}>
         <div className="px-4 py-3 border-b border-gray-200 bg-white">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-bold text-gray-800 flex items-center gap-2">
@@ -79,14 +94,16 @@ export default function ChatView({ chat }: Props) {
               <button
                 onClick={() => setIsPeoplePickerOpen(true)}
                 title="Написати колезі"
-                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                aria-label="Написати колезі"
+                className={`${mobile ? 'p-3' : 'p-1.5'} text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition`}
               >
                 <UsersIcon className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setIsNewChannelOpen(true)}
                 title="Створити канал"
-                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                aria-label="Створити канал"
+                className={`${mobile ? 'p-3' : 'p-1.5'} text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition`}
               >
                 <Plus className="w-4 h-4" />
               </button>
@@ -112,8 +129,8 @@ export default function ChatView({ chat }: Props) {
             return (
               <button
                 key={c.id}
-                onClick={() => chat.openConversation(c.id)}
-                className={`w-full text-left px-3 py-2 flex items-center gap-2.5 transition ${
+                onClick={() => openConversation(c.id)}
+                className={`w-full text-left px-3 ${mobile ? 'py-3 min-h-[56px]' : 'py-2'} flex items-center gap-2.5 transition ${
                   isActive ? 'bg-blue-50 border-r-2 border-blue-600' : 'hover:bg-gray-100'
                 }`}
               >
@@ -149,7 +166,7 @@ export default function ChatView({ chat }: Props) {
       </aside>
 
       {/* ── Стрічка ── */}
-      <section className="flex-1 flex flex-col min-w-0">
+      <section className={`${showThread ? 'flex' : 'hidden'} flex-1 flex-col min-w-0`}>
         {!active ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
             <MessageSquare className="w-10 h-10 text-gray-200 mb-3" />
@@ -157,8 +174,17 @@ export default function ChatView({ chat }: Props) {
           </div>
         ) : (
           <>
-            <header className="px-5 py-3 border-b border-gray-200 flex items-center justify-between bg-white shrink-0">
+            <header className={`${mobile ? 'px-2' : 'px-5'} py-3 border-b border-gray-200 flex items-center justify-between bg-white shrink-0`}>
               <div className="flex items-center gap-2 min-w-0">
+                {mobile && (
+                  <button
+                    onClick={() => setMobileThreadOpen(false)}
+                    aria-label="Назад до списку розмов"
+                    className="p-2.5 -ml-1 text-gray-600 hover:bg-gray-100 rounded-lg shrink-0"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                )}
                 {active.kind === 'dm'
                   ? <UsersIcon className="w-4 h-4 text-gray-400 shrink-0" />
                   : active.memberIds === null
@@ -197,7 +223,7 @@ export default function ChatView({ chat }: Props) {
           onClose={() => setIsNewChannelOpen(false)}
           onCreate={async (title, memberIds) => {
             const id = await chat.createChannel(title, memberIds);
-            chat.openConversation(id);
+            openConversation(id);
             setIsNewChannelOpen(false);
           }}
         />
@@ -209,7 +235,7 @@ export default function ChatView({ chat }: Props) {
           onClose={() => setIsPeoplePickerOpen(false)}
           onPick={async peerId => {
             const id = await chat.openDm(peerId);
-            chat.openConversation(id);
+            openConversation(id);
             setIsPeoplePickerOpen(false);
           }}
         />
@@ -238,6 +264,7 @@ function MessageFeed({
   myId: string;
   userById: Map<string, User>;
 }) {
+  const { confirmAction } = useAppContext();
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -371,20 +398,27 @@ function MessageFeed({
                     </div>
 
                     {isMine && !m.deletedAt && (
-                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition shrink-0">
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition shrink-0">
                         <button
                           onClick={() => { setEditingId(m.id); setEditText(m.text); }}
                           title="Редагувати"
-                          className="p-1 text-gray-300 hover:text-blue-600 hover:bg-blue-50 rounded transition"
+                          aria-label="Редагувати повідомлення"
+                          className="p-1 pointer-coarse:p-3 text-gray-300 pointer-coarse:text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition"
                         >
-                          <Pencil className="w-3 h-3" />
+                          <Pencil className="w-3 h-3 pointer-coarse:w-4 pointer-coarse:h-4" />
                         </button>
                         <button
-                          onClick={() => chat.remove(m.id).catch(console.error)}
+                          onClick={() => {
+                            const remove = () => chat.remove(m.id).catch(console.error);
+                            // На телефоні легко зачепити пальцем — перепитуємо, на комп'ютері поведінка та сама
+                            if (window.matchMedia('(pointer: coarse)').matches) confirmAction('Видалити це повідомлення?', remove);
+                            else remove();
+                          }}
                           title="Видалити"
-                          className="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition"
+                          aria-label="Видалити повідомлення"
+                          className="p-1 pointer-coarse:p-3 text-gray-300 pointer-coarse:text-gray-500 hover:text-red-500 hover:bg-red-50 rounded transition"
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-3 h-3 pointer-coarse:w-4 pointer-coarse:h-4" />
                         </button>
                       </div>
                     )}
@@ -510,23 +544,25 @@ function Composer({
           value={text}
           onChange={e => onChange(e.target.value)}
           onKeyDown={e => {
-            // Enter надсилає, Shift+Enter — новий рядок
-            if (e.key === 'Enter' && !e.shiftKey) {
+            // Enter надсилає, Shift+Enter — новий рядок. На екрані дотику Enter — це новий рядок,
+            // а надсилає кнопка: інакше на телефоні повідомлення йшло б недописаним
+            const isTouch = window.matchMedia('(pointer: coarse)').matches;
+            if (e.key === 'Enter' && !e.shiftKey && !isTouch) {
               e.preventDefault();
               submit();
             }
           }}
           rows={1}
           disabled={disabled}
-          placeholder={disabled ? 'Немає зв’язку із сервером...' : 'Напишіть повідомлення. @ — щоб згадати колегу'}
-          className="flex-1 resize-none max-h-32 px-3 py-2 text-sm border border-gray-200 rounded-xl outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition disabled:bg-gray-50"
-          style={{ minHeight: '38px' }}
+          placeholder={disabled ? 'Немає зв’язку із сервером...' : 'Повідомлення. @ — згадати колегу'}
+          className="flex-1 resize-none max-h-32 min-h-[44px] sm:min-h-[38px] px-3 py-2 text-sm border border-gray-200 rounded-xl outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition disabled:bg-gray-50"
         />
         <button
           onClick={submit}
           disabled={!text.trim() || sending || disabled}
-          className="p-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-          title="Надіслати (Enter)"
+          className="p-3 sm:p-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+          title="Надіслати"
+          aria-label="Надіслати повідомлення"
         >
           {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
         </button>

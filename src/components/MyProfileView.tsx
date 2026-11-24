@@ -14,7 +14,11 @@ import {
   Settings, Sparkles, Camera
 } from 'lucide-react';
 
-export default function MyProfileView() {
+/**
+ * @param mobile Мобільна версія: задачі там — окрема вкладка, а розділів «Контент» і «Дошка»
+ *               немає, тож блоки задач і контенту ховаємо, лишаючи профіль і налаштування.
+ */
+export default function MyProfileView({ mobile = false }: { mobile?: boolean }) {
   const { state, currentUser, logout, updateUser, setActiveBoardId, setActiveView } = useAppContext();
 
   const user = state.users.find(u => u.id === currentUser?.userId);
@@ -158,7 +162,7 @@ export default function MyProfileView() {
         <div className="h-28 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 relative">
           <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, rgba(255,255,255,0.4) 0%, transparent 60%)' }} />
         </div>
-        <div className="px-8 pb-6">
+        <div className="px-4 sm:px-8 pb-6">
           <div className="flex items-end justify-between -mt-12 mb-4">
             <div className="relative group/avatar">
               {avatarUploading ? (
@@ -173,11 +177,19 @@ export default function MyProfileView() {
               <button
                 onClick={() => avatarInputRef.current?.click()}
                 disabled={avatarUploading}
-                className="absolute inset-0 rounded-2xl bg-black/50 opacity-0 group-hover/avatar:opacity-100 transition-opacity flex items-center justify-center gap-1 flex-col cursor-pointer disabled:cursor-wait"
+                className="absolute inset-0 rounded-2xl bg-black/50 opacity-0 group-hover/avatar:opacity-100 transition-opacity hidden sm:flex items-center justify-center gap-1 flex-col cursor-pointer disabled:cursor-wait"
                 title="Змінити фото"
               >
                 <Camera className="w-6 h-6 text-white" />
                 <span className="text-white text-[10px] font-semibold">Фото</span>
+              </button>
+              <button
+                onClick={() => avatarInputRef.current?.click()}
+                disabled={avatarUploading}
+                aria-label="Змінити фото"
+                className="sm:hidden absolute -bottom-2 -left-2 w-11 h-11 rounded-full bg-blue-600 text-white border-2 border-white shadow flex items-center justify-center disabled:opacity-60"
+              >
+                <Camera className="w-5 h-5" />
               </button>
               <input
                 ref={avatarInputRef}
@@ -189,39 +201,39 @@ export default function MyProfileView() {
             </div>
             <button
               onClick={logout}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition border border-gray-200 hover:border-red-200"
+              className="flex items-center gap-2 px-4 py-2.5 min-h-[44px] text-sm font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition border border-gray-200 hover:border-red-200"
             >
               <LogOut className="w-4 h-4" />
               Вийти
             </button>
           </div>
 
-          <div className="flex items-start justify-between">
-            <div>
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+            <div className="min-w-0">
               {editName ? (
                 <div className="flex items-center gap-2 mb-1">
                   <input
                     autoFocus
                     value={nameValue}
                     onChange={e => setNameValue(e.target.value)}
-                    className="text-2xl font-bold text-gray-900 border-b-2 border-blue-500 outline-none bg-transparent"
+                    className="min-w-0 w-full text-2xl font-bold text-gray-900 border-b-2 border-blue-500 outline-none bg-transparent"
                     onKeyDown={e => { if (e.key === 'Enter') handleSaveName(); if (e.key === 'Escape') setEditName(false); }}
                   />
-                  <button onClick={handleSaveName} disabled={nameSaving} className="p-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                  <button onClick={handleSaveName} disabled={nameSaving} aria-label="Зберегти ім’я" className="p-2.5 sm:p-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
                     <Check className="w-3.5 h-3.5" />
                   </button>
                 </div>
               ) : (
                 <div className="flex items-center gap-2 mb-1">
-                  <h2 className="text-2xl font-bold text-gray-900">{user.name}</h2>
-                  <button onClick={() => { setEditName(true); setNameValue(user.name); }} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition">
+                  <h2 className="text-2xl font-bold text-gray-900 break-words min-w-0">{user.name}</h2>
+                  <button onClick={() => { setEditName(true); setNameValue(user.name); }} aria-label="Змінити ім’я" className="p-2.5 sm:p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition shrink-0">
                     <Edit2 className="w-4 h-4" />
                   </button>
                 </div>
               )}
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${roleColor}`}>{roleLabel}</span>
-                <div className="flex items-center gap-1.5 text-sm text-gray-500">
+                <div className="flex items-center gap-1.5 text-sm text-gray-500 min-w-0 break-all">
                   <Mail className="w-3.5 h-3.5" />
                   {currentUser.email}
                 </div>
@@ -229,7 +241,7 @@ export default function MyProfileView() {
             </div>
 
             {/* Stats */}
-            <div className="hidden md:flex gap-6 text-center">
+            <div className="flex gap-6 text-center justify-around md:justify-start pt-3 md:pt-0 border-t border-gray-100 md:border-0">
               {[
                 { label: 'Задачі', value: myActiveCards.length, icon: Kanban, color: 'text-blue-600' },
                 { label: 'Контент', value: myContent.length, icon: FileText, color: 'text-indigo-600' },
@@ -248,7 +260,7 @@ export default function MyProfileView() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left — Tasks + Content */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className={`lg:col-span-2 space-y-6 ${mobile ? 'hidden' : ''}`}>
 
           {/* My Tasks */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">

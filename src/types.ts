@@ -428,6 +428,8 @@ export interface AppState {
   phases?: Phase[];
   processes?: Process[];
   aiReportSchedule?: string;
+  /** Щоденний ШІ-звіт у Telegram. Лише true вмикає його; за замовчуванням вимкнено. */
+  aiReportEnabled?: boolean;
   announcements?: ScheduledAnnouncement[];
   taskAutomations?: TaskAutomation[];
   personalNotifications?: PersonalNotificationSettings;

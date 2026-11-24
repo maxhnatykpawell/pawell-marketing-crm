@@ -44,6 +44,12 @@ export default function BoardList({ list, filterAssigneeId, filterTagId, filterO
       if (title === list.title) delete next[list.id]; else next[list.id] = title;
       updateProject(project.id, { listTitles: next });
     } else {
+      // Перейменування на загальній дошці не має зачіпати проєкти: тим, хто ще не має власної
+      // назви цієї колонки, спершу фіксуємо теперішню, і лише потім міняємо назву на дошці
+      (state.projects || []).forEach(p => {
+        if (p.listTitles?.[list.id]?.trim()) return;
+        updateProject(p.id, { listTitles: { ...(p.listTitles || {}), [list.id]: list.title } });
+      });
       updateList(list.id, { title });
     }
   };

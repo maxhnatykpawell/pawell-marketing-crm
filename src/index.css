@@ -135,3 +135,27 @@
     page: report-landscape;
   }
 }
+
+/*
+ * ── Мобільна версія ─────────────────────────────────────────────────────────
+ * iOS Safari масштабує сторінку при фокусі на полі зі шрифтом менше 16px — це
+ * збиває верстку й дратує. На телефоні всі поля вводу мають 16px.
+ */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+/* Відступи від «чолки» та жестової смужки (працюють завдяки viewport-fit=cover) */
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pt-safe { padding-top: env(safe-area-inset-top); }
+
+/* Мобільна оболонка: без «гумового» відскоку всієї сторінки, без сірого спалаху при дотику */
+.mobile-shell {
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation; /* прибирає затримку подвійного тапу */
+}
