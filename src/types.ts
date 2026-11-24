@@ -353,6 +353,8 @@ export interface Project {
   activeProcessNodeIds?: string[];
   processEntryDates?: Record<string, string>;
   completedRequirements?: Record<string, boolean>;
+  /** Власний порядок колонок-етапів у цьому проєкті (id колонок). Порожньо — шаблонний порядок дошки. */
+  listOrder?: string[];
 }
 
 export interface ProcessRequirement {

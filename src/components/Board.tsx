@@ -2,14 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
 import BoardList from './BoardList';
 import CardModal from './CardModal';
-import { Plus, Trash2, DownloadCloud, FolderKanban, Filter, CalendarRange, Target, FileText, Info, ChevronDown, ChevronUp, ExternalLink, Link2, Check } from 'lucide-react';
+import { Plus, Trash2, DownloadCloud, FolderKanban, Filter, CalendarRange, Target, FileText, Info, ChevronDown, ChevronUp, ExternalLink, Link2, Check, RotateCcw } from 'lucide-react';
 import { buildShareLink } from '../lib/deepLink';
+import { applyProjectListOrder, reorderListIds } from '../lib/listOrder';
 import TrelloImportModal from './TrelloImportModal';
 import ProjectAssistant from './ProjectAssistant';
 import { DragDropContext, Droppable, DropResult } from '@hello-pangea/dnd';
 
 export default function Board() {
-  const { state, addList, activeBoardId, setActiveBoardId, activeProjectId, setActiveProjectId, setActiveView, addBoard, deleteBoard, confirmAction, hasEditRights, moveList, moveCard, openCardId, setOpenCardId } = useAppContext();
+  const { state, addList, activeBoardId, setActiveBoardId, activeProjectId, setActiveProjectId, setActiveView, addBoard, deleteBoard, confirmAction, hasEditRights, moveList, moveCard, openCardId, setOpenCardId, updateProject } = useAppContext();
   const [isAddingList, setIsAddingList] = useState(false);
   const [newListTitle, setNewListTitle] = useState('');
   const [isAddingBoard, setIsAddingBoard] = useState(false);
@@ -44,7 +45,10 @@ export default function Board() {
     ? state.lists.filter(l => l.boardId === activeBoardId || (!l.boardId && boards.length > 0 && boards[0].id === activeBoardId)) 
     : state.lists;
 
-  const sortedLists = [...currentBoardLists].sort((a, b) => a.order - b.order);
+  // У проєкті колонки йдуть у його власному порядку (якщо задано), інакше — шаблонному порядку дошки
+  const activeProjectForOrder = activeProjectId ? projects.find(p => p.id === activeProjectId) : undefined;
+  const hasCustomListOrder = !!activeProjectForOrder?.listOrder?.length;
+  const sortedLists = applyProjectListOrder<typeof currentBoardLists[number]>(currentBoardLists,activeProjectForOrder?.listOrder);
 
   const handleAddList = (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,7 +77,12 @@ export default function Board() {
     if (type === 'LIST') {
       const targetList = sortedLists[destination.index];
       if (targetList) {
-        moveList(draggableId, targetList.id);
+        if (activeProjectId) {
+          // Всередині проєкту міняємо порядок лише для нього — шаблон дошки лишається незмінним
+          updateProject(activeProjectId, { listOrder: reorderListIds(sortedLists.map(l => l.id), draggableId, targetList.id) });
+        } else {
+          moveList(draggableId, targetList.id);
+        }
       }
     } else if (type === 'CARD') {
       const toListId = destination.droppableId;
@@ -231,6 +240,18 @@ export default function Board() {
             >
               {linkCopied ? <Check className="w-4 h-4 text-green-600" /> : <Link2 className="w-4 h-4" />}
               {linkCopied ? 'Скопійовано' : 'Посилання'}
+            </button>
+          )}
+
+          {/* Повернення до шаблонного порядку колонок, якщо в проєкті його змінили */}
+          {activeProjectId && hasCustomListOrder && hasEditRights && (
+            <button
+              onClick={() => updateProject(activeProjectId, { listOrder: [] })}
+              title="Власний порядок колонок цього проєкту. Натисніть, щоб повернути шаблонний порядок дошки"
+              className="shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition flex items-center gap-1.5 bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100"
+            >
+              <RotateCcw className="w-4 h-4" />
+              Шаблонний порядок
             </button>
           )}
 
