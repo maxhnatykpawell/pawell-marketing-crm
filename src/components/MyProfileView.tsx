@@ -7,6 +7,7 @@ import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
 import { Card } from '../types';
 import CardModal from './CardModal';
+import MyPlan from './MyPlan';
 import {
   User as UserIcon, Mail, FileText, Clock,
   CheckCircle2, AlertCircle, Lock, Eye, EyeOff, Check,
@@ -289,167 +290,13 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left — Tasks + Content */}
-        <div className={`lg:col-span-2 space-y-6 ${mobile ? 'hidden' : ''}`}>
+        <div className="lg:col-span-2 space-y-6 min-w-0">
 
-          {/* My Tasks */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
-              <h3 className="font-bold text-gray-800 flex items-center gap-2">
-                <Kanban className="w-5 h-5 text-blue-600" />
-                Мої задачі
-                <span className="text-xs bg-blue-100 text-blue-700 font-semibold px-2 py-0.5 rounded-full">{myActiveCards.length}</span>
-                <span className="text-xs bg-yellow-100 text-yellow-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                  <Sparkles className="w-3 h-3" /> {myTotalStoryPoints} SP (місяць)
-                </span>
-                {overdueCount > 0 && (
-                  <span className="text-xs bg-red-100 text-red-700 font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" />{overdueCount} протерміновано
-                  </span>
-                )}
-                {todayCount > 0 && overdueCount === 0 && (
-                  <span className="text-xs bg-amber-100 text-amber-700 font-semibold px-2 py-0.5 rounded-full">{todayCount} сьогодні</span>
-                )}
-              </h3>
-              <button
-                onClick={() => setActiveView('board')}
-                className="flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition"
-              >
-                Усі задачі
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            {myActiveCards.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-14 text-gray-400">
-                <CheckCircle2 className="w-10 h-10 mb-3 text-gray-300" />
-                <p className="text-sm font-medium">Задач немає — відпочивай! 🎉</p>
-              </div>
-            ) : (
-              <div className="flex flex-col">
-                {(() => {
-                  const groups: { title: string, color: string, cards: Card[] }[] = [];
-                  const noProjectCards = sortedCards.filter(c => !c.projectId);
-                  
-                  (state.projects || []).forEach(p => {
-                    const pCards = sortedCards.filter(c => c.projectId === p.id);
-                    if (pCards.length > 0) {
-                      groups.push({ title: p.title, color: p.color, cards: pCards });
-                    }
-                  });
-                  
-                  if (noProjectCards.length > 0) {
-                    groups.push({ title: 'Без проєкту', color: '#9ca3af', cards: noProjectCards });
-                  }
-
-                  return groups.map((group, idx) => (
-                    <div key={group.title} className={idx > 0 ? 'border-t border-gray-100' : ''}>
-                      <div className="px-6 py-2.5 bg-gray-50 flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: group.color }} />
-                        <span className="text-xs font-bold text-gray-600 uppercase tracking-wider">{group.title}</span>
-                        <span className="text-xs text-gray-400 ml-1">({group.cards.length})</span>
-                      </div>
-                      <div className="divide-y divide-gray-50">
-                        {group.cards.map(card => {
-                          const status = getDeadlineStatus(card.deadline, card.isCompleted) || 'ok';
-                          const cfg = deadlineConfig[status];
-                          const tags = getCardTags(card);
-                          const completedSubs = card.subtasks?.filter(s => s.completed).length || 0;
-                          const totalSubs = card.subtasks?.length || 0;
-
-                          return (
-                            <div
-                              key={card.id}
-                              onClick={() => handleOpenCard(card)}
-                              className={`group flex items-start gap-4 px-6 py-4 cursor-pointer transition-all hover:bg-gray-50/80 ${status !== 'ok' ? cfg.bg : ''}`}
-                            >
-                              {/* Status indicator */}
-                              <div className={`w-1 self-stretch rounded-full shrink-0 mt-1 ${status === 'overdue' ? 'bg-red-400' : status === 'today' ? 'bg-amber-400' : status === 'soon' ? 'bg-blue-400' : 'bg-gray-200'}`} />
-
-                              {/* Content */}
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="flex-1 min-w-0">
-                                    {/* Tags */}
-                                    {tags.length > 0 && (
-                                      <div className="flex flex-wrap gap-1 mb-1.5">
-                                        {tags.map(tag => (
-                                          <span key={tag.id} className="text-[10px] font-semibold px-1.5 py-0.5 rounded text-white" style={{ backgroundColor: tag.color }}>
-                                            {tag.name}
-                                          </span>
-                                        ))}
-                                      </div>
-                                    )}
-                                    <p className="text-sm font-semibold text-gray-800 group-hover:text-blue-700 transition-colors leading-snug">
-                                      {card.title}
-                                    </p>
-                                    <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-                                      {/* List name */}
-                                      <span className="text-xs text-gray-400 flex items-center gap-1">
-                                        <ChevronRight className="w-3 h-3" />
-                                        {getListTitle(card.listId)}
-                                      </span>
-                                      {/* Subtasks */}
-                                      {totalSubs > 0 && (
-                                        <span className={`text-xs flex items-center gap-1 ${completedSubs === totalSubs ? 'text-green-600' : 'text-gray-400'}`}>
-                                          <CheckSquare className="w-3 h-3" />
-                                          {completedSubs}/{totalSubs}
-                                        </span>
-                                      )}
-                                      {/* Comments */}
-                                      {(card.comments?.length || 0) > 0 && (
-                                        <span className="text-xs text-gray-400 flex items-center gap-1">
-                                          <MessageSquare className="w-3 h-3" />
-                                          {card.comments.length}
-                                        </span>
-                                      )}
-                                      {/* Attachments */}
-                                      {(card.attachments?.length || 0) > 0 && (
-                                        <span className="text-xs text-gray-400 flex items-center gap-1">
-                                          <Paperclip className="w-3 h-3" />
-                                          {card.attachments.length}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  {/* Right side: deadline + actions */}
-                                  <div className="flex flex-col items-end gap-2 shrink-0">
-                                    {card.deadline && (
-                                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1 ${cfg.badge}`}>
-                                        <Clock className="w-3 h-3" />
-                                        {status === 'overdue' ? 'Прострочено ' : ''}
-                                        {format(new Date(card.deadline), 'd MMM', { locale: uk })}
-                                      </span>
-                                    )}
-                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                      <button
-                                        onClick={e => { e.stopPropagation(); handleGoToBoard(card); }}
-                                        className="text-[11px] text-blue-600 hover:text-blue-800 font-medium flex items-center gap-0.5 hover:underline"
-                                        title="Відкрити на дошці"
-                                      >
-                                        На дошку
-                                        <ArrowRight className="w-3 h-3" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Arrow */}
-                              <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-blue-500 transition-colors shrink-0 mt-1" />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ));
-                })()}
-              </div>
-            )}
-          </div>
+          {/* Персональний план: задачі й підзавдання за термінами */}
+          <MyPlan onOpenCard={handleOpenCard} storyPoints={myTotalStoryPoints} />
 
           {/* My Content */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className={`bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden ${mobile ? 'hidden' : ''}`}>
             <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
               <h3 className="font-bold text-gray-800 flex items-center gap-2">
                 <FileText className="w-5 h-5 text-indigo-600" />

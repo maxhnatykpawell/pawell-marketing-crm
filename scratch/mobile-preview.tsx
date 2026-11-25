@@ -50,13 +50,13 @@ const mk = (id: string, listId: string, title: string, deadline: string | null, 
 });
 
 const initialCards = [
-  mk('c1', 'l3', 'Розробити систему створення етикеток для базових продуктів компанії Pawell', iso(-3), { subtasks: [{ id: 's1', title: 'Макет', completed: true }, { id: 's2', title: 'Друк', completed: false }], comments: [{ id: 'm1' }], projectId: 'p2' }),
-  mk('c2', 'l3', 'Подарунки для команди', iso(0), { subtasks: [{ id: 's3', title: 'Список', completed: true }, { id: 's4', title: 'Замовити', completed: false }, { id: 's5', title: 'Упакувати', completed: false }] }),
+  mk('c1', 'l3', 'Розробити систему створення етикеток для базових продуктів компанії Pawell', iso(-3), { subtasks: [{ id: 's1', title: 'Макет', completed: true }, { id: 's2', title: 'Друк', completed: false, assigneeId: 'u1', deadline: iso(0) }], comments: [{ id: 'm1' }], projectId: 'p2' }),
+  mk('c2', 'l3', 'Подарунки для команди', iso(0), { subtasks: [{ id: 's3', title: 'Список', completed: true }, { id: 's4', title: 'Замовити', completed: false, assigneeId: 'u1' }, { id: 's5', title: 'Упакувати', completed: false }] }),
   mk('c3', 'l2', 'Зареєструвати Василину на вебінар «Ринок праці Defense Tech 2026»', iso(0)),
   mk('c4', 'l2', 'Отримати відповідь по гранту', iso(1), { projectId: 'p1' }),
   mk('c5', 'l1', 'Передати в оплату членство в IRON', iso(4)),
   mk('c6', 'l1', 'Додати етикетки нові', null),
-  mk('c7', 'l3', 'Написати до Kill house та запропонувати пропелери', iso(12), { assigneeId: 'u2', projectId: 'p1' }),
+  mk('c7', 'l3', 'Написати до Kill house та запропонувати пропелери', iso(12), { assigneeId: 'u2', projectId: 'p1', subtasks: [{ id: 's9', title: 'Підготувати комерційну пропозицію', completed: false, assigneeId: 'u1', deadline: iso(2) }, { id: 's10', title: 'Узгодити ціни', completed: false, assigneeId: 'u1' }] }),
   mk('c8', 'l4', 'Надрукувати наліпки по Паверблок', iso(-6), { isCompleted: true }),
   mk('c9', 'l2', 'Підготувати презентацію для Японії', iso(2), { assigneeId: 'u3' }),
 ];
