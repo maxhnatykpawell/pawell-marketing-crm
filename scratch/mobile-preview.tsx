@@ -15,6 +15,7 @@ import { createRoot } from 'react-dom/client';
 import '../src/index.css';
 import { AppContext } from '../src/App';
 import MobileShell from '../src/components/mobile/MobileShell';
+import MyProfileView from '../src/components/MyProfileView';
 
 const iso = (offsetDays: number) => {
   const d = new Date();
@@ -83,7 +84,14 @@ function Preview() {
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const state: any = useMemo(() => ({
-    users, boards, lists, projects, cards, tags: [], notifications: notifs, events: [], contentPlans: [], userGroups: [],
+    users, boards, lists, projects, cards, tags: [], notifications: notifs, userGroups: [],
+    events: [
+      { id: 'e1', title: 'Виставка Enforce Tac', description: '', startDate: iso(3), endDate: iso(5), assigneeIds: ['u1'], websiteUrl: '', location: 'Нюрнберг' },
+      { id: 'e2', title: 'Зустріч із дистриб’ютором', description: '', startDate: iso(0), endDate: iso(0), assigneeIds: ['u1'], websiteUrl: '' },
+    ],
+    contentPlans: [
+      { id: 'k1', focus: 'Пост про новий мерч', channel: 'Instagram', description: '', assigneeId: 'u1', status: 'В роботі', publishDate: iso(2), engagement: '' },
+    ],
   }), [cards, notifs]);
 
   const base: any = {
@@ -109,6 +117,15 @@ function Preview() {
     openConversation: setActiveId, loadOlder: async () => {}, send: async () => {}, edit: async () => {}, remove: async () => {},
     createChannel: async () => 'cv1', openDm: async () => 'cv2', reload: async () => {},
   };
+
+  // ?profile — десктопний кабінет (для перевірки розкладки)
+  if (location.search.includes('profile')) {
+    return (
+      <AppContext.Provider value={ctx}>
+        <div className="p-6 bg-slate-50 min-h-screen"><MyProfileView /></div>
+      </AppContext.Provider>
+    );
+  }
 
   return (
     <AppContext.Provider value={ctx}>

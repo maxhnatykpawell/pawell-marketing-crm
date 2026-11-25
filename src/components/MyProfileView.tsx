@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAppContext } from '../App';
-import { changePassword } from '../api';
-import { uploadFile } from '../api';
+import { changePassword, uploadFile } from '../api';
 import { createPortal } from 'react-dom';
 import { format } from 'date-fns';
 import { uk } from 'date-fns/locale';
@@ -9,11 +8,7 @@ import { Card } from '../types';
 import CardModal from './CardModal';
 import MyPlan from './MyPlan';
 import {
-  User as UserIcon, Mail, FileText, Clock,
-  CheckCircle2, AlertCircle, Lock, Eye, EyeOff, Check,
-  LogOut, Calendar, Edit2, ArrowRight, Kanban,
-  ChevronRight, Tag, CheckSquare, MessageSquare, Paperclip,
-  Settings, Sparkles, Camera, X
+  Mail, FileText, CheckCircle2, AlertCircle, Lock, Eye, EyeOff, Check, LogOut, Calendar, Edit2, ArrowRight, Settings, Camera, X,
 } from 'lucide-react';
 
 /**
@@ -71,6 +66,16 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
 
   const now = new Date();
   now.setHours(0, 0, 0, 0);
+
+  // Підзавдання, призначені на мене й ще не виконані (у невиконаних задачах)
+  const mySubtaskCount = state.cards.reduce(
+    (n, c) => (c.isCompleted ? n : n + (c.subtasks || []).filter(s => s.assigneeId === currentUser?.userId && !s.completed).length),
+    0,
+  );
+  // Події, що ще не закінчились, найближчі першими
+  const upcomingEvents = myEvents
+    .filter(e => new Date(e.endDate || e.startDate).getTime() >= now.getTime())
+    .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
 
   const isThisMonth = (dateString: string | null) => {
     if (!dateString) return false;
@@ -179,18 +184,18 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
     <div className="w-full max-w-5xl mx-auto space-y-6 pb-8">
       {/* Profile Hero */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="h-28 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 relative">
+        <div className="h-20 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 relative">
           <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, rgba(255,255,255,0.4) 0%, transparent 60%)' }} />
         </div>
         <div className="px-4 sm:px-8 pb-6">
-          <div className="flex items-end justify-between -mt-12 mb-4">
+          <div className="flex items-end justify-between -mt-10 mb-3">
             <div className="relative group/avatar">
               {avatarUploading ? (
-                <div className="w-24 h-24 rounded-2xl border-4 border-white shadow-lg bg-gray-100 flex items-center justify-center">
+                <div className="w-20 h-20 rounded-2xl border-4 border-white shadow-lg bg-gray-100 flex items-center justify-center">
                   <div className="w-6 h-6 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin" />
                 </div>
               ) : (
-                <img src={user.avatar} alt={user.name} className="w-24 h-24 rounded-2xl border-4 border-white shadow-lg object-cover" />
+                <img src={user.avatar} alt={user.name} className="w-20 h-20 rounded-2xl border-4 border-white shadow-lg object-cover" />
               )}
               <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-green-400 border-2 border-white" title="Онлайн" />
               {/* Upload overlay */}
@@ -263,6 +268,7 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
               )}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${roleColor}`}>{roleLabel}</span>
+                {user.role && <span className="text-sm font-semibold text-gray-700">{user.role}</span>}
                 <div className="flex items-center gap-1.5 text-sm text-gray-500 min-w-0 break-all">
                   <Mail className="w-3.5 h-3.5" />
                   {currentUser.email}
@@ -271,108 +277,121 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
             </div>
 
             {/* Stats */}
-            <div className="flex gap-6 text-center justify-around md:justify-start pt-3 md:pt-0 border-t border-gray-100 md:border-0">
+            <dl className="grid grid-cols-3 md:flex gap-2 pt-3 md:pt-0 border-t border-gray-100 md:border-0">
               {[
-                { label: 'Задачі', value: myActiveCards.length, icon: Kanban, color: 'text-blue-600' },
-                { label: 'Контент', value: myContent.length, icon: FileText, color: 'text-indigo-600' },
-                { label: 'Події', value: myEvents.length, icon: Calendar, color: 'text-purple-600' },
+                { label: 'Задачі', value: myActiveCards.length },
+                { label: 'Підзавдання', value: mySubtaskCount },
+                { label: 'Події попереду', value: upcomingEvents.length },
               ].map(stat => (
-                <div key={stat.label} className="flex flex-col items-center">
-                  <stat.icon className={`w-5 h-5 mb-1 ${stat.color}`} />
-                  <span className="text-2xl font-bold text-gray-900">{stat.value}</span>
-                  <span className="text-xs text-gray-500">{stat.label}</span>
+                <div key={stat.label} className="md:min-w-[104px] rounded-xl bg-gray-50 border border-gray-100 px-3 py-2">
+                  <dd className="text-2xl font-bold text-gray-900 tabular-nums leading-none">{stat.value}</dd>
+                  <dt className="text-xs text-gray-500 mt-1">{stat.label}</dt>
                 </div>
               ))}
-            </div>
+            </dl>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left — Tasks + Content */}
-        <div className="lg:col-span-2 space-y-6 min-w-0">
-
-          {/* Персональний план: задачі й підзавдання за термінами */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        {/* Ліворуч — головне: персональний план */}
+        <div className="lg:col-span-2 min-w-0">
           <MyPlan onOpenCard={handleOpenCard} storyPoints={myTotalStoryPoints} />
+        </div>
 
-          {/* My Content */}
-          <div className={`bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden ${mobile ? 'hidden' : ''}`}>
-            <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
-              <h3 className="font-bold text-gray-800 flex items-center gap-2">
-                <FileText className="w-5 h-5 text-indigo-600" />
-                Мій контент-план
-                <span className="text-xs bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">{myContent.length}</span>
+        {/* Праворуч — що ще попереду: події й контент. На телефоні цих розділів немає. */}
+        <aside className={`space-y-6 min-w-0 lg:sticky lg:top-4 ${mobile ? 'hidden' : ''}`}>
+          <section aria-labelledby="my-events-title" className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between gap-2">
+              <h3 id="my-events-title" className="font-bold text-gray-800 text-sm flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-purple-600" />
+                Найближчі події
+                {upcomingEvents.length > 0 && (
+                  <span className="text-xs bg-purple-100 text-purple-700 font-semibold px-2 py-0.5 rounded-full tabular-nums">{upcomingEvents.length}</span>
+                )}
               </h3>
-              {myContent.length > 0 && (
-                <button
-                  onClick={() => setActiveView('content')}
-                  className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition"
-                >
-                  Контент-план <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              )}
+              <button
+                onClick={() => setActiveView('events')}
+                className="flex items-center gap-1 text-xs font-medium text-purple-600 hover:text-purple-800 hover:bg-purple-50 px-2 py-1 rounded-lg transition"
+              >
+                Усі <ArrowRight className="w-3 h-3" />
+              </button>
+            </div>
+            {upcomingEvents.length === 0 ? (
+              <p className="px-5 py-8 text-sm text-center text-gray-400">Найближчих подій на вас немає</p>
+            ) : (
+              <ul className="divide-y divide-gray-50">
+                {upcomingEvents.slice(0, 5).map(ev => {
+                  const start = new Date(ev.startDate);
+                  const end = new Date(ev.endDate || ev.startDate);
+                  const ongoing = start.getTime() <= now.getTime() + 86399000 && end.getTime() >= now.getTime();
+                  const sameDay = start.toDateString() === end.toDateString();
+                  return (
+                    <li key={ev.id}>
+                      <button
+                        onClick={() => setActiveView('events')}
+                        className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-gray-50/80 transition"
+                      >
+                        <span className="w-11 shrink-0 rounded-lg bg-purple-50 text-purple-700 text-center py-1 leading-none">
+                          <span className="block text-base font-bold tabular-nums">{format(start, 'd')}</span>
+                          <span className="block text-[10px] font-semibold uppercase mt-0.5">{format(start, 'MMM', { locale: uk })}</span>
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-semibold text-gray-800 truncate">{ev.title}</span>
+                          <span className="block text-xs text-gray-500 truncate">
+                            {ongoing && <span className="text-green-600 font-semibold">Триває · </span>}
+                            {sameDay ? format(start, 'd MMMM', { locale: uk }) : `${format(start, 'd MMM', { locale: uk })} – ${format(end, 'd MMM', { locale: uk })}`}
+                            {ev.location ? ` · ${ev.location}` : ''}
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+
+          <section aria-labelledby="my-content-title" className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between gap-2">
+              <h3 id="my-content-title" className="font-bold text-gray-800 text-sm flex items-center gap-2">
+                <FileText className="w-4 h-4 text-indigo-600" />
+                Мій контент-план
+                {myContent.length > 0 && (
+                  <span className="text-xs bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full tabular-nums">{myContent.length}</span>
+                )}
+              </h3>
+              <button
+                onClick={() => setActiveView('content')}
+                className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-2 py-1 rounded-lg transition"
+              >
+                Усі <ArrowRight className="w-3 h-3" />
+              </button>
             </div>
             {myContent.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-10 text-gray-400">
-                <FileText className="w-8 h-8 mb-2 text-gray-300" />
-                <p className="text-sm">Контенту немає</p>
-              </div>
+              <p className="px-5 py-8 text-sm text-center text-gray-400">Контенту на вас немає</p>
             ) : (
-              <div className="divide-y divide-gray-50">
-                {myContent.slice(0, 8).map(item => (
-                  <div
-                    key={item.id}
-                    onClick={() => setActiveView('content')}
-                    className="px-6 py-3 flex items-center justify-between hover:bg-gray-50/70 transition cursor-pointer group"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-gray-800 group-hover:text-indigo-700 transition-colors truncate">{item.focus || item.description || 'Без назви'}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{item.channel}</p>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0 ml-4">
-                      <span className="text-xs bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full font-medium">{item.status}</span>
-                      {item.publishDate && (
-                        <span className="text-xs text-gray-400">{format(new Date(item.publishDate), 'd MMM', { locale: uk })}</span>
-                      )}
-                      <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-indigo-400 transition-colors" />
-                    </div>
-                  </div>
+              <ul className="divide-y divide-gray-50">
+                {myContent.slice(0, 5).map(item => (
+                  <li key={item.id}>
+                    <button
+                      onClick={() => setActiveView('content')}
+                      className="group w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-gray-50/80 transition"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-semibold text-gray-800 group-hover:text-indigo-700 truncate">{item.focus || item.description || 'Без назви'}</span>
+                        <span className="block text-xs text-gray-500 truncate">
+                          {item.channel}{item.publishDate ? ` · ${format(new Date(item.publishDate), 'd MMM', { locale: uk })}` : ''}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">{item.status}</span>
+                    </button>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
-          </div>
-        </div>
-
-        {/* Right — Password + Info */}
-        <div className="space-y-6">
-          {/* Profile info */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
-            <h3 className="font-bold text-gray-800 flex items-center gap-2 text-sm mb-4">
-              <UserIcon className="w-4 h-4 text-gray-500" />
-              Інформація
-            </h3>
-            <div className="space-y-3 text-sm">
-              <div className="flex justify-between">
-                <span className="text-gray-500">Ім'я</span>
-                <span className="font-semibold text-gray-800">{user.name}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">Email</span>
-                <span className="font-semibold text-gray-800 truncate ml-4 max-w-[160px] text-right">{currentUser.email}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">Роль</span>
-                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${roleColor}`}>{roleLabel}</span>
-              </div>
-              {user.role && (
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Посада</span>
-                  <span className="font-semibold text-gray-800">{user.role}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+          </section>
+        </aside>
       </div>
 
       {isSettingsOpen && createPortal(
