@@ -54,6 +54,7 @@ import { registerChatRoutes, chatStreamStats } from './chat-server';
 import { registerPushRoutes, sendPushToUsers } from './push-server';
 import { parseMentions } from './src/lib/mentions';
 import { previewOf } from './src/lib/chat';
+import { pluralUk, daysWord, tasksWord } from './src/lib/plural';
 import { accessibleCards, scopeStateToUser, canAccessProject } from './src/lib/projectAccess';
 import { randomUUID, timingSafeEqual } from 'crypto';
 import { findIdleProjects, lastTouchedAt } from './src/lib/projectIdle';
@@ -724,6 +725,14 @@ function setupAnnouncementCrons(announcements: AnnouncementRecord[]) {
       const task = cron.schedule(cronExpr, async () => {
         console.log(`📣 Sending announcement "${ann.label}"...`);
         await sendAnnouncementToTelegram(ann.text);
+        // Те саме оголошення — на пристрої команди (без розмітки Markdown)
+        const st = await getDb();
+        void sendPushToUsers((st.users || []).map((u: any) => u.id), {
+          title: 'Оголошення',
+          body: previewOf(String(ann.text).replace(/[*_`]/g, ''), 160),
+          url: '/',
+          tag: 'ann-' + ann.id,
+        });
       }, { timezone: 'Europe/Kyiv' });
       announcementCronTasks.set(ann.id, task);
       console.log(`📣 Announcement cron "${ann.label}" scheduled: ${cronExpr}`);
@@ -794,11 +803,24 @@ async function saveNotificationItem(item: {
     await saveDb(state);
   }
   // Те саме сповіщення — на пристрій людини (не чекаємо й не падаємо, якщо пуш не вдався)
+  pushNotificationItem(item);
+}
+
+/**
+ * Те саме сповіщення, що лягло в дзвіночок, — на пристрої людини.
+ * actorId: хто його створив; собі нічого не шлемо (браузер і так це не створює, але перестрахуємось).
+ */
+function pushNotificationItem(
+  item: { id?: string; userId?: string; title?: string; message?: string; cardId?: string; link?: string; read?: boolean },
+  actorId?: string,
+): void {
+  if (!item?.userId || item.read) return;
+  if (actorId && item.userId === actorId) return;
   void sendPushToUsers([item.userId], {
-    title: item.title,
-    body: item.message,
+    title: item.title || 'PAWELL',
+    body: item.message || '',
     url: item.link || (item.cardId ? '/?card=' + item.cardId : '/'),
-    tag: 'notif-' + item.id,
+    tag: item.id ? 'notif-' + item.id : undefined,
   });
 }
 
@@ -919,10 +941,10 @@ async function sendDailyPersonalDigests(state: any): Promise<void> {
   const headerTpl = templates.dailyDigestHeader || DEFAULT_NOTIFICATION_TEMPLATES.dailyDigestHeader;
   const itemTpl = templates.dailyDigestItem || DEFAULT_NOTIFICATION_TEMPLATES.dailyDigestItem;
 
-  const usersWithTelegram = (state.users || []).filter((u: any) => u.telegramChatId);
+  const digestUsers: any[] = state.users || [];
   const roles = await authRoles();
 
-  for (const user of usersWithTelegram) {
+  for (const user of digestUsers) {
     // Дайджест показує рівно те, що людина побачила б у застосунку
     const visible = accessibleCards(allCards, state.projects || [], { userId: user.id, role: roles.get(user.id) });
     const userCards = visible.filter((c: any) => c.assigneeId === user.id);
@@ -948,6 +970,18 @@ async function sendDailyPersonalDigests(state: any): Promise<void> {
       });
     }
 
+    const bits: string[] = [];
+    if (todayCards.length > 0) bits.push(`на сьогодні ${todayCards.length} ${tasksWord(todayCards.length)}`);
+    if (overdueCards.length > 0) bits.push(`прострочено ${overdueCards.length}`);
+    const pushBody = bits.join(', ');
+    void sendPushToUsers([user.id], {
+      title: 'План на сьогодні',
+      body: pushBody.charAt(0).toUpperCase() + pushBody.slice(1),
+      url: '/?view=profile',
+      tag: 'digest',
+    });
+
+    if (!user.telegramChatId) continue;
     if (msg.length > 4000) msg = msg.substring(0, 4000) + '\n...';
     await sendPersonalTelegramMessage(user.telegramChatId, msg);
     console.log(`📨 Daily digest sent to ${user.name}`);
@@ -972,9 +1006,11 @@ async function sendOverduePersonalNotifications(state: any): Promise<void> {
 
   const roles = await authRoles();
 
+  const overdueByUser = new Map<string, { title: string; daysOverdue: number }[]>();
+
   for (const card of overdueCards) {
     const assignee = (state.users || []).find((u: any) => u.id === card.assigneeId);
-    if (!assignee?.telegramChatId) continue;
+    if (!assignee) continue;
     // Прострочена задача з закритого проєкту мовчить: людина все одно не має
     // куди по ній піти
     const seesCard = accessibleCards([card], state.projects || [], {
@@ -992,8 +1028,25 @@ async function sendOverduePersonalNotifications(state: any): Promise<void> {
       daysOverdue: String(daysOverdue),
     });
 
+    const mine = overdueByUser.get(assignee.id) ?? [];
+    mine.push({ title: card.title, daysOverdue });
+    overdueByUser.set(assignee.id, mine);
+
+    if (!assignee.telegramChatId) continue;
     await sendPersonalTelegramMessage(assignee.telegramChatId, text);
     console.log(`📨 Overdue notification sent to ${assignee.name} for task "${card.title}"`);
+  }
+
+  // Пуш — один на людину, а не на кожну задачу: інакше телефон дзвенів би десять разів поспіль
+  for (const [userId, items] of overdueByUser) {
+    void sendPushToUsers([userId], {
+      title: 'Прострочені задачі',
+      body: items.length === 1
+        ? `«${items[0].title}»: прострочено на ${items[0].daysOverdue} ${daysWord(items[0].daysOverdue)}`
+        : `У вас ${items.length} ${pluralUk(items.length, 'прострочена задача', 'прострочені задачі', 'прострочених задач')}`,
+      url: '/?view=profile',
+      tag: 'overdue',
+    });
   }
 }
 
@@ -1028,11 +1081,12 @@ async function createServerNotification(notification: any): Promise<void> {
   const db = initFirebase();
   if (db) {
     await db.collection('crm_notifications').doc(notification.id).set(notification);
-    return;
+  } else {
+    const state = await getDb();
+    state.notifications = [...(state.notifications || []), notification];
+    await saveDb(state);
   }
-  const state = await getDb();
-  state.notifications = [...(state.notifications || []), notification];
-  await saveDb(state);
+  pushNotificationItem(notification);
 }
 
 /**
@@ -1269,6 +1323,13 @@ async function runTaskAutomation(
       cardId: card.id,
       read: false,
       createdAt: nowIso,
+    });
+    pushNotificationItem({
+      id: randomUUID(),
+      userId: card.assigneeId,
+      title: 'Повторювана задача',
+      message: `Створено за розкладом: "${card.title}"`,
+      cardId: card.id,
     });
     await notifyCardAssigned(state, card.id, card.assigneeId);
   }
@@ -3832,6 +3893,8 @@ Reply ONLY with a number representing the estimated minutes. Do not include any 
       }
       await updateLastModified();
       res.json({ success: true });
+      // Призначення задачі й підзадачі браузер оформлює саме як сповіщення: шлемо його й на пристрій
+      if (type === 'notifications') pushNotificationItem(data, (req as any).user?.userId);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
