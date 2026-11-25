@@ -8,6 +8,7 @@ import MyProfileView from '../MyProfileView';
 import CardModal from '../CardModal';
 import MobileTasks from './MobileTasks';
 import { setUiMode } from '../../hooks/useIsMobile';
+import { PushPrompt } from '../PushSettings';
 
 type Tab = 'tasks' | 'chat' | 'profile';
 
@@ -76,6 +77,8 @@ export default function MobileShell({ chat, notifications, unreadCount, isOfflin
           </div>
         </div>
       </header>
+
+      <PushPrompt />
 
       {/* Екран. Чат сам керує прокруткою (стрічка + поле вводу), решта прокручується тут */}
       <main className={`flex-1 min-h-0 ${tab === 'chat' ? 'flex flex-col' : 'overflow-y-auto'}`}>

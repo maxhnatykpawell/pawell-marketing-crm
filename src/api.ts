@@ -864,3 +864,40 @@ export const getChatStreamTicket = async (): Promise<string> => {
   if (!res.ok) throw new Error('Не вдалось підключитись до чату');
   return (await res.json()).ticket;
 };
+
+// ── Пуш-сповіщення ────────────────────────────────────────────────────────────
+
+export const getPushKey = async (): Promise<{ enabled: boolean; publicKey: string | null }> => {
+  const res = await fetch('/api/push/key', { headers: authHeaders() });
+  if (!res.ok) return { enabled: false, publicKey: null };
+  return res.json();
+};
+
+export const savePushSubscription = async (subscription: PushSubscriptionJSON): Promise<void> => {
+  const res = await fetch('/api/push/subscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ subscription }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Не вдалося зберегти підписку');
+  }
+};
+
+export const removePushSubscription = async (endpoint: string): Promise<void> => {
+  await fetch('/api/push/unsubscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ endpoint }),
+  });
+};
+
+export const sendTestPush = async (): Promise<number> => {
+  const res = await fetch('/api/push/test', { method: 'POST', headers: authHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Не вдалося надіслати');
+  }
+  return (await res.json()).delivered ?? 0;
+};

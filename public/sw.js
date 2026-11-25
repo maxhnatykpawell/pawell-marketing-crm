@@ -59,3 +59,53 @@ self.addEventListener('fetch', (event) => {
     );
   }
 });
+
+/*
+ * Пуш-сповіщення (Web Push).
+ *
+ * Якщо застосунок зараз відкритий і людина його бачить, системне сповіщення
+ * зайве: повідомлення вже з'явилось у самому чаті. Показуємо його, лише коли
+ * жодне вікно не видно (згорнуто, інша вкладка, екран заблоковано, застосунок закрито).
+ * tag замінює попереднє сповіщення з тим самим tag, тож серія повідомлень з одного
+ * чату не перетворюється на стос.
+ */
+self.addEventListener('push', (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch { data = { body: event.data ? event.data.text() : '' }; }
+
+  const title = data.title || 'PAWELL';
+  const options = {
+    body: data.body || '',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    tag: data.tag,
+    renotify: !!data.tag,
+    data: { url: data.url || '/' },
+  };
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((wins) => {
+      const seen = wins.some((w) => w.visibilityState === 'visible');
+      if (seen) return;
+      return self.registration.showNotification(title, options);
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = new URL((event.notification.data && event.notification.data.url) || '/', self.location.origin).href;
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (wins) => {
+      const existing = wins.find((w) => new URL(w.url).origin === self.location.origin);
+      if (existing) {
+        await existing.focus();
+        // Перехід на потрібний розділ: застосунок читає його з адреси
+        if ('navigate' in existing) { try { await existing.navigate(target); } catch { /* лишаємось де були */ } }
+        return;
+      }
+      return self.clients.openWindow(target);
+    }),
+  );
+});

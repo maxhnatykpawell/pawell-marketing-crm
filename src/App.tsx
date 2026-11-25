@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
+import { resyncPush } from './lib/pushClient';
 import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Project, Phase, Process, UserGroup, AccessRights, NotificationItem, Expense } from './types';
 import { fetchState, syncState, getMe, estimateTaskTime, createEntity, updateEntity, deleteEntity, processOfflineQueue, sendCardAssignedNotification } from './api';
 import { v4 as uuidv4 } from 'uuid';
@@ -951,6 +952,9 @@ export default function App() {
    * currentUser порожній.
    */
   const chat = useChat(currentUser?.userId ?? null);
+
+  // Після входу закріплюємо пуш-підписку цього пристрою за поточним користувачем (дозвіл не питаємо)
+  useEffect(() => { if (currentUser?.userId) void resyncPush(); }, [currentUser?.userId]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 

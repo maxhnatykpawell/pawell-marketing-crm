@@ -8,6 +8,7 @@ import { Card } from '../types';
 import CardModal from './CardModal';
 import MyPlan from './MyPlan';
 import DotFlowBanner from './DotFlowBanner';
+import PushSettings from './PushSettings';
 import {
   Mail, FileText, CheckCircle2, AlertCircle, Lock, Eye, EyeOff, Check, LogOut, Calendar, Edit2, ArrowRight, Settings, Camera, X,
 } from 'lucide-react';
@@ -417,6 +418,7 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
                 <X className="w-5 h-5" />
               </button>
             </div>
+            <PushSettings />
             <div className="px-5 pt-4">
               <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
                 <Lock className="w-4 h-4 text-gray-500" />

@@ -37,6 +37,7 @@ import {
   sortConversations,
 } from './src/lib/chat';
 import type { ChatConversation, ChatMessage } from './src/types';
+import { chatPushTargets, chatPushPayload, type PushPayload } from './src/lib/push';
 
 // ── Залежності, які дає server.ts ─────────────────────────────────────────────
 
@@ -53,8 +54,10 @@ export interface ChatDeps {
   sendTelegram: (chatId: string, text: string) => Promise<{ success: boolean; error?: string }>;
   /** Створити сповіщення в дзвіночку (той самий механізм, що й для задач) */
   saveNotification: (item: {
-    id: string; userId: string; title: string; message: string; read: boolean; createdAt: string;
+    id: string; userId: string; title: string; message: string; link?: string; read: boolean; createdAt: string;
   }) => Promise<void>;
+  /** Надіслати пуш на пристрої людей (необов'язково: без ключів нічого не робить) */
+  pushToUsers?: (userIds: string[], payload: PushPayload) => Promise<number>;
   /** Куди складати локальний файл, коли Firestore не налаштований */
   localDir: string;
 }
@@ -536,6 +539,24 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
         console.error('[chat] mention notify failed:', err),
       );
 
+      // Пуш про нове повідомлення всім учасникам, крім автора. Згаданих тут нема:
+      // вони отримують власне сповіщення про згадку (через saveNotification).
+      if (deps.pushToUsers) {
+        const targets = chatPushTargets({
+          recipients: recipientsOf(conv),
+          allUserIds: users.map(u => u.id),
+          authorId: author.userId,
+          mentioned: (msg.mentions ?? []).filter(id => canAccess(conv, id)),
+        });
+        void deps.pushToUsers(targets, chatPushPayload({
+          conversationId: conv.id,
+          kind: conv.kind === 'dm' ? 'dm' : 'channel',
+          channelTitle: conv.title,
+          authorName,
+          text: body,
+        }));
+      }
+
       res.json({ message: msg });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -663,6 +684,7 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
         userId,
         title: `${author.name} згадав(ла) вас у чаті`,
         message: previewOf(msg.text, 140),
+        link: '/?view=chat',
         read: false,
         createdAt: new Date().toISOString(),
       });

@@ -51,6 +51,7 @@ import {
   isFetchableUrl, isPrivateAddress, titleFromHtml, TITLE_FETCH_LIMIT,
 } from './src/lib/linkTitle';
 import { registerChatRoutes, chatStreamStats } from './chat-server';
+import { registerPushRoutes, sendPushToUsers } from './push-server';
 import { parseMentions } from './src/lib/mentions';
 import { previewOf } from './src/lib/chat';
 import { accessibleCards, scopeStateToUser, canAccessProject } from './src/lib/projectAccess';
@@ -787,11 +788,18 @@ async function saveNotificationItem(item: {
     // Дзвіночок живе в загальному стані — його оновлення клієнт побачить
     // звичайним шляхом, і саме тут це доречно
     await updateLastModified();
-    return;
+  } else {
+    const state = await getDb();
+    state.notifications = [...(state.notifications || []), item];
+    await saveDb(state);
   }
-  const state = await getDb();
-  state.notifications = [...(state.notifications || []), item];
-  await saveDb(state);
+  // Те саме сповіщення — на пристрій людини (не чекаємо й не падаємо, якщо пуш не вдався)
+  void sendPushToUsers([item.userId], {
+    title: item.title,
+    body: item.message,
+    url: item.link || (item.cardId ? '/?card=' + item.cardId : '/'),
+    tag: 'notif-' + item.id,
+  });
 }
 
 async function notifyCardAssigned(state: any, cardId: string, assigneeId: string): Promise<void> {
@@ -3899,6 +3907,8 @@ Reply ONLY with a number representing the estimated minutes. Do not include any 
    * інакше кожне повідомлення змушувало б усі відкриті вкладки перетягувати весь
    * стан застосунку. Він має власні колекції і власний канал доставки (SSE).
    */
+  registerPushRoutes(app, { requireAuth, getFirestore: initFirebase, localDir: DATA_DIR });
+
   registerChatRoutes(app, {
     requireAuth,
     getFirestore: initFirebase,
@@ -3912,6 +3922,7 @@ Reply ONLY with a number representing the estimated minutes. Do not include any 
     },
     sendTelegram: sendPersonalTelegramMessage,
     saveNotification: saveNotificationItem,
+    pushToUsers: sendPushToUsers,
     localDir: DATA_DIR,
   });
 
