@@ -7,6 +7,7 @@ import { uk } from 'date-fns/locale';
 import { Card } from '../types';
 import CardModal from './CardModal';
 import MyPlan from './MyPlan';
+import DotFlowBanner from './DotFlowBanner';
 import {
   Mail, FileText, CheckCircle2, AlertCircle, Lock, Eye, EyeOff, Check, LogOut, Calendar, Edit2, ArrowRight, Settings, Camera, X,
 } from 'lucide-react';
@@ -184,7 +185,9 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
     <div className="w-full max-w-5xl mx-auto space-y-6 pb-8">
       {/* Profile Hero */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="h-20 profile-aurora" aria-hidden="true" />
+        <div className="h-20 profile-aurora" aria-hidden="true">
+          <DotFlowBanner />
+        </div>
         <div className="px-4 sm:px-8 pb-6">
           <div className="flex items-end justify-between -mt-10 mb-3">
             <div className="relative group/avatar">
