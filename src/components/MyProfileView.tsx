@@ -184,9 +184,7 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
     <div className="w-full max-w-5xl mx-auto space-y-6 pb-8">
       {/* Profile Hero */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="h-20 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 relative">
-          <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, rgba(255,255,255,0.4) 0%, transparent 60%)' }} />
-        </div>
+        <div className="h-20 profile-aurora" aria-hidden="true" />
         <div className="px-4 sm:px-8 pb-6">
           <div className="flex items-end justify-between -mt-10 mb-3">
             <div className="relative group/avatar">

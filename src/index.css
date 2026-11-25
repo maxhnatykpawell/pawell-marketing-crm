@@ -159,3 +159,55 @@
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation; /* прибирає затримку подвійного тапу */
 }
+
+/*
+ * Банер особистого кабінету: повільний «подих» кольору.
+ * Градієнт ледь переливається, а два м'які відблиски дрейфують назустріч один одному.
+ * Періоди 28-40 с не збігаються між собою, тож рух не повторюється помітно й не відволікає.
+ * З «зменшити рух» у системі лишається спокійний статичний градієнт.
+ */
+.profile-aurora {
+  position: relative;
+  overflow: hidden;
+  background-image: linear-gradient(100deg, #2563eb 0%, #4f46e5 38%, #7c3aed 68%, #9333ea 100%);
+  background-size: 220% 100%;
+  animation: aurora-shift 28s ease-in-out infinite alternate;
+}
+.profile-aurora::before,
+.profile-aurora::after {
+  content: '';
+  position: absolute;
+  width: 46%;
+  height: 220%;
+  border-radius: 9999px;
+  filter: blur(36px);
+  pointer-events: none;
+  will-change: transform;
+}
+.profile-aurora::before {
+  top: -60%;
+  left: -8%;
+  background: radial-gradient(closest-side, rgba(147, 197, 253, 0.55), transparent);
+  animation: aurora-drift-a 34s ease-in-out infinite alternate;
+}
+.profile-aurora::after {
+  top: -70%;
+  right: -10%;
+  background: radial-gradient(closest-side, rgba(216, 180, 254, 0.5), transparent);
+  animation: aurora-drift-b 40s ease-in-out infinite alternate;
+}
+@keyframes aurora-shift {
+  from { background-position: 0% 50%; }
+  to   { background-position: 100% 50%; }
+}
+@keyframes aurora-drift-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(70%, 10%, 0) scale(1.15); }
+}
+@keyframes aurora-drift-b {
+  from { transform: translate3d(0, 0, 0) scale(1.1); }
+  to   { transform: translate3d(-80%, -8%, 0) scale(0.95); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .profile-aurora, .profile-aurora::before, .profile-aurora::after { animation: none; }
+}
