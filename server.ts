@@ -53,6 +53,7 @@ import {
 import { registerChatRoutes, chatStreamStats } from './chat-server';
 import { registerGoogleCalendar, type GoogleCalendarApi } from './google-calendar-server';
 import { registerClientPowerRoutes } from './client-power-server';
+import { registerClientProfileRoutes } from './client-profile-server';
 import { pickClientName, fallbackName, isFallbackName, applyClientNames, describeShape } from './src/lib/clientNames';
 import { normalizeClientDetails } from './src/lib/clientContacts';
 import { registerPushRoutes, sendPushToUsers } from './push-server';
@@ -4300,6 +4301,20 @@ Reply ONLY with a number representing the estimated minutes. Do not include any 
     getUserName: async (userId) => {
       const state = await getDb();
       return (state.users || []).find((u: any) => u.id === userId)?.name ?? null;
+    },
+    localDir: DATA_DIR,
+  });
+
+  /**
+   * Власні дані про клієнта поверх KeepInCRM (відповідальний). Окрема колекція: синхронізація
+   * з CRM переписує клієнтів цілком і стерла б усе, що вели б у самих записах.
+   */
+  registerClientProfileRoutes(app, {
+    requireAuth,
+    getFirestore: initFirebase,
+    getUsers: async () => {
+      const state = await getDb();
+      return (state.users || []).map((u: any) => ({ id: u.id, name: u.name }));
     },
     localDir: DATA_DIR,
   });

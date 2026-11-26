@@ -41,7 +41,12 @@ const snapshot = {
   cohortLtv: { rows: [], horizons: {} }, lastSyncedAt: new Date().toISOString(),
 };
 
-const users = [{ id: 'u1', name: 'Максим Гнатик', avatar: '' }];
+const users = [
+  { id: 'u1', name: 'Максим Гнатик', avatar: '' },
+  { id: 'u2', name: 'Ірина Блюс', avatar: '' },
+  { id: 'u3', name: 'Марек Новак', avatar: '' },
+];
+const profiles: Record<string, any> = {};
 const realFetch = window.fetch.bind(window);
 window.fetch = async (input: any, init?: any) => {
   const url = typeof input === 'string' ? input : input.url;
@@ -72,6 +77,15 @@ window.fetch = async (input: any, init?: any) => {
   }
   if (url.startsWith('/api/keepincrm/sync-client-names')) { namesJob = { running: true, startedAt: Date.now() }; return json({ started: true }, 202); }
   if (url.startsWith('/api/keepincrm/ltv')) return json(snapshot);
+  if (url.startsWith('/api/client-profiles')) {
+    const m = url.match(/client-profiles\/([^/?]+)/);
+    if (m && init?.method === 'PUT') {
+      const body = JSON.parse(init.body);
+      if (body.responsibleUserId) { profiles[m[1]] = { ...body, updatedAt: new Date().toISOString(), updatedBy: 'Максим Гнатик' }; return json({ item: profiles[m[1]] }); }
+      delete profiles[m[1]]; return json({ item: null });
+    }
+    return json({ items: profiles });
+  }
   if (url.startsWith('/api/client-power')) return json({ items: {
     c0: { potentialUah: 30_000_000, contractSize: 'large', contacts: 7, fullAccount: true },
     c1: { potentialUah: 9_000_000, contractSize: 'medium', contacts: 4 },

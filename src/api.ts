@@ -7,6 +7,7 @@ import {
 import type { FunnelSpeedResponse, FunnelSpeedState } from './lib/funnelSpeed';
 import type { ClientPowerInput } from './lib/clientPower';
 import type { ClientDetails } from './lib/clientContacts';
+import type { ClientProfile, ClientProfileRecord } from './lib/clientProfile';
 import { v4 as uuidv4 } from 'uuid';
 import {
   PendingWrites, describeQueued, writeErrorMessage,
@@ -1167,6 +1168,29 @@ export const saveClientPower = async (clientId: string, input: ClientPowerInput)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Не вдалось зберегти оцінку');
+  }
+  return (await res.json()).item ?? null;
+};
+
+// ── Власні дані про клієнта (поверх KeepInCRM) ────────────────────────────────
+
+/** Наші призначення всіх клієнтів: id клієнта → профіль */
+export const getClientProfiles = async (): Promise<Record<string, ClientProfileRecord>> => {
+  const res = await fetch('/api/client-profiles', { headers: authHeaders() });
+  if (!res.ok) throw new Error('Не вдалось завантажити відповідальних за клієнтів');
+  return (await res.json()).items || {};
+};
+
+/** Зберегти профіль одного клієнта; порожній прибирає наше призначення. Повертає те, що прийняв сервер. */
+export const saveClientProfile = async (clientId: string, profile: ClientProfile): Promise<ClientProfileRecord | null> => {
+  const res = await fetch(`/api/client-profiles/${encodeURIComponent(clientId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(profile),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Не вдалось зберегти відповідального');
   }
   return (await res.json()).item ?? null;
 };

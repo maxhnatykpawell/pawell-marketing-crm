@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, Copy, Gauge, Loader2, Mail, Pencil, Phone, Tag, TrendingUp, UserRound, X } from 'lucide-react';
 import { ClientDetailsResponse, getClientDetails } from '../../api';
 import { hasAnyDetails, telHref } from '../../lib/clientContacts';
+import { resolveResponsible } from '../../lib/clientProfile';
+import type { User } from '../../types';
 import {
   CUSTOMER_KIND_LABELS, CUSTOMER_KIND_STYLES, EnrichedClient, TIERS, tierOfRevenue,
 } from '../../lib/clientAnalytics';
@@ -60,8 +62,15 @@ function ContactLines({ phones, emails }: { phones: string[]; emails: string[] }
 
 export default function ClientDetailDrawer({
   client, powerInput, powerMeta, onEditPower, onClose,
+  team, ownerMeta, onSaveResponsible,
 }: {
   client: EnrichedClient;
+  /** Команда: відповідальним може бути лише хтось із неї */
+  team: User[];
+  /** Хто й коли призначив відповідального */
+  ownerMeta?: { updatedAt?: string; updatedBy?: string | null };
+  /** Призначити відповідального (id користувача) або прибрати наше призначення (null) */
+  onSaveResponsible: (userId: string | null) => Promise<void>;
   /** Ручна оцінка (контакти, повний акаунт тощо) */
   powerInput: ClientPowerInput;
   powerMeta?: { updatedAt?: string; updatedBy?: string | null };
@@ -84,6 +93,23 @@ export default function ClientDetailDrawer({
   const [detailsError, setDetailsError] = useState<string | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [ownerBusy, setOwnerBusy] = useState(false);
+  const [ownerError, setOwnerError] = useState<string | null>(null);
+
+  const teamNames = useMemo(() => new Map(team.map(u => [u.id, u.name])), [team]);
+  const resolved = resolveResponsible(
+    { responsibleUserId: client.responsibleUserId ?? null },
+    teamNames,
+    details?.responsible?.name ?? null,
+  );
+
+  const changeOwner = async (userId: string | null) => {
+    setOwnerBusy(true);
+    setOwnerError(null);
+    try { await onSaveResponsible(userId); }
+    catch (e: any) { setOwnerError(e.message || 'Не вдалось зберегти'); }
+    finally { setOwnerBusy(false); }
+  };
 
   const loadDetails = useCallback(() => {
     let cancelled = false;
@@ -216,16 +242,45 @@ export default function ClientDetailDrawer({
               </div>
             )}
 
+            {/* Відповідальний — наш власний запис поверх KeepInCRM: у CRM для цього поля немає,
+                тож він редагується тут і не стирається синхронізацією. Стоїть поза блоком
+                деталей CRM, щоб його можна було призначити, навіть якщо CRM не відповіла. */}
+            <div className="rounded-xl border border-blue-100 bg-blue-50/50 px-3.5 py-3 mb-3">
+              <p className="text-[11px] font-semibold text-blue-700 uppercase tracking-wider">Відповідальний менеджер</p>
+
+              <div className="mt-1.5 flex items-center gap-2">
+                <select
+                  value={resolved.source === 'local' ? (resolved.userId ?? '') : ''}
+                  disabled={ownerBusy}
+                  onChange={e => void changeOwner(e.target.value || null)}
+                  aria-label="Відповідальний менеджер"
+                  className="flex-1 min-w-0 h-11 sm:h-9 px-3 text-sm font-semibold text-gray-900 bg-white border border-blue-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 disabled:opacity-60"
+                >
+                  <option value="">
+                    {resolved.source === 'keepincrm' ? `Не призначено (у CRM: ${resolved.name})` : 'Не призначено'}
+                  </option>
+                  {team.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  {/* Призначену людину прибрали з команди: запис лишається видимим, а не зникає мовчки */}
+                  {resolved.missing && resolved.userId && <option value={resolved.userId}>Колишній користувач ({resolved.userId})</option>}
+                </select>
+                {ownerBusy && <Loader2 className="w-4 h-4 animate-spin text-blue-600 shrink-0" />}
+              </div>
+
+              <p className="text-[11px] mt-1.5 text-blue-800/80">
+                {resolved.source === 'local'
+                  ? `Призначено у нас${ownerMeta?.updatedAt ? ` · ${new Date(ownerMeta.updatedAt).toLocaleDateString('uk-UA')}` : ''}${ownerMeta?.updatedBy ? `, ${ownerMeta.updatedBy}` : ''}. Синхронізація з KeepInCRM цього не змінює.`
+                  : resolved.source === 'keepincrm'
+                    ? `У нас не призначено — показуємо менеджера з KeepInCRM: ${resolved.name}. Оберіть людину, щоб призначити в себе.`
+                    : 'Нікого не призначено. KeepInCRM теж не віддала менеджера: призначте людину з команди.'}
+              </p>
+              {resolved.source === 'local' && details?.responsible?.name && details.responsible.name !== resolved.name && (
+                <p className="text-[11px] text-blue-800/70 mt-0.5">У KeepInCRM: {details.responsible.name}</p>
+              )}
+              {ownerError && <p className="text-xs text-red-600 mt-1">{ownerError}</p>}
+            </div>
+
             {details && (
               <div className="space-y-3">
-                {/* Відповідальний */}
-                <div className="rounded-xl border border-blue-100 bg-blue-50/50 px-3.5 py-3">
-                  <p className="text-[11px] font-semibold text-blue-700 uppercase tracking-wider">Відповідальний менеджер</p>
-                  <p className="text-sm font-bold text-gray-900 mt-0.5">
-                    {details.responsible?.name
-                      ?? (details.responsible?.id ? `Користувач № ${details.responsible.id} (імʼя невідоме)` : 'Не призначено')}
-                  </p>
-                </div>
 
                 {/* Загальні номери компанії */}
                 {(details.companyPhones.length > 0 || details.companyEmails.length > 0) && (
@@ -254,9 +309,9 @@ export default function ClientDetailDrawer({
                   </ul>
                 )}
 
-                {!hasAnyDetails(details) && (
+                {!hasAnyDetails({ ...details, responsible: null }) && (
                   <div className="text-sm text-gray-500 bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-3">
-                    KeepInCRM не віддав відповідального й контактів для цього клієнта: або їх не заповнено в CRM, або вони лежать у
+                    KeepInCRM не віддав контактів для цього клієнта: або їх не заповнено в CRM, або вони лежать у
                     полі, яке ми ще не розпізнаємо.
                     {details.shape != null && (
                       <details className="mt-2 text-xs">

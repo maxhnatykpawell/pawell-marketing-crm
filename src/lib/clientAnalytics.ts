@@ -160,6 +160,11 @@ export interface EnrichedClient extends ClientRecord {
    * (attachPower), бо залежить від ручних оцінок, яких enrichClients не знає.
    */
   power?: PowerResult;
+  /**
+   * Відповідальний за клієнта в НАШІЙ базі (KeepInCRM цього поля не має). Додається окремим
+   * кроком, бо живе поза знімком і не стирається синхронізацією.
+   */
+  responsibleUserId?: string | null;
 }
 
 // ── RFM ───────────────────────────────────────────────────────────────────────
@@ -988,7 +993,11 @@ export function chunkBySize<T>(items: T[], maxBytes: number): T[][] {
  * CSV поточної вибірки. Роздільник — крапка з комою: українська локаль Excel
  * очікує саме його, інакше все злипається в одну колонку.
  */
-export function clientsToCsv(clients: (EnrichedClient & { tier?: TierId | null })[]): string {
+export function clientsToCsv(
+  clients: (EnrichedClient & { tier?: TierId | null })[],
+  /** Імʼя відповідального за id; без нього колонка буде порожньою */
+  ownerNameOf?: (userId: string) => string | null,
+): string {
   const esc = (v: unknown) => {
     const s = String(v ?? '');
     return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -1000,6 +1009,7 @@ export function clientsToCsv(clients: (EnrichedClient & { tier?: TierId | null }
     'Остання покупка', 'Днів тому', 'Когорта', 'Тип клієнта', 'RFM', 'Теги',
     'Pawell Power', 'Power: сума балів', 'Power: оцінка повна',
     'Бал: оборот', 'Бал: потенціал', 'Бал: частота', 'Бал: контракт',
+    'Відповідальний',
   ];
   const rows = clients.map(c => [
     c.name,
@@ -1022,6 +1032,7 @@ export function clientsToCsv(clients: (EnrichedClient & { tier?: TierId | null }
     c.power?.scores.potential ?? '',
     c.power?.scores.frequency ?? '',
     c.power?.scores.contract ?? '',
+    c.responsibleUserId ? (ownerNameOf?.(c.responsibleUserId) ?? '') : '',
   ]);
 
   return [header, ...rows].map(r => r.map(esc).join(';')).join('\r\n');

@@ -17,6 +17,8 @@ import ClientPowerCard, { type PowerQueueItem } from './analytics/ClientPowerCar
 import ClientPowerDialog from './analytics/ClientPowerDialog';
 import ClientNamesBanner from './analytics/ClientNamesBanner';
 import ClientDetailDrawer from './analytics/ClientDetailDrawer';
+import { useClientProfiles } from '../hooks/useClientProfiles';
+import { attachOwners, matchesOwnerFocus, NO_OWNER, type OwnerFocus } from '../lib/clientProfile';
 import { countFallbackNames } from '../lib/clientNames';
 import { useClientPower } from '../hooks/useClientPower';
 import {
@@ -114,8 +116,10 @@ function SortableTh({
  * до сотень, кожен по десятку вузлів.
  */
 const ClientRow = React.memo(function ClientRow({
-  client, index, onTagClick, onTierClick, onPowerClick, onOpenClient,
+  client, index, onTagClick, onTierClick, onPowerClick, onOpenClient, owner,
 }: {
+  /** Відповідальний з нашої бази (null — не призначено або людину вже прибрано з команди) */
+  owner: { name: string; avatar?: string } | null;
   client: TieredClient;
   index: number;
   onTagClick: (tag: string) => void;
@@ -171,6 +175,28 @@ const ClientRow = React.memo(function ClientRow({
           </button>
         ) : (
           <span className="text-xs text-gray-300" title="Немає обороту — поза тірами">—</span>
+        )}
+      </td>
+      <td className="py-3 px-4 whitespace-nowrap">
+        {owner ? (
+          <button
+            onClick={() => onOpenClient(client.id)}
+            title="Змінити відповідального в картці клієнта"
+            className="inline-flex items-center gap-2 text-sm text-gray-700 hover:text-purple-700"
+          >
+            {owner.avatar
+              ? <img src={owner.avatar} alt="" className="w-5 h-5 rounded-full object-cover" />
+              : <span className="w-5 h-5 rounded-full bg-gray-200 text-[10px] font-bold text-gray-600 flex items-center justify-center">{owner.name.charAt(0)}</span>}
+            {owner.name}
+          </button>
+        ) : (
+          <button
+            onClick={() => onOpenClient(client.id)}
+            title="Призначити відповідального в картці клієнта"
+            className="text-xs text-gray-300 hover:text-purple-600"
+          >
+            не призначено
+          </button>
         )}
       </td>
       <td className="py-3 px-4 text-right">
@@ -294,6 +320,8 @@ export default function AnalyticsView() {
   const [powerEditId, setPowerEditId] = useState<string | null>(null);
   /** Клієнт, чию картку з деталями відкрито */
   const [detailId, setDetailId] = useState<string | null>(null);
+  /** Відбір за відповідальним: користувач, «без відповідального» або всі */
+  const [ownerFocus, setOwnerFocus] = useState<OwnerFocus>(null);
 
   /**
    * Збережений командний варіант порогів. Проходить перевірку навіть прийшовши
@@ -420,7 +448,14 @@ export default function AnalyticsView() {
     for (const c of allClients) m.set(c.id, computePower(c, clientPower.items[c.id], powerCtx));
     return m;
   }, [allClients, clientPower.items, powerCtx]);
-  const enrichedP = useMemo(() => attachPower(enriched, powerById), [enriched, powerById]);
+  // Відповідальний живе в нашій базі, поза знімком KeepInCRM, тож додається окремим кроком
+  const clientProfiles = useClientProfiles();
+  const team = state.users || [];
+  const teamById = useMemo(() => new Map(team.map(u => [u.id, u])), [team]);
+  const enrichedP = useMemo(
+    () => attachOwners(attachPower(enriched, powerById), clientProfiles.items),
+    [enriched, powerById, clientProfiles.items],
+  );
 
   /** Вибірка після фільтрів — те, що рахується в картці тірів і таблиці */
   const filteredClients = useMemo(
@@ -464,8 +499,8 @@ export default function AnalyticsView() {
 
   /** Після фокуса на тірі доходу й на тірі Pawell Power, але ДО фокуса на типі клієнта */
   const powerFocused = useMemo(
-    () => (powerFocus === null ? tierFocused : tierFocused.filter(c => matchesPowerFocus(c.power, powerFocus))),
-    [tierFocused, powerFocus],
+    () => tierFocused.filter(c => matchesPowerFocus(c.power, powerFocus) && matchesOwnerFocus(c.responsibleUserId, ownerFocus)),
+    [tierFocused, powerFocus, ownerFocus],
   );
 
   /** Вибірка після всіх фокусів — на ній рахуються метрики, CSV і таблиця */
@@ -495,7 +530,7 @@ export default function AnalyticsView() {
     if (f !== null) setActiveTab('clients');
   }, []);
 
-  const resetFocus = useCallback(() => { setTierFocus(null); setKindFocus(null); setPowerFocus(null); }, []);
+  const resetFocus = useCallback(() => { setTierFocus(null); setKindFocus(null); setPowerFocus(null); setOwnerFocus(null); }, []);
 
   /**
    * Фокуси в тому ж вигляді, що й фільтри.
@@ -509,6 +544,12 @@ export default function AnalyticsView() {
   const focusChips = useMemo(() => {
     const out: { label: string; clear: () => void }[] = [];
     if (tierFocus !== null) out.push({ label: `лише Tier ${tierFocus}`, clear: () => setTierFocus(null) });
+    if (ownerFocus !== null) {
+      out.push({
+        label: ownerFocus === NO_OWNER ? 'без відповідального' : `відповідальний: ${teamById.get(ownerFocus)?.name ?? 'невідомий'}`,
+        clear: () => setOwnerFocus(null),
+      });
+    }
     if (powerFocus !== null) {
       out.push({
         label: powerFocus === 'incomplete' ? 'Power: без повної оцінки' : `лише Tier ${powerFocus} Power`,
@@ -519,7 +560,7 @@ export default function AnalyticsView() {
       out.push({ label: `лише ${CUSTOMER_KIND_LABELS[kindFocus].toLowerCase()}`, clear: () => setKindFocus(null) });
     }
     return out;
-  }, [tierFocus, kindFocus, powerFocus]);
+  }, [tierFocus, kindFocus, powerFocus, ownerFocus, teamById]);
 
   const distribution = useMemo(() => computeDistribution(selectedClients), [selectedClients]);
 
@@ -539,7 +580,7 @@ export default function AnalyticsView() {
   };
 
   const exportCsv = () => {
-    const blob = new Blob(['﻿' + clientsToCsv(selectedClients)], {
+    const blob = new Blob(['﻿' + clientsToCsv(selectedClients, id => teamById.get(id)?.name ?? null)], {
       type: 'text/csv;charset=utf-8;',
     });
     const url = URL.createObjectURL(blob);
@@ -823,6 +864,21 @@ export default function AnalyticsView() {
                   </button>
                 );
               })}
+              {/* Відповідальний — наш власний запис (KeepInCRM такого поля не має) */}
+              <label className="inline-flex items-center gap-2 ml-2">
+                <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Відповідальний</span>
+                <select
+                  value={ownerFocus ?? ''}
+                  onChange={e => setOwnerFocus(e.target.value === '' ? null : e.target.value)}
+                  className={`h-9 pl-3 pr-8 text-sm rounded-full border outline-none focus:ring-2 focus:ring-indigo-100 ${
+                    ownerFocus !== null ? 'bg-indigo-600 border-indigo-600 text-white font-semibold' : 'bg-white border-gray-200 text-gray-700'
+                  }`}
+                >
+                  <option value="">Усі</option>
+                  <option value={NO_OWNER}>Без відповідального</option>
+                  {team.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              </label>
               <button
                 onClick={() => setActiveTab('segments')}
                 className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
@@ -840,6 +896,7 @@ export default function AnalyticsView() {
                       <SortableTh label="Клієнт / RFM" sortKey="name"     active={sortKey} dir={sortDir} onSort={toggleSort} />
                       <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]" title="Тір за доходом у гривнях (старий поділ на Tier 1–4)">За доходом</th>
                       <SortableTh label="Power"        sortKey="power"    active={sortKey} dir={sortDir} onSort={toggleSort} />
+                      <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Відповідальний</th>
                       <SortableTh label="Дохід"        sortKey="revenue"  active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
                       <SortableTh label="Угод"         sortKey="deals"    active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
                       <SortableTh label="Середній чек" sortKey="avgCheck" active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
@@ -858,12 +915,15 @@ export default function AnalyticsView() {
                         onTierClick={focusTier}
                         onPowerClick={setPowerEditId}
                         onOpenClient={setDetailId}
+                        owner={client.responsibleUserId ? teamById.get(client.responsibleUserId) ?? null : null}
                       />
                     ))}
                     {selectedClients.length === 0 && (
                       <tr>
-                        <td colSpan={9} className="py-12 text-center text-gray-400 text-sm">
-                          {powerFocus !== null
+                        <td colSpan={10} className="py-12 text-center text-gray-400 text-sm">
+                          {ownerFocus !== null
+                            ? 'За цими фільтрами немає клієнтів із вибраним відповідальним'
+                            : powerFocus !== null
                             ? 'За цими фільтрами немає клієнтів у вибраному тірі Pawell Power'
                             : tierFocus !== null
                             ? `У Tier ${tierFocus} за цими фільтрами нікого немає`
@@ -1327,6 +1387,9 @@ export default function AnalyticsView() {
           powerInput={clientPower.items[target.id] ?? {}}
           powerMeta={clientPower.items[target.id]}
           onEditPower={() => setPowerEditId(target.id)}
+          team={team}
+          ownerMeta={clientProfiles.items[target.id]}
+          onSaveResponsible={userId => clientProfiles.save(target.id, userId ? { responsibleUserId: userId } : {})}
           onClose={() => setDetailId(null)}
         />
       );
