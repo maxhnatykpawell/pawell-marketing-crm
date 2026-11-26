@@ -30,6 +30,8 @@ interface Props {
   focusChips?: Chip[];
   /** Скинути фокуси — «Скинути все» має прибирати і їх */
   onResetFocus?: () => void;
+  /** Те, що стоїть на початку верхнього рядка (період): так керування вибіркою займає один рядок, а не два */
+  leading?: React.ReactNode;
 }
 
 /** Один активний фільтр у вигляді знімного чіпа */
@@ -48,7 +50,7 @@ const fmt = (n: number) => n.toLocaleString('uk-UA');
 
 export default function ClientFilterBar({
   filters, onChange, tags, cohorts, totalCount, filteredCount,
-  focusChips = [], onResetFocus,
+  focusChips = [], onResetFocus, leading,
 }: Props) {
   const [open, setOpen] = useState(false);
   // Фокуси рахуємо разом з фільтрами: для користувача це одне й те саме —
@@ -159,7 +161,8 @@ export default function ClientFilterBar({
     // тягнутись на всю ширину вікна, а вміст — лишатись у центральній колонці.
     <div className="flex-shrink-0">
       {/* Верхній рядок: пошук, лічильник, керування */}
-      <div className="flex flex-wrap items-center gap-3 px-6 py-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-6 py-3">
+        {leading}
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input

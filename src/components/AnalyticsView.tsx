@@ -1,5 +1,8 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
-import { Users, DollarSign, Gem, Download, FileDown, ArrowUp, ArrowDown, AlertTriangle, Loader2 } from 'lucide-react';
+import {
+  Users, DollarSign, Gem, Download, FileDown, ArrowUp, ArrowDown, AlertTriangle, Loader2,
+  Layers, PieChart, Filter as FilterIcon, Grid3x3, PhoneCall, FileText, ArrowRight,
+} from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import { useAppContext } from '../App';
 import { getKeepInCRMLTV, getKeepInCRMLTVClients } from '../api';
@@ -10,7 +13,7 @@ import { LtvSnapshot, EMPTY_LTV_SNAPSHOT } from '../lib/ltvSnapshot';
 import ClientFilterBar from './analytics/ClientFilterBar';
 import RevenueDistributionCard from './analytics/RevenueDistribution';
 import ClientTiers from './analytics/ClientTiers';
-import ClientPowerCard from './analytics/ClientPowerCard';
+import ClientPowerCard, { type PowerQueueItem } from './analytics/ClientPowerCard';
 import ClientPowerDialog from './analytics/ClientPowerDialog';
 import { useClientPower } from '../hooks/useClientPower';
 import {
@@ -28,6 +31,7 @@ import {
   countByRfm, sanitizeRfmThresholds, countActiveFilters,
 } from '../lib/clientAnalytics';
 import { loadView, saveView, type PowerFocus } from '../lib/analyticsViewState';
+import { pluralUk } from '../lib/plural';
 import PeriodPicker, { PeriodKey, PeriodValue, describePeriod } from './PeriodPicker';
 import AnalyticsReport from './AnalyticsReport';
 import ContactFrequency from './analytics/ContactFrequency';
@@ -39,24 +43,33 @@ const FUNNEL_MATURITY_DAYS = 30;
 /** Пресети періоду аналітики — усі місячної точності */
 const ANALYTICS_PRESETS: PeriodKey[] = ['all', 'month', 'ytd', 'year', 'custom'];
 
-type TabKey = 'clients' | 'funnel' | 'cohorts' | 'activity' | 'monthly';
+type TabKey = 'clients' | 'segments' | 'revenue' | 'funnel' | 'cohorts' | 'activity' | 'monthly';
 
-const TABS: { key: TabKey; label: string }[] = [
-  { key: 'clients', label: 'Клієнти · ARPU і тіри' },
-  { key: 'funnel',  label: 'Швидкість воронки' },
-  { key: 'cohorts', label: 'Утримання і когорти' },
-  { key: 'activity', label: 'Частота контакту' },
-  { key: 'monthly', label: 'Місячний звіт' },
+/**
+ * Розділи згруповано за питанням, на яке вони відповідають:
+ *  • Клієнти     — «хто вони?»: робочий список із сортуванням і відбором;
+ *  • Сегментація — «як їх ділимо?»: Pawell Power, тіри за доходом, RFM;
+ *  • Дохід       — «скільки й звідки?»: ARPU, нові й постійні, розподіл;
+ *  • решта       — воронка, утримання, контакт, місячний звіт.
+ */
+const TABS: { key: TabKey; label: string; hint: string; icon: React.ElementType }[] = [
+  { key: 'clients',  label: 'Клієнти',       hint: 'Список клієнтів із сортуванням, Power-тіром і відбором', icon: Users },
+  { key: 'segments', label: 'Сегментація',   hint: 'Pawell Power, тіри за доходом, RFM-сегменти і їхні пороги', icon: Layers },
+  { key: 'revenue',  label: 'Дохід',         hint: 'ARPU, нові й постійні клієнти, розподіл доходу', icon: PieChart },
+  { key: 'funnel',   label: 'Воронка',       hint: 'Швидкість воронки й етапи угод', icon: FilterIcon },
+  { key: 'cohorts',  label: 'Когорти',       hint: 'Утримання й когортний LTV', icon: Grid3x3 },
+  { key: 'activity', label: 'Контакт',       hint: 'Частота контакту з клієнтами', icon: PhoneCall },
+  { key: 'monthly',  label: 'Місячний звіт', hint: 'Один місяць по всій базі з порівнянням', icon: FileText },
 ];
 
 /**
- * Вкладки, якими керує панель угорі (період, пороги, фільтри).
+ * Вкладки, якими керує панель угорі (період, відбір, фільтри).
  *
  * Місячний звіт до них не входить: у нього власний місяць і власне правило —
  * рахувати по всій базі. Показувати над ним фільтри, які ні на що не впливають,
  * означало б підказувати, що звіт зібраний саме по них.
  */
-const FILTERED_TABS: TabKey[] = ['clients', 'funnel', 'cohorts', 'activity'];
+const FILTERED_TABS: TabKey[] = ['clients', 'segments', 'revenue', 'funnel', 'cohorts', 'activity'];
 
 /** Заголовок колонки, що керує сортуванням; напрямок показано стрілкою */
 function SortableTh({
@@ -143,7 +156,7 @@ const ClientRow = React.memo(function ClientRow({
             title={power.complete ? 'Оцінка повна. Натисніть, щоб змінити' : `Попередній тір: бракує оцінки (${power.missing.length}). Натисніть, щоб заповнити`}
             className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded border transition hover:brightness-95 ${powerMeta.badge}`}
           >
-            Tier {power.tier}
+            Power {power.tier}
             <span className="tabular-nums opacity-80">{power.complete ? '' : '~'}{power.score}</span>
           </button>
         ) : (
@@ -401,6 +414,16 @@ export default function AnalyticsView() {
   /** Зведення Pawell Power — до фокусів, щоб між тірами можна було перемикатись */
   const powerSummary = useMemo(() => summarizePower(filteredClients), [filteredClients]);
 
+  /** Найбільші за доходом клієнти, яким бракує ручної оцінки: з них варто починати */
+  const powerQueue = useMemo<PowerQueueItem[]>(
+    () => filteredClients
+      .filter(c => c.power?.tier && !c.power.complete)
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 6)
+      .map(c => ({ id: c.id, name: c.name, revenue: c.revenue, missing: c.power!.missing })),
+    [filteredClients],
+  );
+
   /**
    * Картка тірів рахується ДО фокуса на тірі, а не після.
    *
@@ -447,6 +470,12 @@ export default function AnalyticsView() {
 
   const focusTier = useCallback((tier: TierId) => {
     setTierFocus(prev => (prev === tier ? null : tier));
+  }, []);
+
+  /** «Показати у списку»: увімкнути відбір і перейти до таблиці, де його результат видно */
+  const showPowerInList = useCallback((f: PowerFocus | null) => {
+    setPowerFocus(f);
+    if (f !== null) setActiveTab('clients');
   }, []);
 
   const resetFocus = useCallback(() => { setTierFocus(null); setKindFocus(null); setPowerFocus(null); }, []);
@@ -577,9 +606,10 @@ export default function AnalyticsView() {
     <>
     <div className="flex flex-col gap-5 w-full print:hidden">
 
-      {/* Шапка, період, пороги і фільтри — однією карткою: усе це керує тим,
-          що показано нижче, і розсипати його на чотири коробки означало б
-          зробити з панелі керування смітник. */}
+      {/* Шапка: назва, розділи й керування вибіркою — однією карткою, у три рядки.
+          Раніше сюди ж входили ще пороги RFM (з шістьма лічильниками) і окремий рядок
+          періоду: до вмісту доводилось прокручувати цілий екран. Пороги переїхали у
+          «Сегментацію» — це налаштування, а не те, що потрібно бачити щоразу. */}
       <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm overflow-hidden">
         <div className="px-6">
           <div className="flex items-center justify-between gap-4 pt-5">
@@ -594,9 +624,9 @@ export default function AnalyticsView() {
                     ? 'Завантаження клієнтів…'
                     : activeTab === 'monthly'
                       // Вибірка тут ні до чого — у звіту власний місяць і вся база
-                      ? 'Місячний звіт — один місяць по всій базі, з порівнянням із попереднім'
+                      ? 'Один місяць по всій базі, з порівнянням із попереднім'
                       : <>
-                          {selectedClients.length.toLocaleString('uk-UA')} клієнтів у вибірці
+                          {selectedClients.length.toLocaleString('uk-UA')} {pluralUk(selectedClients.length, 'клієнт', 'клієнти', 'клієнтів')} у вибірці
                           {' · '}
                           {monthRange ? describePeriod(period) : 'за весь час'}
                         </>}
@@ -617,7 +647,7 @@ export default function AnalyticsView() {
                 <span className="hidden sm:inline">CSV</span>
               </button>
               {/*
-                PDF збирає всі три вкладки в один документ, а не знімає екран:
+                PDF збирає всі вкладки в один документ, а не знімає екран:
                 звіт читають ті, хто фільтрів не бачив, тож у ньому має бути
                 написано і що саме показано, і за який період.
               */}
@@ -635,77 +665,51 @@ export default function AnalyticsView() {
             </div>
           </div>
 
-          {/* Вкладки-«пігулки» в одній смузі: активна заповнена, решта — тло.
-              Смуга прокручується, а не ламається, коли вкладки не влазять. */}
+          {/* Розділи: підпис завжди видно, іконка — підказка. Смуга прокручується,
+              а не ламається, коли вкладки не влазять. */}
           <nav
             aria-label="Розділи аналітики"
             className="flex items-center gap-1 mt-4 mb-4 p-1 bg-gray-100 rounded-2xl overflow-x-auto"
           >
-            {TABS.map(t => (
-              <button
-                key={t.key}
-                onClick={() => setActiveTab(t.key)}
-                className={`px-4 min-h-[40px] text-sm whitespace-nowrap rounded-xl transition ${
-                  activeTab === t.key
-                    ? 'bg-purple-600 text-white font-bold shadow-sm'
-                    : 'text-gray-600 font-semibold hover:bg-white hover:text-gray-900'
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
+            {TABS.map(t => {
+              const Icon = t.icon;
+              const on = activeTab === t.key;
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => setActiveTab(t.key)}
+                  title={t.hint}
+                  aria-current={on ? 'page' : undefined}
+                  className={`inline-flex items-center gap-2 px-4 min-h-[40px] text-sm whitespace-nowrap rounded-xl transition ${
+                    on
+                      ? 'bg-purple-600 text-white font-bold shadow-sm'
+                      : 'text-gray-600 font-semibold hover:bg-white hover:text-gray-900'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {t.label}
+                </button>
+              );
+            })}
           </nav>
         </div>
 
-        {/* Період аналітики */}
-        <div className={`border-b border-gray-200 bg-white ${showSelectionControls ? '' : 'hidden'}`}>
-          <div className="px-6 py-3 flex flex-wrap items-center gap-3">
-            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Період</span>
-            <PeriodPicker
-              value={period}
-              onChange={setPeriod}
-              presets={ANALYTICS_PRESETS}
-              granularity="month"
-            />
-            <span className="text-xs text-gray-500">
-              Дохід, угоди й середній чек — {monthRange ? <strong className="text-gray-800">за {describePeriod(period)}</strong> : 'за весь час'}
-            </span>
-
-            {!hasMonthlyStats && monthRange && (
-              <span className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1">
-                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                Знімок старого формату — суми по місяцях відсутні, тож період лише відбирає клієнтів,
-                а числа лишаються за весь час. Перезапустіть синхронізацію LTV.
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Пороги сегментації — над фільтрами: вони визначають, що взагалі
-            означають слова «Чемпіон» і «Сплячий» у фільтрі нижче. */}
-        {/* Ховаємо класом, а не розмонтуванням: інакше незбережена чернетка
-            порогів і відкриті списки фільтрів гинули б від переходу на вкладку,
-            яка їх не використовує. */}
-        <div className={showSelectionControls ? '' : 'hidden'}>
-        <SegmentSettings
-          draft={draftThresholds}
-          onDraftChange={setDraftThresholds}
-          onSave={saveThresholds}
-          onReset={() => setDraftThresholds(savedThresholds)}
-          saved={savedThresholds}
-          saving={savingThresholds}
-          canEdit={canEditSettings}
-          counts={rfmSizes.counts}
-          totalClients={rfmSizes.total}
-        />
-        </div>
-
-        {/* Фільтри живуть над вкладками: вони впливають на вміст усіх, які
-            працюють із вибіркою, тож ховати їх на частині з них означало б
-            приховати активний стан. Місячний звіт — виняток: він вибірки не
-            знає (див. FILTERED_TABS). */}
+        {/* Керування вибіркою — один рядок: період, пошук, фільтри. Живе над вкладками:
+            воно впливає на вміст усіх, які працюють із вибіркою, тож ховати його на
+            частині з них означало б приховати активний стан. Місячний звіт — виняток. */}
         <div className={`bg-white border-t border-gray-200 ${showSelectionControls ? '' : 'hidden'}`}>
           <ClientFilterBar
+            leading={
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Період</span>
+                <PeriodPicker
+                  value={period}
+                  onChange={setPeriod}
+                  presets={ANALYTICS_PRESETS}
+                  granularity="month"
+                />
+              </div>
+            }
             filters={filters}
             onChange={setFilters}
             tags={tagOptions}
@@ -715,6 +719,15 @@ export default function AnalyticsView() {
             focusChips={focusChips}
             onResetFocus={resetFocus}
           />
+          {!hasMonthlyStats && monthRange && (
+            <div className="px-6 pb-3">
+              <span className="inline-flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1">
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                Знімок старого формату — суми по місяцях відсутні, тож період лише відбирає клієнтів,
+                а числа лишаються за весь час. Перезапустіть синхронізацію LTV.
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -747,41 +760,53 @@ export default function AnalyticsView() {
           )}
 
           <div className="space-y-6">
-            {/* Метрики вибірки */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Компактна смуга метрик: головне тут — список, а великі картки
+                з тими самими числами живуть у розділі «Дохід» */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm grid grid-cols-3 divide-x divide-gray-100">
               {[
-                { label: 'Дохід на клієнта (ARPU)', value: `${distribution.mean.toLocaleString('uk-UA')} ₴`, tone: 'text-purple-600', bg: 'bg-purple-50', icon: <Gem className="w-6 h-6 text-purple-500" /> },
-                { label: 'Загальний дохід вибірки', value: `${distribution.total.toLocaleString('uk-UA')} ₴`, tone: 'text-emerald-600', bg: 'bg-emerald-50', icon: <DollarSign className="w-6 h-6 text-emerald-500" /> },
-                { label: 'Клієнтів у вибірці', value: distribution.count.toLocaleString('uk-UA'), tone: 'text-blue-600', bg: 'bg-blue-50', icon: <Users className="w-6 h-6 text-blue-500" /> },
+                { label: 'ARPU', hint: 'Дохід на клієнта', value: `${distribution.mean.toLocaleString('uk-UA')} ₴`, tone: 'text-purple-600' },
+                { label: 'Дохід вибірки', hint: 'Загальний дохід вибірки', value: `${distribution.total.toLocaleString('uk-UA')} ₴`, tone: 'text-emerald-600' },
+                { label: 'Клієнтів', hint: 'Клієнтів у вибірці', value: distribution.count.toLocaleString('uk-UA'), tone: 'text-blue-600' },
               ].map(m => (
-                <div key={m.label} className="bg-white px-6 py-5 rounded-[20px] border border-gray-100 shadow-sm flex items-center justify-between hover:shadow-md transition-shadow">
-                  <div className="min-w-0">
-                    <p className="text-[13px] text-gray-500 font-semibold mb-1.5">{m.label}</p>
-                    <p className={`text-3xl font-extrabold tracking-tight ${m.tone} truncate`}>{m.value}</p>
-                  </div>
-                  <div className={`w-12 h-12 ${m.bg} rounded-xl flex items-center justify-center flex-shrink-0 ml-3`}>
-                    {m.icon}
-                  </div>
+                <div key={m.label} className="px-4 sm:px-6 py-3 min-w-0" title={m.hint}>
+                  <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider">{m.label}</p>
+                  <p className={`text-lg sm:text-2xl font-extrabold tracking-tight truncate ${m.tone}`}>{m.value}</p>
                 </div>
               ))}
             </div>
 
-            {/* Хто приносить замовлення — окремим блоком на всю ширину:
-                це відповідь на «ми ростемо чи утримуємо», і вона не має
-                ділити рядок із розподілом доходу. */}
-            <CustomerMixCard
-              mix={customerMix}
-              focus={kindFocus}
-              onFocus={setKindFocus}
-              range={monthRange}
-            />
-
-            {/* Розподіл і тіри поруч: на широкому екрані вони читаються як одна
-                відповідь — «наскільки перекошено» і «хто саме зверху». */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6 items-start">
-              <RevenueDistributionCard dist={distribution} />
-              <ClientTiers breakdown={tiered} focus={tierFocus} onFocus={setTierFocus} />
-              <ClientPowerCard summary={powerSummary} focus={powerFocus} onFocus={setPowerFocus} />
+            {/* Швидкий відбір за Pawell Power — те, заради чого клієнтів сортують за тірами.
+                Це ті самі фокуси, що й у розділі «Сегментація», лише під рукою. */}
+            <div role="group" aria-label="Швидкий відбір за Pawell Power" className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mr-1">Power</span>
+              {([
+                { label: 'Усі', value: null as PowerFocus | null, count: filteredClients.length },
+                ...powerSummary.rows.map(r => ({ label: `Tier ${r.tier}`, value: r.tier as PowerFocus, count: r.count })),
+                { label: 'Без повної оцінки', value: 'incomplete' as PowerFocus, count: powerSummary.incompleteTotal },
+              ]).map(chip => {
+                const on = powerFocus === chip.value;
+                return (
+                  <button
+                    key={chip.label}
+                    onClick={() => setPowerFocus(on ? null : chip.value)}
+                    aria-pressed={on}
+                    className={`inline-flex items-center gap-1.5 min-h-[36px] px-3 text-sm rounded-full border transition ${
+                      on
+                        ? 'bg-indigo-600 border-indigo-600 text-white font-semibold'
+                        : 'bg-white border-gray-200 text-gray-700 hover:border-indigo-300 hover:text-indigo-700'
+                    }`}
+                  >
+                    {chip.label}
+                    <span className={`text-xs tabular-nums ${on ? 'text-indigo-100' : 'text-gray-400'}`}>{chip.count.toLocaleString('uk-UA')}</span>
+                  </button>
+                );
+              })}
+              <button
+                onClick={() => setActiveTab('segments')}
+                className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+              >
+                Як рахується і кого оцінити <ArrowRight className="w-3.5 h-3.5" />
+              </button>
             </div>
 
             {/* Таблиця */}
@@ -791,7 +816,7 @@ export default function AnalyticsView() {
                   <thead>
                     <tr className="border-b border-gray-200 bg-white">
                       <SortableTh label="Клієнт / RFM" sortKey="name"     active={sortKey} dir={sortDir} onSort={toggleSort} />
-                      <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]" title="Тір за доходом у гривнях">Tier (дохід)</th>
+                      <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]" title="Тір за доходом у гривнях (старий поділ на Tier 1–4)">За доходом</th>
                       <SortableTh label="Power"        sortKey="power"    active={sortKey} dir={sortDir} onSort={toggleSort} />
                       <SortableTh label="Дохід"        sortKey="revenue"  active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
                       <SortableTh label="Угод"         sortKey="deals"    active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
@@ -856,6 +881,101 @@ export default function AnalyticsView() {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Сегментація: як ділимо клієнтів ── */}
+      {activeTab === 'segments' && (
+        <div className="space-y-6">
+          {clientsLoading && (
+            <div className="flex items-center justify-center gap-2 px-6 py-3 text-sm text-gray-500">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Завантаження списку клієнтів...
+            </div>
+          )}
+
+          <ClientPowerCard
+            summary={powerSummary}
+            focus={powerFocus}
+            onShow={showPowerInList}
+            queue={powerQueue}
+            queueTotal={powerSummary.incompleteTotal}
+            onEdit={setPowerEditId}
+          />
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+            <ClientTiers
+              breakdown={tiered}
+              focus={tierFocus}
+              onFocus={t => { setTierFocus(t); if (t !== null) setActiveTab('clients'); }}
+            />
+
+            {/* RFM: назви сегментів («Чемпіон», «Сплячий») з'являються у фільтрах і в таблиці,
+                а тут вони визначаються. Пороги — налаштування команди, тому їм місце тут,
+                а не над кожною вкладкою. */}
+            <section aria-labelledby="rfm-title" className="bg-white rounded-[20px] border border-gray-100 shadow-sm overflow-hidden">
+              <div className="px-6 pt-5 pb-3">
+                <h3 id="rfm-title" className="text-base font-black text-gray-800">RFM-сегменти</h3>
+                <p className="text-xs text-gray-500 mt-1">
+                  Сегмент клієнта в таблиці й у фільтрах (Чемпіон, Сплячий…) залежить від порогів нижче. Підлаштуйте їх під ваш цикл угоди.
+                </p>
+              </div>
+              <SegmentSettings
+                draft={draftThresholds}
+                onDraftChange={setDraftThresholds}
+                onSave={saveThresholds}
+                onReset={() => setDraftThresholds(savedThresholds)}
+                saved={savedThresholds}
+                saving={savingThresholds}
+                canEdit={canEditSettings}
+                counts={rfmSizes.counts}
+                totalClients={rfmSizes.total}
+              />
+            </section>
+          </div>
+        </div>
+      )}
+
+      {/* ── Дохід: скільки й звідки ── */}
+      {activeTab === 'revenue' && (
+        <div className="space-y-6">
+          {clientsLoading && (
+            <div className="flex items-center justify-center gap-2 px-6 py-3 text-sm text-gray-500">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Завантаження списку клієнтів...
+            </div>
+          )}
+            {/* Метрики вибірки */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {[
+                { label: 'Дохід на клієнта (ARPU)', value: `${distribution.mean.toLocaleString('uk-UA')} ₴`, tone: 'text-purple-600', bg: 'bg-purple-50', icon: <Gem className="w-6 h-6 text-purple-500" /> },
+                { label: 'Загальний дохід вибірки', value: `${distribution.total.toLocaleString('uk-UA')} ₴`, tone: 'text-emerald-600', bg: 'bg-emerald-50', icon: <DollarSign className="w-6 h-6 text-emerald-500" /> },
+                { label: 'Клієнтів у вибірці', value: distribution.count.toLocaleString('uk-UA'), tone: 'text-blue-600', bg: 'bg-blue-50', icon: <Users className="w-6 h-6 text-blue-500" /> },
+              ].map(m => (
+                <div key={m.label} className="bg-white px-6 py-5 rounded-[20px] border border-gray-100 shadow-sm flex items-center justify-between hover:shadow-md transition-shadow">
+                  <div className="min-w-0">
+                    <p className="text-[13px] text-gray-500 font-semibold mb-1.5">{m.label}</p>
+                    <p className={`text-3xl font-extrabold tracking-tight ${m.tone} truncate`}>{m.value}</p>
+                  </div>
+                  <div className={`w-12 h-12 ${m.bg} rounded-xl flex items-center justify-center flex-shrink-0 ml-3`}>
+                    {m.icon}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Хто приносить замовлення — окремим блоком на всю ширину:
+                це відповідь на «ми ростемо чи утримуємо», і вона не має
+                ділити рядок із розподілом доходу. */}
+            <CustomerMixCard
+              mix={customerMix}
+              focus={kindFocus}
+              onFocus={setKindFocus}
+              range={monthRange}
+            />
+
+
+          <RevenueDistributionCard dist={distribution} />
         </div>
       )}
 

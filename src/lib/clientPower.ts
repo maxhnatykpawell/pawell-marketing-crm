@@ -300,19 +300,19 @@ export interface PowerTierMeta {
 
 export const POWER_TIERS: PowerTierMeta[] = [
   {
-    id: 1, label: 'Tier 1 — Стратегічні', range: `${TIER1_MIN}–${MAX_SCORE} + повний акаунт`,
+    id: 1, label: 'Tier 1 — Стратегічні', range: `${TIER1_MIN}–${MAX_SCORE} б. + повний акаунт`,
     owner: 'Персональний менеджер + CGO/CEO', cadence: 'щотижня',
     gets: 'Пріоритет у виробництві, кастомні конфігурації',
     badge: 'bg-amber-100 text-amber-800 border-amber-200', bar: 'bg-amber-500',
   },
   {
-    id: 2, label: 'Tier 2 — Ключові', range: `${TIER2_MIN}–${TIER1_MIN - 1}`,
+    id: 2, label: 'Tier 2 — Ключові', range: `${TIER2_MIN}–${TIER1_MIN - 1} б.`,
     owner: 'Персональний менеджер', cadence: 'раз на 2 тижні',
     gets: 'Швидкі КП, консультація R&D, задача — поглибити акаунт',
     badge: 'bg-emerald-100 text-emerald-800 border-emerald-200', bar: 'bg-emerald-500',
   },
   {
-    id: 3, label: 'Tier 3 — Базові', range: `${MIN_SCORE}–${TIER2_MIN - 1}`,
+    id: 3, label: 'Tier 3 — Базові', range: `${MIN_SCORE}–${TIER2_MIN - 1} б.`,
     owner: 'Відділ продажів загалом', cadence: 'раз на місяць–квартал',
     gets: 'Каталог і стандартні умови',
     badge: 'bg-blue-100 text-blue-800 border-blue-200', bar: 'bg-blue-500',
