@@ -51,6 +51,7 @@ import {
   isFetchableUrl, isPrivateAddress, titleFromHtml, TITLE_FETCH_LIMIT,
 } from './src/lib/linkTitle';
 import { registerChatRoutes, chatStreamStats } from './chat-server';
+import { registerGoogleCalendar, type GoogleCalendarApi } from './google-calendar-server';
 import { registerPushRoutes, sendPushToUsers } from './push-server';
 import { parseMentions } from './src/lib/mentions';
 import { previewOf } from './src/lib/chat';
@@ -1056,6 +1057,12 @@ async function sendOverduePersonalNotifications(state: any): Promise<void> {
  * Крону нікуди слати HTTP-запит самому собі, а писати повз getDb/saveDb
  * означало б завести другий спосіб зберігати те саме.
  */
+/**
+ * Інтеграція з Google Calendar. null, доки startServer її не зареєстрував; хуки
+ * нижче безпечні й тоді — просто нічого не роблять.
+ */
+let googleCalendar: GoogleCalendarApi | null = null;
+
 async function updateEntityDoc(type: string, id: string, updates: any): Promise<void> {
   const db = initFirebase();
   if (db) {
@@ -1068,6 +1075,7 @@ async function updateEntityDoc(type: string, id: string, updates: any): Promise<
     }
   }
   await updateLastModified();
+  googleCalendar?.onEntityChanged(type, id);
 }
 
 /**
@@ -1310,6 +1318,7 @@ async function runTaskAutomation(
   };
 
   await persistRecord('cards', card);
+  googleCalendar?.onEntityChanged('cards', card.id);
   // Стан у пам'яті теж має знати про картку: notifyCardAssigned читає дедлайн
   // і проєкт саме з нього
   state.cards = [...(state.cards || []), card];
@@ -3893,6 +3902,7 @@ Reply ONLY with a number representing the estimated minutes. Do not include any 
       }
       await updateLastModified();
       res.json({ success: true });
+      googleCalendar?.onEntityChanged(type, data.id);
       // Призначення задачі й підзадачі браузер оформлює саме як сповіщення: шлемо його й на пристрій
       if (type === 'notifications') pushNotificationItem(data, (req as any).user?.userId);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -3928,6 +3938,7 @@ Reply ONLY with a number representing the estimated minutes. Do not include any 
       }
       await updateLastModified();
       res.json({ success: true });
+      googleCalendar?.onEntityChanged(type, id);
 
       // Відповідь уже пішла: доставка сповіщень не має затримувати збереження.
       if (touchesComments) {
@@ -3961,6 +3972,7 @@ Reply ONLY with a number representing the estimated minutes. Do not include any 
       }
       await updateLastModified();
       res.json({ success: true });
+      googleCalendar?.onEntityChanged(type, id);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -3986,6 +3998,44 @@ Reply ONLY with a number representing the estimated minutes. Do not include any 
     sendTelegram: sendPersonalTelegramMessage,
     saveNotification: saveNotificationItem,
     pushToUsers: sendPushToUsers,
+    localDir: DATA_DIR,
+  });
+
+  /**
+   * Google Calendar: міти з Meet і дзеркало задач та подій у календарі людини.
+   * Читає окремі документи за id, а не весь стан, — хуки в /api/entity мають
+   * бути дешевими.
+   */
+  googleCalendar = registerGoogleCalendar(app, {
+    requireAuth,
+    getFirestore: initFirebase,
+    getUsers: async () => {
+      const state = await getDb();
+      return (state.users || []).map((u: any) => ({ id: u.id, name: u.name, email: u.email }));
+    },
+    getEntity: async (type, id) => {
+      const db = initFirebase();
+      if (db) {
+        const doc = await db.collection('crm_' + type).doc(id).get();
+        return doc.exists ? doc.data() : null;
+      }
+      const state = await getDb();
+      return (state[type] || []).find((x: any) => x.id === id) ?? null;
+    },
+    listEntitiesForUser: async (type, userId) => {
+      const db = initFirebase();
+      if (db) {
+        const col = db.collection('crm_' + type);
+        const snap = type === 'cards'
+          ? await col.where('assigneeId', '==', userId).get()
+          : await col.where('assigneeIds', 'array-contains', userId).get();
+        return snap.docs.map(d => d.data());
+      }
+      const state = await getDb();
+      return (state[type] || []).filter((x: any) =>
+        type === 'cards' ? x.assigneeId === userId : (x.assigneeIds || []).includes(userId));
+    },
+    jwtSecret: JWT_SECRET,
     localDir: DATA_DIR,
   });
 

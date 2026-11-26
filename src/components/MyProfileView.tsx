@@ -9,6 +9,7 @@ import CardModal from './CardModal';
 import MyPlan from './MyPlan';
 import DotFlowBanner from './DotFlowBanner';
 import PushSettings from './PushSettings';
+import GoogleCalendarCard from './GoogleCalendarCard';
 import {
   Mail, FileText, CheckCircle2, AlertCircle, Lock, Eye, EyeOff, Check, LogOut, Calendar, Edit2, ArrowRight, Settings, Camera, X,
 } from 'lucide-react';
@@ -294,6 +295,8 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
           </div>
         </div>
       </div>
+
+      <GoogleCalendarCard />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
         {/* Ліворуч — головне: персональний план */}

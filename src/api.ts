@@ -1141,6 +1141,90 @@ export const getChatStreamTicket = async (): Promise<string> => {
   return (await res.json()).ticket;
 };
 
+// ── Google Calendar ───────────────────────────────────────────────────────────
+
+export interface GoogleStatus {
+  /** На сервері задано ключі Google; інакше підключати нічого */
+  configured: boolean;
+  connected: boolean;
+  email: string | null;
+  /** Доступ відкликано — треба підключити знову */
+  needsReconnect: boolean;
+  syncTasks: boolean;
+  syncEvents: boolean;
+  lastSyncAt: string | null;
+  lastError: string | null;
+  syncing: boolean;
+  /** Адреса, яку адміністратор вписує в Google Cloud як redirect URI */
+  redirectUri: string;
+}
+
+export interface GoogleMeetingInput {
+  title: string;
+  description?: string;
+  /** ISO-час */
+  start: string;
+  end: string;
+  attendeeUserIds: string[];
+  extraEmails: string[];
+  withMeet: boolean;
+}
+
+export interface GoogleMeetingResult {
+  id: string;
+  htmlLink: string | null;
+  meetLink: string | null;
+  invited: number;
+  /** Імена колег, яких не запрошено, бо в профілі немає пошти */
+  skipped: string[];
+}
+
+/** Помилка з кодом, щоб інтерфейс міг запропонувати підключити Google, а не просто показати текст */
+export class GoogleApiError extends Error {
+  constructor(message: string, public code?: string) { super(message); }
+}
+
+async function googleJson<T>(res: Response, fallback: string): Promise<T> {
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new GoogleApiError(err.error || fallback, err.code);
+  }
+  return res.json();
+}
+
+export const getGoogleStatus = async (): Promise<GoogleStatus> =>
+  googleJson(await fetch('/api/google/status', { headers: authHeaders() }), 'Не вдалось отримати стан Google');
+
+/** Адреса екрана згоди Google; після неї Google повертає людину на наш callback */
+export const getGoogleConnectUrl = async (): Promise<string> =>
+  (await googleJson<{ url: string }>(
+    await fetch('/api/google/connect', { method: 'POST', headers: authHeaders() }),
+    'Не вдалось почати підключення',
+  )).url;
+
+export const updateGooglePrefs = async (prefs: { syncTasks?: boolean; syncEvents?: boolean }): Promise<void> => {
+  await googleJson(await fetch('/api/google/prefs', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(prefs),
+  }), 'Не вдалось зберегти налаштування');
+};
+
+export const syncGoogleNow = async (): Promise<void> => {
+  await googleJson(await fetch('/api/google/sync', { method: 'POST', headers: authHeaders() }), 'Не вдалось запустити синхронізацію');
+};
+
+export const disconnectGoogle = async (): Promise<void> => {
+  await googleJson(await fetch('/api/google/connection', { method: 'DELETE', headers: authHeaders() }), 'Не вдалось відключити Google');
+};
+
+export const createGoogleMeeting = async (input: GoogleMeetingInput): Promise<GoogleMeetingResult> =>
+  googleJson(await fetch('/api/google/meetings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(input),
+  }), 'Не вдалось створити міт');
+
 // ── Пуш-сповіщення ────────────────────────────────────────────────────────────
 
 export const getPushKey = async (): Promise<{ enabled: boolean; publicKey: string | null }> => {
