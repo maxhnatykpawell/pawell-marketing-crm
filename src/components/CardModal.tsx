@@ -23,6 +23,7 @@ import RichText from './RichText';
 import RichTextEditor from './RichTextEditor';
 import EmojiPicker from './EmojiPicker';
 import MentionSuggestions from './MentionSuggestions';
+import Sheet from './chat/Sheet';
 import { mentionQueryAt, applyMention, suggestMentions } from '../lib/mentions';
 
 interface Props {
@@ -159,7 +160,7 @@ const AttachmentRow = React.memo(function AttachmentRow({
 });
 
 export default function CardModal({ card, onClose }: Props) {
-  const { state, updateCard, deleteCard, addCard, confirmAction, currentUser, hasEditRights } = useAppContext();
+  const { state, updateCard, deleteCard, addCard, moveCard, confirmAction, currentUser, hasEditRights } = useAppContext();
   const [cardLinkCopied, setCardLinkCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -195,6 +196,7 @@ export default function CardModal({ card, onClose }: Props) {
   const [titleState, setTitleState] = useState<'idle' | 'loading' | 'missing'>('idle');
 
   // Which "add" panels are open
+  const [stageOpen, setStageOpen] = useState(false);
   const [openPanel, setOpenPanel] = useState<'members' | 'date' | 'checklist' | 'attachment' | 'link' | 'project' | null>(null);
 
   const handleReviewPlan = async () => {
@@ -506,10 +508,48 @@ export default function CardModal({ card, onClose }: Props) {
         {/* ── Top bar ── */}
         <div className="flex items-center justify-between px-4 sm:px-5 pt-3 sm:pt-4 pb-2 pt-safe sticky top-0 z-10 bg-white sm:static">
           {/* List badge */}
-          <button className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">
+          <button
+            onClick={() => setStageOpen(true)}
+            disabled={!hasEditRights}
+            aria-haspopup="dialog"
+            aria-label={`Колонка: ${list?.title || 'без списку'}. Змінити`}
+            className="flex items-center gap-1 min-h-[40px] sm:min-h-0 px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 active:bg-gray-200 rounded-lg transition disabled:opacity-60 disabled:cursor-default"
+          >
             {list?.title || 'Без списку'}
             <ChevronDown className="w-3.5 h-3.5 text-gray-500" />
           </button>
+
+          {stageOpen && (
+            // Обгортка не пускає клік нагору: інакше він дійшов би до підкладки картки й закрив її
+            <div onClick={e => e.stopPropagation()}>
+              <Sheet title="Перемістити в колонку" onClose={() => setStageOpen(false)} size="sm">
+                <ul className="py-1">
+                  {state.lists
+                    .filter(l => l.boardId === list?.boardId)
+                    .sort((a, b) => a.order - b.order)
+                    .map(l => {
+                      const current = l.id === card.listId;
+                      return (
+                        <li key={l.id}>
+                          <button
+                            onClick={() => {
+                              // Та сама дія, що й перетягування на дошці: картка стає в кінець колонки
+                              if (!current) moveCard(card.id, l.id);
+                              setStageOpen(false);
+                            }}
+                            aria-current={current ? 'true' : undefined}
+                            className={`w-full flex items-center justify-between gap-3 px-5 min-h-[52px] sm:min-h-[44px] text-left text-base sm:text-sm active:bg-gray-100 hover:bg-gray-50 ${current ? 'font-semibold text-blue-700' : 'text-gray-800'}`}
+                          >
+                            <span className="truncate">{l.title}</span>
+                            {current && <Check className="w-4 h-4 shrink-0" />}
+                          </button>
+                        </li>
+                      );
+                    })}
+                </ul>
+              </Sheet>
+            </div>
+          )}
 
           <div className="flex items-center gap-1">
             <button className="hidden sm:block p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition" title="Обкладинка">
