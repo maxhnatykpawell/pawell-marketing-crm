@@ -15,6 +15,8 @@ import RevenueDistributionCard from './analytics/RevenueDistribution';
 import ClientTiers from './analytics/ClientTiers';
 import ClientPowerCard, { type PowerQueueItem } from './analytics/ClientPowerCard';
 import ClientPowerDialog from './analytics/ClientPowerDialog';
+import ClientNamesBanner from './analytics/ClientNamesBanner';
+import { countFallbackNames } from '../lib/clientNames';
 import { useClientPower } from '../hooks/useClientPower';
 import {
   buildPowerContext, computePower, attachPower, summarizePower, matchesPowerFocus, POWER_TIER_BY_ID,
@@ -356,13 +358,15 @@ export default function AnalyticsView() {
   const [allClients, setAllClients] = useState<ClientLTV[]>([]);
   const [clientsLoading, setClientsLoading] = useState(true);
   const [clientsError, setClientsError] = useState<string | null>(null);
+  /** Збільшується, коли список клієнтів треба перечитати (наприклад, після підтягування назв) */
+  const [clientsReloadKey, setClientsReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const list = await getKeepInCRMLTVClients();
-        if (!cancelled) setAllClients(list);
+        if (!cancelled) { setAllClients(list); setClientsError(null); }
       } catch (e: any) {
         if (!cancelled) setClientsError(e.message || 'Не вдалось завантажити клієнтів');
       } finally {
@@ -370,7 +374,10 @@ export default function AnalyticsView() {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [clientsReloadKey]);
+
+  /** Клієнти, яким замість назви показано номер: KeepInCRM не віддав ім'я разом з угодою */
+  const unnamedClients = useMemo(() => countFallbackNames(allClients), [allClients]);
 
   // Похідні поля рахуємо один раз, а не на кожен фільтр
   const enriched = useMemo(
@@ -760,6 +767,11 @@ export default function AnalyticsView() {
           )}
 
           <div className="space-y-6">
+            {/* Адміністратору: клієнти без назви (замість неї номер) і кнопка, що це виправляє */}
+            {currentUser?.role === 'admin' && (
+              <ClientNamesBanner unnamed={unnamedClients} onDone={() => setClientsReloadKey(k => k + 1)} />
+            )}
+
             {/* Компактна смуга метрик: головне тут — список, а великі картки
                 з тими самими числами живуть у розділі «Дохід» */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm grid grid-cols-3 divide-x divide-gray-100">

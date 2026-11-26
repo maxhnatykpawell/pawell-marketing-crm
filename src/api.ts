@@ -1170,6 +1170,37 @@ export const saveClientPower = async (clientId: string, input: ClientPowerInput)
   return (await res.json()).item ?? null;
 };
 
+// ── Назви клієнтів з KeepInCRM ────────────────────────────────────────────────
+
+export interface ClientNamesState {
+  running: boolean;
+  phase: string;
+  done: number;
+  total: number;
+  error: string | null;
+  /** Скільки назв знайдено й скільки клієнтів лишились без назви за підсумком прогону */
+  resolved: number;
+  unresolved: number;
+  finishedAt: string | null;
+}
+
+export const getClientNamesStatus = async (): Promise<ClientNamesState> => {
+  const res = await fetch('/api/keepincrm/client-names/status', { headers: authHeaders() });
+  if (!res.ok) throw new Error('Не вдалось отримати стан підтягування назв');
+  return res.json();
+};
+
+/** Запустити підтягування назв (лише адмін). false — прогін уже йде. */
+export const startClientNamesSync = async (): Promise<boolean> => {
+  const res = await fetch('/api/keepincrm/sync-client-names', { method: 'POST', headers: authHeaders() });
+  if (res.status === 409) return false;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Не вдалось запустити підтягування назв');
+  }
+  return true;
+};
+
 // ── Google Calendar ───────────────────────────────────────────────────────────
 
 export interface GoogleStatus {

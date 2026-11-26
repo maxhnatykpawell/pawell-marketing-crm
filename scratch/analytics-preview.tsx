@@ -27,6 +27,14 @@ const clients = Array.from({ length: 90 }, (_, i) => {
   };
 });
 
+// Перші 14 клієнтів «без назви»: так їх віддає сервер, коли KeepInCRM не прислав ім'я з угодою.
+// Параметр ?named відключає це — для порівняння.
+const realNames = new Map(clients.map(c => [c.id, c.name]));
+const withNumbers = !location.search.includes('named');
+let namesResolved = false;
+const clientsForResponse = () => clients.map((c, i) => (withNumbers && !namesResolved && i < 14 ? { ...c, name: 'Клієнт #' + (1000 + i) } : { ...c, name: realNames.get(c.id)! }));
+let namesJob: { running: boolean; startedAt: number } | null = null;
+
 const snapshot = {
   totalLTVRevenue: clients.reduce((s, c) => s + c.revenue, 0), uniqueClientsCount: clients.length, ltv: 1_200_000,
   stageStats: [{ stage: 'Переговори', count: 12, avgOpenDays: 21, avgCycleDays: 0 }, { stage: 'Виграно', count: 40, avgOpenDays: 0, avgCycleDays: 34 }],
@@ -40,7 +48,13 @@ window.fetch = async (input: any, init?: any) => {
   const json = (b: any, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
   if (!url.startsWith('/api/')) return realFetch(input, init);
   await new Promise(r => setTimeout(r, 120));
-  if (url.startsWith('/api/keepincrm/ltv/clients')) return json(clients);
+  if (url.startsWith('/api/keepincrm/ltv/clients')) return json(clientsForResponse());
+  if (url.startsWith('/api/keepincrm/client-names/status')) {
+    const running = !!namesJob && Date.now() - namesJob.startedAt < 3500;
+    if (namesJob && !running) namesResolved = true;
+    return json({ running, phase: 'Назви клієнтів по одному', done: running ? 7 : 14, total: 14, error: null, resolved: running ? 0 : 14, unresolved: 0, finishedAt: null });
+  }
+  if (url.startsWith('/api/keepincrm/sync-client-names')) { namesJob = { running: true, startedAt: Date.now() }; return json({ started: true }, 202); }
   if (url.startsWith('/api/keepincrm/ltv')) return json(snapshot);
   if (url.startsWith('/api/client-power')) return json({ items: {
     c0: { potentialUah: 30_000_000, contractSize: 'large', contacts: 7, fullAccount: true },

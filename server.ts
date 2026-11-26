@@ -53,6 +53,7 @@ import {
 import { registerChatRoutes, chatStreamStats } from './chat-server';
 import { registerGoogleCalendar, type GoogleCalendarApi } from './google-calendar-server';
 import { registerClientPowerRoutes } from './client-power-server';
+import { pickClientName, fallbackName, isFallbackName, applyClientNames, describeShape } from './src/lib/clientNames';
 import { registerPushRoutes, sendPushToUsers } from './push-server';
 import { parseMentions } from './src/lib/mentions';
 import { previewOf } from './src/lib/chat';
@@ -1838,6 +1839,151 @@ async function readLtvClients(db: admin.firestore.Firestore): Promise<any[]> {
   return legacy.exists ? (legacy.data()?.clients ?? []) : [];
 }
 
+// ── Назви клієнтів ────────────────────────────────────────────────────────────
+//
+// Угоди з KeepInCRM інколи приходять без імені клієнта, і в аналітиці тоді був «Клієнт #1234».
+// Назви довантажуються окремим прогоном і лежать ОКРЕМО від клієнтів знімка: так їх можна
+// оновити, не переписуючи тисячі записів, і вони переживають наступну LTV-синхронізацію
+// (та знову побачить клієнта без імені, але назву підставить із цього сховища).
+
+const CLIENT_NAMES_DOC = 'keepincrm_client_names';
+
+/** Скільки клієнтів без назви ще дозволяє тягнути їх по одному; більше — дешевше пройти весь список */
+const NAMES_ONE_BY_ONE_LIMIT = 60;
+
+interface ClientNamesState {
+  running: boolean;
+  trigger: 'manual' | 'auto' | null;
+  phase: string;
+  done: number;
+  total: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+  /** Скільки назв знайдено / скільки клієнтів лишились без назви за підсумком прогону */
+  resolved: number;
+  unresolved: number;
+  /** Лише назви полів відповіді CRM (без значень): показує, де API тримає ім'я */
+  sampleShape: unknown;
+}
+
+const clientNamesState: ClientNamesState = {
+  running: false, trigger: null, phase: '', done: 0, total: 0, startedAt: null, finishedAt: null,
+  error: null, resolved: 0, unresolved: 0, sampleShape: null,
+};
+
+let clientNamesCache: { names: Record<string, string>; at: number } | null = null;
+
+async function readClientNames(): Promise<Record<string, string>> {
+  if (clientNamesCache && Date.now() - clientNamesCache.at < 60_000) return clientNamesCache.names;
+  const db = initFirebase();
+  let names: Record<string, string> = {};
+  if (db) {
+    const doc = await db.collection(CRM_COLLECTION).doc(CLIENT_NAMES_DOC).get();
+    names = doc.exists ? (doc.data()?.names ?? {}) : {};
+  } else {
+    names = (await getDb()).keepincrm_client_names?.names ?? {};
+  }
+  clientNamesCache = { names, at: Date.now() };
+  return names;
+}
+
+async function writeClientNames(names: Record<string, string>): Promise<void> {
+  // Документ Firestore — до 1 МіБ. Назви зберігаємо лише для клієнтів, яким їх бракувало, тож
+  // до межі далеко, але мовчки втратити запис не можна
+  if (JSON.stringify(names).length > 900 * 1024) throw new Error('Забагато назв для одного документа');
+  const db = initFirebase();
+  if (db) {
+    await db.collection(CRM_COLLECTION).doc(CLIENT_NAMES_DOC).set({ names, updatedAt: new Date().toISOString() });
+  } else {
+    const state = await getDb();
+    state.keepincrm_client_names = { names, updatedAt: new Date().toISOString() };
+    await saveDb(state);
+  }
+  clientNamesCache = { names, at: Date.now() };
+}
+
+/**
+ * Довантажити назви клієнтам, які їх не мають. Повертає false, якщо прогін уже йде.
+ *
+ * Мало таких клієнтів — питаємо про кожного окремо (кілька запитів). Багато — один
+ * прохід по всьому списку клієнтів дешевший за тисячі окремих запитів.
+ */
+async function startClientNamesSync(trigger: 'manual' | 'auto'): Promise<boolean> {
+  if (clientNamesState.running) return false;
+  Object.assign(clientNamesState, {
+    running: true, trigger, phase: 'Пошук клієнтів без назви', done: 0, total: 0,
+    startedAt: new Date().toISOString(), finishedAt: null, error: null,
+    resolved: 0, unresolved: 0, sampleShape: null,
+  });
+
+  void (async () => {
+    try {
+      const db = initFirebase();
+      const clients: any[] = db ? await readLtvClients(db) : ((await getDb()).keepincrm_ltv?.clients ?? []);
+      const wanted = new Set<string>(
+        clients.filter(c => isFallbackName(c.name)).map(c => String(c.id)),
+      );
+      // Ті, що вже є в сховищі, повторно не шукаємо
+      const known = await readClientNames();
+      for (const id of [...wanted]) if (known[id]) wanted.delete(id);
+
+      const found: Record<string, string> = {};
+      let sample: unknown = null;
+
+      if (wanted.size > 0 && wanted.size <= NAMES_ONE_BY_ONE_LIMIT) {
+        clientNamesState.phase = 'Назви клієнтів по одному';
+        clientNamesState.total = wanted.size;
+        for (const id of wanted) {
+          try {
+            const body = await keepinGet(`${keepinCRMBaseUrl()}/clients/${encodeURIComponent(id)}`, `/clients/${id}`);
+            const raw = body?.client ?? body;
+            sample ??= describeShape(raw);
+            const name = pickClientName(raw);
+            if (name) found[id] = name;
+          } catch { /* один клієнт без відповіді не зупиняє решту */ }
+          clientNamesState.done++;
+        }
+      } else if (wanted.size > 0) {
+        clientNamesState.phase = 'Список клієнтів з CRM';
+        await keepinFetchPages<null>('/clients', {}, raw => {
+          sample ??= describeShape(raw);
+          if (raw?.id == null) return null;
+          const id = String(raw.id);
+          if (wanted.has(id)) {
+            const name = pickClientName(raw);
+            if (name) found[id] = name;
+          }
+          return null; // у пам'яті нічого не копимо: потрібні лише знайдені назви
+        }, (done, total) => { clientNamesState.done = done; clientNamesState.total = total; });
+      }
+
+      if (Object.keys(found).length > 0) await writeClientNames({ ...known, ...found });
+
+      clientNamesState.resolved = Object.keys(found).length;
+      clientNamesState.unresolved = wanted.size - clientNamesState.resolved;
+      clientNamesState.sampleShape = sample;
+      if (clientNamesState.unresolved > 0) {
+        // Структуру (без значень) лишаємо в логу: за нею видно, в якому полі API тримає ім'я
+        console.warn(
+          `⚠️ KeepInCRM: назву не знайдено для ${clientNamesState.unresolved} клієнтів. Структура клієнта: ${JSON.stringify(sample)}`,
+        );
+      } else {
+        console.log(`✅ Назви клієнтів: знайдено ${clientNamesState.resolved}`);
+      }
+    } catch (e: any) {
+      clientNamesState.error = e?.message || String(e);
+      console.error('❌ Назви клієнтів:', clientNamesState.error);
+    } finally {
+      clientNamesState.running = false;
+      clientNamesState.phase = '';
+      clientNamesState.finishedAt = new Date().toISOString();
+    }
+  })();
+
+  return true;
+}
+
 /** Журнал оплат (src/lib/paidLedger.ts) — частинами, як і клієнти */
 const PAID_LEDGER_COLLECTION = 'crm_keepincrm_paid_ledger';
 /** Службовий документ журналу — поруч із частинами, але не число */
@@ -2037,7 +2183,8 @@ async function runKeepInCRMLTV(
         if (!clientData) {
           clientData = {
             id: clientId,
-            name: item.client?.name || item.client?.title || `Клієнт #${clientId}`,
+            // Назва лежить у різних полях залежно від типу клієнта; номер — лише крайній випадок
+            name: pickClientName(item.client) ?? fallbackName(clientId),
             revenue: 0,
             agreementsCount: 0,
             tags: [],
@@ -2054,6 +2201,11 @@ async function runKeepInCRMLTV(
           clientsMap.set(clientId, clientData);
         }
         
+        // У першій угоді клієнта імені могло не бути, а в наступній — бути
+        if (isFallbackName(clientData.name)) {
+          const real = pickClientName(item.client);
+          if (real) clientData.name = real;
+        }
         clientData.revenue += amount;
         clientData.agreementsCount += 1;
 
@@ -2191,6 +2343,12 @@ async function runKeepInCRMLTV(
       const state = await getDb();
       state.keepincrm_ltv = { ...snapshot, clients: clientsToStore };
       await saveDb(state);
+    }
+
+    // Клієнтам без назви (угода її не принесла) довантажуємо назви окремим фоновим прогоном:
+    // це додаткові запити до CRM, і тримати ними саму синхронізацію не варто
+    if (clientsToStore.some((c: any) => isFallbackName(c.name))) {
+      void startClientNamesSync('auto');
     }
 
     const h12 = cohortLtv.horizons[12];
@@ -3215,14 +3373,30 @@ async function startServer() {
   app.get('/api/keepincrm/ltv/clients', requireAuth, async (_req, res) => {
     try {
       const db = initFirebase();
+      // Назви, довантажені окремо, підставляємо тут — на льоту, не переписуючи знімок
+      const names = await readClientNames().catch(() => ({} as Record<string, string>));
       if (db) {
-        return res.json(await readLtvClients(db));
+        return res.json(applyClientNames(await readLtvClients(db), names));
       }
       const state = await getDb();
-      res.json((state.keepincrm_ltv as any)?.clients ?? []);
+      res.json(applyClientNames((state.keepincrm_ltv as any)?.clients ?? [], names));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
+  });
+
+  /**
+   * POST /api/keepincrm/sync-client-names — підтягнути назви клієнтам, у яких замість
+   * назви в аналітиці номер. Фоном: відповідь не чекає на прогін.
+   */
+  app.post('/api/keepincrm/sync-client-names', requireAuth, requireAdmin, async (_req, res) => {
+    const started = await startClientNamesSync('manual');
+    res.status(started ? 202 : 409).json({ started, state: clientNamesState });
+  });
+
+  /** GET /api/keepincrm/client-names/status — хід прогону назв (для індикатора й опитування) */
+  app.get('/api/keepincrm/client-names/status', requireAuth, (_req, res) => {
+    res.json(clientNamesState);
   });
 
   /** POST /api/keepincrm/sync-ltv — примусова ручна синхронізація LTV */
