@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Loader2, UserSearch } from 'lucide-react';
+import { Check, Copy, Loader2, UserSearch } from 'lucide-react';
 import { ClientNamesState, getClientNamesStatus, startClientNamesSync } from '../../api';
 import { pluralUk } from '../../lib/plural';
 
@@ -22,6 +22,7 @@ export default function ClientNamesBanner({
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ resolved: number; unresolved: number } | null>(null);
+  const [copied, setCopied] = useState(false);
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
 
@@ -29,7 +30,13 @@ export default function ClientNamesBanner({
 
   // Прогін міг початись раніше (автоматично після синхронізації) — підхоплюємо його
   useEffect(() => {
-    getClientNamesStatus().then(setState).catch(() => { /* банер без стану — просто кнопка */ });
+    getClientNamesStatus()
+      .then(st => {
+        setState(st);
+        // Прогін уже закінчився й дав не все — показуємо підсумок, а не лише кнопку
+        if (!st.running && st.finishedAt && st.unresolved > 0) setResult({ resolved: st.resolved, unresolved: st.unresolved });
+      })
+      .catch(() => { /* банер без стану — просто кнопка */ });
   }, []);
 
   // Поки йде прогін, опитуємо стан; коли закінчився — оновлюємо список клієнтів
@@ -90,6 +97,31 @@ export default function ClientNamesBanner({
         )}
         {error && <span className="block text-xs text-red-600 mt-0.5">{error}</span>}
       </div>
+
+      {/* Коли назву знайти не вдалось, показуємо, як CRM віддає клієнта: лише назви полів,
+          без значень. З цього видно, де лежить ім'я, і структуру можна надіслати розробнику */}
+      {result && result.unresolved > 0 && !running && state?.sampleShape != null && (
+        <details className="basis-full text-xs text-amber-900">
+          <summary className="cursor-pointer font-semibold">Структура відповіді CRM (без значень)</summary>
+          <div className="mt-2 relative">
+            <pre className="max-h-64 overflow-auto rounded-lg bg-white border border-amber-200 p-3 text-[11px] leading-snug text-gray-700">
+              {JSON.stringify(state.sampleShape, null, 2)}
+            </pre>
+            <button
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(JSON.stringify(state.sampleShape, null, 2));
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                } catch { /* без дозволу буфер недоступний — текст можна виділити вручну */ }
+              }}
+              className="absolute top-2 right-2 inline-flex items-center gap-1 h-7 px-2 text-[11px] font-medium bg-white border border-amber-300 rounded-md hover:bg-amber-50"
+            >
+              {copied ? <><Check className="w-3 h-3" /> Скопійовано</> : <><Copy className="w-3 h-3" /> Копіювати</>}
+            </button>
+          </div>
+        </details>
+      )}
 
       {unnamed > 0 && (
         <button

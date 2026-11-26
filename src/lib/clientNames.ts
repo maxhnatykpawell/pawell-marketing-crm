@@ -42,14 +42,29 @@ export function pickClientName(c: unknown): string | null {
   if (!c || typeof c !== 'object') return null;
   const o = c as Record<string, any>;
 
+  // Контакти бувають масивом: беремо першого з іменем
+  const contactOf = (list: unknown): string | null => {
+    if (!Array.isArray(list)) return null;
+    for (const c of list) {
+      const n = (c && typeof c === 'object') ? (text((c as any).full_name) ?? text((c as any).name) ?? joinParts(c)) : null;
+      if (n) return n;
+    }
+    return null;
+  };
+
   return (
     text(o.name) ?? text(o.title) ?? text(o.full_name) ?? text(o.fullname) ?? text(o.display_name)
-    ?? text(o.company_name) ?? text(o.label)
+    ?? text(o.company_name) ?? text(o.company_title) ?? text(o.client_name) ?? text(o.person_name)
+    ?? text(o.contact_name) ?? text(o.organization) ?? text(o.org_name) ?? text(o.label)
+    // company / person інколи приходять не об'єктом, а просто рядком
+    ?? text(o.company) ?? text(o.person)
     // Компанія
     ?? text(o.company?.name) ?? text(o.company?.title) ?? text(o.company?.full_name) ?? text(o.company?.short_name)
     // Людина
     ?? text(o.person?.full_name) ?? text(o.person?.name) ?? text(o.person?.title) ?? joinParts(o.person)
     ?? text(o.contact?.full_name) ?? text(o.contact?.name) ?? joinParts(o.contact)
+    ?? text(o.primary_contact?.full_name) ?? text(o.primary_contact?.name) ?? joinParts(o.primary_contact)
+    ?? contactOf(o.contacts) ?? contactOf(o.people) ?? contactOf(o.persons)
     ?? joinParts(o)
   );
 }
@@ -81,7 +96,7 @@ export const countFallbackNames = (clients: { name: string }[]): number =>
  * Лише назви полів об'єкта (без значень) для діагностики: за ними видно, де саме API
  * тримає ім'я, не виносячи в лог персональні дані.
  */
-export function describeShape(v: unknown, depth = 2): unknown {
+export function describeShape(v: unknown, depth = 3): unknown {
   if (Array.isArray(v)) return v.length ? [describeShape(v[0], depth)] : [];
   if (v && typeof v === 'object') {
     if (depth <= 0) return 'object';

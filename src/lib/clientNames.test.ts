@@ -17,6 +17,15 @@ assert.equal(pickClientName({ id: 1, name: '  Подвійний   пробіл 
 // Компанія важливіша за людину: на картці клієнта вона й є назвою
 assert.equal(pickClientName({ company: { name: 'Роshen' }, person: { full_name: 'Менеджер Петро' } }), 'Роshen');
 
+// company / person як рядок, контакти масивом
+assert.equal(pickClientName({ id: 1, company: 'ТОВ Бета' }), 'ТОВ Бета');
+assert.equal(pickClientName({ id: 1, client_name: 'Гамма' }), 'Гамма');
+assert.equal(pickClientName({ id: 1, contacts: [{ phone: '1' }, { full_name: 'Петро Сидоренко' }] }), 'Петро Сидоренко', 'перший контакт з іменем');
+assert.equal(pickClientName({ id: 1, primary_contact: { first_name: 'Ольга', last_name: 'Гнатик' } }), 'Гнатик Ольга');
+
+// Назву джерела, менеджера чи етапу назвою клієнта вважати не можна
+assert.equal(pickClientName({ id: 1, source: { name: 'Instagram' }, manager: { name: 'Менеджер' }, stage: { title: 'Новий' } }), null);
+
 // Нічого придатного → null, а не «undefined» чи номер
 assert.equal(pickClientName({ id: 42 }), null);
 assert.equal(pickClientName({ id: 42, name: null, title: '' }), null);

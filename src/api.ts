@@ -1182,6 +1182,8 @@ export interface ClientNamesState {
   resolved: number;
   unresolved: number;
   finishedAt: string | null;
+  /** Назви полів відповіді CRM без значень: за ними видно, де API тримає ім'я */
+  sampleShape?: unknown;
 }
 
 export const getClientNamesStatus = async (): Promise<ClientNamesState> => {
