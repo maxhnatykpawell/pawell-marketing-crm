@@ -6,6 +6,10 @@ import {
 } from './types';
 import type { FunnelSpeedResponse, FunnelSpeedState } from './lib/funnelSpeed';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  PendingWrites, describeQueued, writeErrorMessage,
+  type PendingOp, type WriteKind,
+} from './lib/pendingWrites';
 
 const getToken = () => localStorage.getItem('auth_token');
 
@@ -107,7 +111,23 @@ export const acceptInvite = async (token: string, email: string, password: strin
   return res.json();
 };
 
-// ── Offline Queue ─────────────────────────────────────────────────────────────
+// ── Записи та офлайн-черга ────────────────────────────────────────────────────
+//
+// Інтерфейс оптимістичний: зміна одразу видна на екрані, на сервер іде у фоні.
+// Щоб це не обернулось «задача зникла» чи «збереглось не те», тут дотримано п'ять правил:
+//
+//  1. Кожен запис реєструється в pendingWrites. Коли приходить стан із сервера,
+//     незавершені записи накладаються поверх нього (див. lib/pendingWrites.ts).
+//  2. Записи одного обʼєкта йдуть строго по черзі. Інакше «змінити» могло обігнати
+//     «створити» і Firestore (set + merge) створив би обʼєкт-привид з одним полем.
+//  3. Невдалий запис НЕ мовчить: про нього сповіщається інтерфейс, а локальна
+//     зміна відкочується. Раніше помилка йшла лише в консоль.
+//  4. «Немає зв'язку» — це будь-який TypeError від fetch. Раніше шукали слово
+//     «fetch» у тексті помилки, а Safari пише «Load failed» — на iPhone записи
+//     без зв'язку просто губились.
+//  5. Черга не губить нічого: не відправляється двічі одночасно, не затирає
+//     записи, додані під час відправки, і не викидає запит лише через те,
+//     що сервер на мить відповів 500.
 
 export interface OfflineQueueItem {
   id: string;
@@ -117,13 +137,66 @@ export interface OfflineQueueItem {
     headers?: Record<string, string>;
     body?: any;
   };
+  /** Скільки разів сервер відповів помилкою 5xx на цей запит */
+  attempts?: number;
 }
 
 const OFFLINE_QUEUE_KEY = 'offline_queue';
+/** Після стількох відповідей 5xx запит вважаємо безнадійним, інакше він блокував би чергу вічно */
+const MAX_QUEUE_ATTEMPTS = 5;
 
-const enqueueRequest = (url: string, options: RequestInit) => {
-  const queue: OfflineQueueItem[] = JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]');
-  
+/** Спільний облік записів, ще не підтверджених сервером */
+export const pendingWrites = new PendingWrites();
+
+export interface WriteErrorEvent {
+  kind: WriteKind;
+  type: string;
+  id: string;
+  /** HTTP-код відповіді; null — відповіді не було взагалі */
+  status: number | null;
+  message: string;
+}
+
+const errorListeners = new Set<(e: WriteErrorEvent) => void>();
+
+/** Підписка на невдалі записи. Повертає функцію відписки. */
+export const onWriteError = (fn: (e: WriteErrorEvent) => void): (() => void) => {
+  errorListeners.add(fn);
+  return () => { errorListeners.delete(fn); };
+};
+
+const reportWriteError = (op: PendingOp, status: number | null): void => {
+  const message = writeErrorMessage(op.kind, op.type, status);
+  console.error(`[write] ${op.kind} ${op.type}/${op.id} не вдалось (${status ?? 'без відповіді'})`);
+  for (const fn of [...errorListeners]) {
+    try { fn({ kind: op.kind, type: op.type, id: op.id, status, message }); } catch { /* слухач не має ламати решту */ }
+  }
+};
+
+class WriteHttpError extends Error {
+  constructor(public status: number) {
+    super(`HTTP ${status}`);
+  }
+}
+
+/** fetch відхиляється саме TypeError, коли мережі немає, — і в Chrome, і в Firefox, і в Safari */
+const isNetworkError = (e: unknown): boolean => e instanceof TypeError;
+
+const readQueue = (): OfflineQueueItem[] => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+/** Кидає, якщо сховище переповнене: тоді запис мусить вважатись невдалим, а не «відкладеним» */
+const writeQueue = (queue: OfflineQueueItem[]): void => {
+  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+};
+
+const enqueueRequest = (url: string, options: RequestInit): string => {
   let serializedHeaders: Record<string, string> = {};
   if (options.headers) {
     if (options.headers instanceof Headers) {
@@ -131,61 +204,192 @@ const enqueueRequest = (url: string, options: RequestInit) => {
     } else if (Array.isArray(options.headers)) {
       options.headers.forEach(([key, value]) => { serializedHeaders[key] = value; });
     } else {
-      serializedHeaders = options.headers as Record<string, string>;
+      serializedHeaders = { ...(options.headers as Record<string, string>) };
     }
   }
-
+  // Токен у чергу не кладемо: при відправці беремо актуальний
   delete serializedHeaders['Authorization'];
 
+  let queue = readQueue();
+
+  // Повна синхронізація стану застаріває з наступною — лишаємо лише найновішу
+  if (url === '/api/state') {
+    for (const old of queue.filter(i => i.url === '/api/state')) {
+      const op = pendingWrites.byQueueId(old.id);
+      if (op) pendingWrites.settle(op);
+    }
+    queue = queue.filter(i => i.url !== '/api/state');
+  }
+
+  const id = uuidv4();
   queue.push({
-    id: uuidv4(),
+    id,
     url,
     options: {
       method: options.method,
       headers: serializedHeaders,
-      body: options.body ? JSON.parse(options.body as string) : undefined
+      body: options.body ? JSON.parse(options.body as string) : undefined,
+    },
+  });
+  writeQueue(queue);
+  return id;
+};
+
+/** Обʼєкти, створення яких остаточно відхилили: подальші записи для них не відправляємо */
+const deadKeys = new Set<string>();
+const keyOf = (type: string, id: string) => `${type}:${id}`;
+
+/** Записи одного обʼєкта виконуються по черзі, незалежно від того, чи попередній вдався */
+const writeChains = new Map<string, Promise<unknown>>();
+function inOrder<T>(key: string, task: () => Promise<T>): Promise<T> {
+  const prev = writeChains.get(key) ?? Promise.resolve();
+  const result = prev.then(task);
+  const tail = result.then(() => undefined, () => undefined);
+  writeChains.set(key, tail);
+  tail.then(() => { if (writeChains.get(key) === tail) writeChains.delete(key); });
+  return result;
+}
+
+/**
+ * Єдина точка, через яку проходить кожен запис на сервер.
+ *
+ * Реєструємо запис синхронно (поки зміна щойно з'явилась на екрані), а далі
+ * відправляємо по черзі. Успіх — запис підтверджено. Немає зв'язку — відкладаємо
+ * в чергу, запис лишається «в дорозі». Будь-що інше — відкочуємо і сповіщаємо.
+ */
+function sendWrite(
+  kind: WriteKind, type: string, id: string, url: string, init: RequestInit, data?: any,
+): Promise<void> {
+  const key = keyOf(type, id);
+  const op = pendingWrites.begin(kind, type, id, data);
+
+  return inOrder(key, async () => {
+    if (deadKeys.has(key)) {
+      pendingWrites.fail(op);
+      throw new Error(`Запис пропущено: ${key} не було створено`);
+    }
+    try {
+      // Якщо створення цього обʼєкта ще лежить у черзі, зміна має стати в чергу слідом,
+      // а не обігнати його — інакше на сервері зʼявиться обʼєкт-привид
+      if (pendingWrites.hasQueuedFor(type, id)) {
+        op.queueId = enqueueRequest(url, init);
+        return;
+      }
+      let res: Response;
+      try {
+        res = await fetch(url, init);
+      } catch (e) {
+        if (isNetworkError(e)) {
+          op.queueId = enqueueRequest(url, init);
+          return;
+        }
+        throw e;
+      }
+      if (!res.ok) throw new WriteHttpError(res.status);
+      pendingWrites.settle(op);
+    } catch (e) {
+      pendingWrites.fail(op);
+      if (kind === 'create') deadKeys.add(key);
+      reportWriteError(op, e instanceof WriteHttpError ? e.status : null);
+      throw e;
     }
   });
-  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+}
+
+let flushing: Promise<number> | null = null;
+
+/**
+ * Відправити накопичене без зв'язку. Повертає, скільки запитів дійшло.
+ * Паралельні виклики (подія online + старт) ділять один прохід.
+ */
+export const processOfflineQueue = (): Promise<number> => {
+  if (!navigator.onLine) return Promise.resolve(0);
+  if (flushing) return flushing;
+  flushing = flushQueue().finally(() => { flushing = null; });
+  return flushing;
 };
 
-export const processOfflineQueue = async () => {
-  if (!navigator.onLine) return;
-  const queue: OfflineQueueItem[] = JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]');
-  if (queue.length === 0) return;
+async function flushQueue(): Promise<number> {
+  const snapshot = readQueue();
+  if (snapshot.length === 0) return 0;
 
-  const newQueue: OfflineQueueItem[] = [];
+  const done = new Set<string>();
+  const bumped = new Map<string, number>();
+  let sent = 0;
 
-  for (const item of queue) {
+  const drop = (item: OfflineQueueItem, status: number | null) => {
+    done.add(item.id);
+    const op = pendingWrites.byQueueId(item.id);
+    if (op) {
+      pendingWrites.fail(op);
+      if (op.kind === 'create') deadKeys.add(keyOf(op.type, op.id));
+      reportWriteError(op, status);
+    }
+  };
+
+  for (const item of snapshot) {
+    const described = describeQueued({ id: item.id, url: item.url, options: item.options });
+    // Створення цього обʼєкта відхилили — його зміни відправляти не можна (вийде привид)
+    if (described && described.kind !== 'create' && deadKeys.has(keyOf(described.type, described.id))) {
+      done.add(item.id);
+      const op = pendingWrites.byQueueId(item.id);
+      if (op) pendingWrites.fail(op);
+      continue;
+    }
+
+    let res: Response;
     try {
-      await fetch(item.url, {
+      res = await fetch(item.url, {
         method: item.options.method,
         headers: { ...item.options.headers, ...authHeaders() },
-        body: item.options.body ? JSON.stringify(item.options.body) : undefined
+        body: item.options.body ? JSON.stringify(item.options.body) : undefined,
       });
-    } catch (error: any) {
-      if (error.name === 'TypeError' && error.message.includes('fetch')) {
-        newQueue.push(item);
+    } catch (e) {
+      if (isNetworkError(e)) break; // зв'язку знову нема: решта чекає, порядок збережено
+      drop(item, null);
+      continue;
+    }
+
+    if (res.ok) {
+      done.add(item.id);
+      sent++;
+      const op = pendingWrites.byQueueId(item.id);
+      if (op) pendingWrites.settle(op);
+      continue;
+    }
+
+    // 401 (сесія), 408/429 (перевантаження), 5xx (збій сервера) можуть минути — запит лишається.
+    // Але далі не йдемо: наступні запити можуть залежати від цього.
+    const transient = res.status === 401 || res.status === 408 || res.status === 429 || res.status >= 500;
+    if (transient) {
+      if (res.status >= 500) {
+        const attempts = (item.attempts ?? 0) + 1;
+        if (attempts >= MAX_QUEUE_ATTEMPTS) { drop(item, res.status); continue; }
+        bumped.set(item.id, attempts);
       }
+      break;
     }
+    drop(item, res.status);
   }
 
-  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(newQueue));
-};
+  // Читаємо чергу заново: поки ми відправляли, в неї могли додати нові запити
+  const remaining = readQueue()
+    .filter(i => !done.has(i.id))
+    .map(i => (bumped.has(i.id) ? { ...i, attempts: bumped.get(i.id) } : i));
+  writeQueue(remaining);
+  return sent;
+}
 
-const fetchWithOfflineQueue = async (url: string, options: RequestInit): Promise<Response> => {
-  try {
-    const res = await fetch(url, options);
-    return res;
-  } catch (error: any) {
-    if (error.name === 'TypeError' && error.message.includes('fetch')) {
-      enqueueRequest(url, options);
-      // Return fake successful response to prevent UI from breaking
-      return new Response(null, { status: 202, statusText: 'Accepted Offline' });
-    }
-    throw error;
+// Після перезавантаження памʼять про незавершені записи втрачена, а черга лишилась
+// у localStorage: відновлюємо за нею, щоб створене без зв'язку було видно одразу
+if (typeof localStorage !== 'undefined') {
+  for (const item of readQueue()) {
+    const d = describeQueued({ id: item.id, url: item.url, options: item.options });
+    if (!d) continue;
+    const op = pendingWrites.begin(d.kind, d.type, d.id, d.data);
+    op.queueId = item.id;
   }
-};
+}
 
 // ── App State ─────────────────────────────────────────────────────────────────
 
@@ -200,13 +404,29 @@ export const fetchState = async (): Promise<AppState> => {
   return res.json();
 };
 
+/**
+ * Свіжий стан із сервера з накладеними записами, яких сервер міг ще не бачити.
+ *
+ * Саме цим, а не голим fetchState, слід оновлювати екран: інакше відповідь, що
+ * вийшла з сервера до створення задачі, затре її на екрані (див. lib/pendingWrites).
+ *
+ * Повертає null, коли відповідь точно застаріла — поки вона летіла, завершилась
+ * повна синхронізація стану. Тоді слід просто завантажити ще раз.
+ * allowDuringStateSync — для першого завантаження: воно ніколи не відкладається.
+ */
+export const fetchStateMerged = async (allowDuringStateSync = false): Promise<AppState | null> => {
+  const started = pendingWrites.fetchStart();
+  const server = await fetchState();
+  if (!allowDuringStateSync && pendingWrites.stateSyncInFlight(started)) return null;
+  return pendingWrites.overlay(server, started);
+};
+
 export const syncState = async (state: AppState): Promise<void> => {
-  const res = await fetchWithOfflineQueue('/api/state', {
+  await sendWrite('state', 'state', 'state', '/api/state', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(state),
   });
-  if (!res.ok) throw new Error('Failed to sync state');
 };
 
 export const uploadFile = async (file: File): Promise<Attachment> => {
@@ -266,31 +486,20 @@ export const reviewPlanWithAI = async (title: string, description: string, subta
 };
 
 
-export const createEntity = async (type: string, data: any): Promise<void> => {
-  const res = await fetchWithOfflineQueue(`/api/entity/${type}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw new Error(`Failed to create ${type}`);
-};
+const entityInit = (method: string, body?: unknown): RequestInit => ({
+  method,
+  headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...authHeaders() },
+  ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+});
 
-export const updateEntity = async (type: string, id: string, updates: any): Promise<void> => {
-  const res = await fetchWithOfflineQueue(`/api/entity/${type}/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify(updates),
-  });
-  if (!res.ok) throw new Error(`Failed to update ${type}`);
-};
+export const createEntity = (type: string, data: any): Promise<void> =>
+  sendWrite('create', type, String(data?.id ?? ''), `/api/entity/${type}`, entityInit('POST', data), data);
 
-export const deleteEntity = async (type: string, id: string): Promise<void> => {
-  const res = await fetchWithOfflineQueue(`/api/entity/${type}/${id}`, {
-    method: 'DELETE',
-    headers: { ...authHeaders() },
-  });
-  if (!res.ok) throw new Error(`Failed to delete ${type}`);
-};
+export const updateEntity = (type: string, id: string, updates: any): Promise<void> =>
+  sendWrite('update', type, id, `/api/entity/${type}/${encodeURIComponent(id)}`, entityInit('PUT', updates), updates);
+
+export const deleteEntity = (type: string, id: string): Promise<void> =>
+  sendWrite('delete', type, id, `/api/entity/${type}/${encodeURIComponent(id)}`, entityInit('DELETE'));
 
 // ── Announcements ─────────────────────────────────────────────────────────────
 

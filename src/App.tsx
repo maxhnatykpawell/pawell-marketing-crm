@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import { resyncPush } from './lib/pushClient';
 import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Project, Phase, Process, UserGroup, AccessRights, NotificationItem, Expense } from './types';
-import { fetchState, syncState, getMe, estimateTaskTime, createEntity, updateEntity, deleteEntity, processOfflineQueue, sendCardAssignedNotification } from './api';
+import { fetchStateMerged, onWriteError, syncState, getMe, estimateTaskTime, createEntity, updateEntity, deleteEntity, processOfflineQueue, sendCardAssignedNotification } from './api';
 import { v4 as uuidv4 } from 'uuid';
 import Board from './components/Board';
 import ContentPlanView from './components/ContentPlanView';
@@ -145,6 +145,15 @@ export default function App() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string, onConfirm: () => void } | null>(null);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  // Записи, які сервер не прийняв: показуємо людині, а не ховаємо в консолі
+  const [writeErrors, setWriteErrors] = useState<{ id: string; message: string }[]>([]);
+  // Примусове оновлення стану з сервера (після офлайн-черги); виставляє ефект опитування
+  const reloadFromServerRef = React.useRef<null | (() => Promise<void>)>(null);
+  useEffect(() => {
+    if (writeErrors.length === 0) return;
+    const t = setTimeout(() => setWriteErrors(prev => prev.slice(1)), 10000);
+    return () => clearTimeout(t);
+  }, [writeErrors]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [openCardId, setOpenCardId] = useState<string | null>(null);
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
@@ -177,7 +186,9 @@ export default function App() {
   useEffect(() => {
     const handleOnline = () => {
       setIsOffline(false);
-      processOfflineQueue().catch(console.error);
+      processOfflineQueue()
+        .then(sent => { if (sent > 0) void reloadFromServerRef.current?.(); })
+        .catch(console.error);
     };
     const handleOffline = () => setIsOffline(true);
 
@@ -185,7 +196,9 @@ export default function App() {
     window.addEventListener('offline', handleOffline);
 
     if (navigator.onLine) {
-      processOfflineQueue().catch(console.error);
+      processOfflineQueue()
+        .then(sent => { if (sent > 0) void reloadFromServerRef.current?.(); })
+        .catch(console.error);
     }
 
     return () => {
@@ -266,9 +279,11 @@ export default function App() {
     getMe()
       .then(user => {
         setCurrentUser(user);
-        return fetchState();
+        // true: перше завантаження не відкладаємо; записи з офлайн-черги накладаються поверх
+        return fetchStateMerged(true);
       })
       .then(data => {
+        if (!data) throw new Error('Порожній стан');
         const stateWithDefaults = {
           ...data,
         };
@@ -291,21 +306,60 @@ export default function App() {
     if (!currentUser) return;
 
     const lastModifiedRef = { current: '' };
+    let stopped = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let running = false;
+    // Запит на опитування прийшов, поки йде інше (наприклад, відкат після помилки запису)
+    let rerun = false;
+    // Примусове оновлення навіть без зміни мітки (відкат після невдалого запису)
+    let force = false;
 
+    /**
+     * Підтягнути чужі зміни.
+     *
+     * Відповідь сервера не підміняє локальний стан «наосліп»: поверх неї
+     * накладаються наші записи, яких сервер міг ще не бачити (інакше щойно
+     * створена задача зникала б, а потім з'являлась після рефрешу).
+     *
+     * Мітку lastModified запам'ятовуємо лише ПІСЛЯ успішного застосування: раніше
+     * вона ставилась до завантаження, і невдале завантаження більше не повторювалось,
+     * доки хтось не змінить дані ще раз.
+     */
     const poll = async () => {
+      if (running) { rerun = true; return; } // не накладаємо кілька опитувань одне на одне
+      running = true;
+      const forced = force;
+      force = false;
       try {
         const res = await fetch('/api/status', { headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` } });
-        if (res.ok) {
-          const data = await res.json();
-          const newTs = data.lastModified;
-          if (newTs && newTs !== lastModifiedRef.current) {
-            lastModifiedRef.current = newTs;
-            const newState = await fetchState();
-            setState(newState);
-          }
+        if (!res.ok) return;
+        const data = await res.json();
+        const newTs = data.lastModified;
+        if (!newTs || (newTs === lastModifiedRef.current && !forced)) return;
+
+        const merged = await fetchStateMerged();
+        if (stopped) return;
+        if (merged) {
+          lastModifiedRef.current = newTs;
+          setState(merged);
+        } else if (!retryTimer) {
+          // Поки вантажився стан, завершилась повна синхронізація — відповідь застаріла
+          retryTimer = setTimeout(() => { retryTimer = null; force = forced || force; poll(); }, 2000);
         }
       } catch { /* silent - don't interrupt user on poll error */ }
+      finally {
+        running = false;
+        if (rerun && !stopped) { rerun = false; void poll(); }
+      }
     };
+
+    // Невдалий запис → відкат: локальна зміна більше не накладається, тож свіжий стан її прибирає
+    const offWriteError = onWriteError(e => {
+      setWriteErrors(prev => [...prev, { id: uuidv4(), message: e.message }].slice(-3));
+      force = true;
+      void poll();
+    });
+    reloadFromServerRef.current = () => { force = true; return poll(); };
 
     const interval = setInterval(poll, 30000);
 
@@ -315,6 +369,10 @@ export default function App() {
     document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
+      stopped = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      reloadFromServerRef.current = null;
+      offWriteError();
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibility);
     };
@@ -324,8 +382,9 @@ export default function App() {
   const handleLogin = useCallback((user: AuthUser, _token: string) => {
     setCurrentUser(user);
     setLoading(true);
-    fetchState()
+    fetchStateMerged(true)
       .then(data => {
+        if (!data) return;
         const stateWithDefaults = {
           ...data,
         };
@@ -441,10 +500,14 @@ export default function App() {
     const cardSaved = createEntity('cards', newCard);
     cardSaved.catch(console.error);
 
-    // Auto-estimate time using AI
-    estimateTaskTime(title, '').then(estimatedMinutes => {
-      updateCardAsync(newCard.id, { estimatedMinutes });
-    });
+    // Auto-estimate time using AI — лише ПІСЛЯ того, як картку збережено. Раніше оцінка
+    // стартувала одразу, і її PUT міг обігнати створення: тоді в базі виникала
+    // «картка-привид» з єдиним полем estimatedMinutes. Якщо збереження не вдалось,
+    // оцінка не потрібна взагалі.
+    cardSaved
+      .then(() => estimateTaskTime(title, ''))
+      .then(estimatedMinutes => updateCardAsync(newCard.id, { estimatedMinutes }))
+      .catch(() => { /* помилку збереження вже показано користувачу */ });
 
     // Notify assignee if assigned on creation
     if (newCard.assigneeId && newCard.assigneeId !== currentUser?.userId) {
@@ -1238,6 +1301,26 @@ export default function App() {
         {isTeamManagerOpen && <TeamManager onClose={() => setIsTeamManagerOpen(false)} />}
         {isExpenseModalOpen && (
           <ExpenseModal onClose={() => setIsExpenseModalOpen(false)} />
+        )}
+
+        {writeErrors.length > 0 && (
+          <div
+            role="alert"
+            className="fixed z-[110] left-3 right-3 bottom-24 md:left-auto md:right-6 md:bottom-6 md:w-96 space-y-2 print:hidden"
+          >
+            {writeErrors.map(e => (
+              <div key={e.id} className="flex items-start gap-3 bg-red-600 text-white text-sm rounded-xl shadow-lg px-4 py-3">
+                <span className="flex-1 min-w-0">{e.message}</span>
+                <button
+                  onClick={() => setWriteErrors(prev => prev.filter(x => x.id !== e.id))}
+                  aria-label="Закрити"
+                  className="shrink-0 -mr-1 px-2 py-0.5 rounded-lg hover:bg-red-700 text-base leading-none"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
         )}
 
         {confirmDialog && (
