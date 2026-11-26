@@ -11,6 +11,7 @@ import {
 } from '../lib/funnelSpeed';
 import { PeriodValue, describePeriod } from './PeriodPicker';
 import { Section, TH, TD, Kpi, uah, num } from './report/primitives';
+import PawellLogo from './brand/PawellLogo';
 
 /**
  * Друкований звіт по поточній вибірці.
@@ -149,6 +150,7 @@ export default function AnalyticsReport({
       <header className="border-b-4 border-purple-600 pb-3">
         <div className="flex items-end justify-between gap-6">
           <div>
+            <PawellLogo height={20} tone="ink" className="mb-2" />
             <h1 className="text-[22px] font-black leading-tight">Аналітика клієнтів</h1>
             <p className="text-[10px] text-gray-600 mt-0.5">
               PAWELL · звіт сформовано {generatedAt}

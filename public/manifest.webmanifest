@@ -1,14 +1,14 @@
 {
-  "name": "PAWELL — робочий простір",
+  "name": "PAWELL — Innovation Department Hub",
   "short_name": "PAWELL",
-  "description": "Задачі, чат і особистий кабінет команди PAWELL",
+  "description": "Інфопростір відділу інновацій PAWELL: задачі, чат і особистий кабінет",
   "lang": "uk",
   "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#f8fafc",
-  "theme_color": "#2563eb",
+  "background_color": "#0b0b0f",
+  "theme_color": "#0b0b0f",
   "icons": [
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },

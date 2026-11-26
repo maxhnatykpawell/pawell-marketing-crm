@@ -9,6 +9,7 @@ import CardModal from '../CardModal';
 import MobileTasks from './MobileTasks';
 import { setUiMode } from '../../hooks/useIsMobile';
 import { PushPrompt } from '../PushSettings';
+import { PawellBadge } from '../brand/PawellLogo';
 
 type Tab = 'tasks' | 'chat' | 'profile';
 
@@ -62,7 +63,10 @@ export default function MobileShell({ chat, notifications, unreadCount, isOfflin
       {/* Верхня панель */}
       <header className="shrink-0 bg-white border-b border-gray-200 pt-safe">
         <div className="h-14 px-4 flex items-center justify-between">
-          <h1 className="text-lg font-bold text-gray-900">{TITLES[tab]}</h1>
+          <div className="flex items-center gap-3 min-w-0">
+            <PawellBadge size="sm" />
+            <h1 className="text-lg font-bold text-gray-900 truncate">{TITLES[tab]}</h1>
+          </div>
           <div className="flex items-center gap-1">
             {isOffline && (
               <span className="mr-1 px-2 py-1 rounded-lg bg-yellow-100 text-yellow-800 text-xs font-medium">Офлайн</span>

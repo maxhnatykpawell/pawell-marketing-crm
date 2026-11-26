@@ -224,3 +224,73 @@
 @media (prefers-reduced-motion: reduce) {
   @keyframes sheet-up { from { opacity: 0; } to { opacity: 1; } }
 }
+
+/* ── Бренд PAWELL ────────────────────────────────────────────────────────────
+   Токени: єдине джерело кольорів бренду для CSS (у React вони в brand/PawellLogo.tsx). */
+:root {
+  --brand-yellow: #f9db00;
+  --brand-ink: #0b0b0f;
+}
+
+/* Анімація логотипа при запуску (components/brand/PawellLogo.tsx → PawellLogoAnimated).
+   Хронологія, с: рамка малюється 0–0,9 → контури літер 0,35–1,5 → заливка літер 0,9–1,7 →
+   зникнення контурів 1,3–1,95 → відблиск 1,8–2,6. Усі «початкові» стани задано тут, а
+   animation-fill-mode: both тримає кінцевий. */
+@keyframes pw-draw { to { stroke-dashoffset: 0; } }
+@keyframes pw-fill-in { to { fill-opacity: 1; } }
+@keyframes pw-stroke-off { to { stroke-opacity: 0; } }
+@keyframes pw-fade-in { to { opacity: 1; } }
+@keyframes pw-fade-out { to { opacity: 0; } }
+@keyframes pw-shine { from { transform: translateX(0) skewX(-18deg); } to { transform: translateX(560px) skewX(-18deg); } }
+
+.pw-anim .pw-frame-stroke {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation:
+    pw-draw 0.9s cubic-bezier(0.65, 0, 0.35, 1) 0s both,
+    pw-fade-out 0.2s ease 1.15s both;
+}
+.pw-anim .pw-frame-fill {
+  opacity: 0;
+  animation: pw-fade-in 0.25s ease 0.95s both;
+}
+.pw-anim .pw-letter {
+  fill-opacity: 0;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation:
+    pw-draw 0.7s cubic-bezier(0.65, 0, 0.35, 1) calc(0.35s + var(--i) * 0.09s) both,
+    pw-fill-in 0.4s ease calc(0.9s + var(--i) * 0.08s) both,
+    pw-stroke-off 0.25s ease calc(1.3s + var(--i) * 0.08s) both;
+}
+.pw-anim .pw-shine {
+  animation: pw-shine 0.8s cubic-bezier(0.4, 0, 0.2, 1) 1.8s both;
+}
+
+/* Заставка при запуску */
+@keyframes pw-splash-glow {
+  0%   { opacity: 0; transform: scale(0.6); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes pw-splash-exit {
+  to { opacity: 0; transform: scale(1.04); }
+}
+.pw-splash { background: var(--brand-ink); }
+.pw-splash-glow {
+  background: radial-gradient(closest-side, rgba(249, 219, 0, 0.14), rgba(249, 219, 0, 0) 70%);
+  animation: pw-splash-glow 1.6s ease-out both;
+}
+.pw-splash-tagline { opacity: 0; animation: pw-fade-in 0.6s ease 1.5s both; }
+.pw-splash-exit { animation: pw-splash-exit 0.45s ease-in both; pointer-events: none; }
+
+/* Менше руху — без «малювання»: логотип з'являється одразу, лише м'яко проявляється */
+@media (prefers-reduced-motion: reduce) {
+  .pw-anim .pw-frame-stroke,
+  .pw-anim .pw-letter,
+  .pw-anim .pw-shine { animation: none; }
+  .pw-anim .pw-frame-stroke { stroke-opacity: 0; }
+  .pw-anim .pw-frame-fill { animation: pw-fade-in 0.3s ease 0s both; }
+  .pw-anim .pw-letter { fill-opacity: 1; stroke-opacity: 0; stroke-dashoffset: 0; }
+  .pw-splash-glow, .pw-splash-tagline { animation: pw-fade-in 0.3s ease 0s both; }
+  .pw-splash-exit { animation-duration: 0.15s; }
+}

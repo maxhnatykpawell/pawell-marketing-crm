@@ -8,6 +8,7 @@ import {
 import { COHORT_MATURITY_DAYS } from '../lib/cac';
 import { pluralUk } from '../lib/plural';
 import { uah, num } from './report/primitives';
+import PawellLogo from './brand/PawellLogo';
 import Donut, { sourceColor, OTHER_COLOR } from './report/Donut';
 
 /**
@@ -297,7 +298,8 @@ export default function MonthlyReportDoc({
       <header className="pb-4 border-b-4 border-purple-600">
         <div className="flex items-end justify-between gap-8">
           <div>
-            <p className="text-[12.5px] font-extrabold tracking-[0.12em] uppercase text-purple-700">PAWELL · Місячний звіт</p>
+            <PawellLogo height={26} tone="ink" className="mb-2.5" />
+            <p className="text-[12.5px] font-extrabold tracking-[0.12em] uppercase text-purple-700">Місячний звіт</p>
             <h1 className="text-[36px] font-black leading-none mt-1">
               {title}
               {progress?.partial && (

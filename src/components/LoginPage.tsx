@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { login } from '../api';
 import { AuthUser } from '../types';
+import PawellLogo from './brand/PawellLogo';
 import { Mail, Lock, LogIn, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 interface LoginPageProps {
@@ -64,11 +65,9 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           <div className="px-8 pt-8 pb-10">
             {/* Logo */}
             <div className="flex flex-col items-center mb-8">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/30 mb-4">
-                <span className="text-white font-black text-2xl">P</span>
-              </div>
-              <h1 className="text-2xl font-bold text-white tracking-tight">PAWELL - Marketing Workspace</h1>
-              <p className="text-blue-100 mt-2">Управління задачами та проектами</p>
+              <PawellLogo height={56} tone="yellow" className="mb-5" />
+              <h1 className="text-2xl font-bold text-white tracking-tight">Innovation Department Hub</h1>
+              <p className="text-blue-100 mt-2">Інфопростір відділу інновацій</p>
             </div>
 
             {/* Form */}

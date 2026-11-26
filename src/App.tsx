@@ -33,6 +33,7 @@ import type { AssistantAction } from './api';
 import { canViewSection, ALL_VIEW_IDS, DEFAULT_ALLOWED_VIEWS } from './lib/views';
 import { canAccessProject, scopeStateToUser } from './lib/projectAccess';
 import { parseDeepLink, applyDeepLink } from './lib/deepLink';
+import PawellLogo, { PawellBadge } from './components/brand/PawellLogo';
 import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet, MessageSquare, Gem, Bot } from 'lucide-react';
 
 // 'gantt' і 'event-details' — не вкладки меню, а сторінки всередині «Проєктів»
@@ -121,11 +122,10 @@ export const useAppContext = () => {
 
 function LoadingScreen() {
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-950">
-      <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/30 mb-6">
-        <span className="text-white font-black text-2xl">K</span>
-      </div>
-      <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+    // Той самий темний фон і логотип, що в заставці: перехід із неї без стрибка
+    <div className="min-h-screen flex flex-col items-center justify-center" style={{ backgroundColor: 'var(--brand-ink)' }}>
+      <PawellLogo height={52} tone="yellow" className="mb-8" />
+      <Loader2 className="w-5 h-5 animate-spin" style={{ color: 'var(--brand-yellow)' }} />
       <p className="text-gray-500 text-sm mt-3">Завантаження...</p>
     </div>
   );
@@ -1121,11 +1121,8 @@ export default function App() {
         <header className="bg-white border-b border-gray-200 px-4 py-2.5 flex items-center justify-between sticky top-0 z-10 w-full print:hidden">
           {/* Left: logo + nav */}
           <div className="flex items-center gap-4">
-            {/* Logo */}
-            <div className="flex items-center gap-2 shrink-0">
-              <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-base leading-none">P</div>
-              <span className="text-sm font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent hidden md:block">PAWELL</span>
-            </div>
+            {/* Logo: темним контуром прямо на білому — жовтий на білому не читається */}
+            <PawellBadge size="sm" />
 
             {/* Nav */}
             <nav className="flex items-center gap-0.5 pl-3 border-l border-gray-200">
