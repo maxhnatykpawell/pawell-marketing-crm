@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Card, Subtask, Comment, Attachment } from '../types';
 import { useAppContext } from '../App';
@@ -159,7 +159,18 @@ const AttachmentRow = React.memo(function AttachmentRow({
   );
 });
 
-export default function CardModal({ card, onClose }: Props) {
+export default function CardModal({ card, onClose: onCloseProp }: Props) {
+  // На телефоні картка закривається плавно: спершу виїзд (CSS .card-leaving), потім справжнє
+  // закриття. На комп'ютері, де цього руху немає, закриваємо одразу, як і раніше.
+  const [leaving, setLeaving] = useState(false);
+  const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onClose = useCallback(() => {
+    if (!window.matchMedia('(max-width: 639px)').matches) { onCloseProp(); return; }
+    if (leaving) return;
+    setLeaving(true);
+    leaveTimer.current = setTimeout(onCloseProp, 210);
+  }, [onCloseProp, leaving]);
+  useEffect(() => () => { if (leaveTimer.current) clearTimeout(leaveTimer.current); }, []);
   const { state, updateCard, deleteCard, addCard, moveCard, confirmAction, currentUser, hasEditRights } = useAppContext();
   const [cardLinkCopied, setCardLinkCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -498,11 +509,11 @@ export default function CardModal({ card, onClose }: Props) {
    */
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center sm:p-4 sm:pt-12 bg-gray-900/50 backdrop-blur-sm overflow-y-auto"
+      className={`card-backdrop ${leaving ? 'card-leaving' : ''} fixed inset-0 z-50 flex items-start justify-center sm:p-4 sm:pt-12 bg-gray-900/50 backdrop-blur-sm overflow-y-auto`}
       onClick={onClose}
     >
       <div
-        className="bg-white sm:rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col sm:overflow-hidden sm:mb-8 min-h-full sm:min-h-[480px]"
+        className="card-panel bg-white sm:rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col sm:overflow-hidden sm:mb-8 min-h-full sm:min-h-[480px]"
         onClick={e => e.stopPropagation()}
       >
         {/* ── Top bar ── */}

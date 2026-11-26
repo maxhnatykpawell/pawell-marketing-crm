@@ -23,6 +23,8 @@ import MessageFeed from './chat/MessageFeed';
 import Composer from './chat/Composer';
 import ChannelDetails from './chat/ChannelDetails';
 import { useVisualViewport } from '../hooks/useVisualViewport';
+import { AnimatePresence, motion, useDragControls } from 'motion/react';
+import { SPRING, shouldDismiss } from '../lib/motion';
 import Sheet from './chat/Sheet';
 
 interface Props {
@@ -47,8 +49,8 @@ export default function ChatView({ chat, mobile = false }: Props) {
   /** Скільки непрочитаного було в момент відкриття розмови — для роздільника «Нові» */
   const [unreadAtOpen, setUnreadAtOpen] = useState(0);
 
-  const showList = !mobile || !mobileThreadOpen;
-  const showThread = !mobile || mobileThreadOpen;
+  /** Жест «потягнути від лівого краю» повертає зі стрічки до списку (як у системних застосунках) */
+  const backDrag = useDragControls();
 
   const userById = useMemo(() => new Map(users.map(u => [u.id, u] as [string, User])), [users]);
 
@@ -57,7 +59,12 @@ export default function ChatView({ chat, mobile = false }: Props) {
     return c.title;
   };
 
-  const active = chat.conversations.find(c => c.id === chat.activeId) ?? null;
+  const liveActive = chat.conversations.find(c => c.id === chat.activeId) ?? null;
+  // На телефоні екран розмови ще «їде» з екрана, коли активної розмови вже нема (вийшли, заархівували):
+  // тримаємо останню, щоб під час виїзду вміст не блимнув порожнім станом
+  const lastActive = useRef<ChatConversationView | null>(null);
+  if (liveActive) lastActive.current = liveActive;
+  const active = liveActive ?? (mobile ? lastActive.current : null);
 
   // ── Відкриття розмови ───────────────────────────────────────────────────────
   const openConversation = (id: string) => {
@@ -72,11 +79,18 @@ export default function ChatView({ chat, mobile = false }: Props) {
     }
   };
 
+  /**
+   * Закрити екран розмови. Саму активну розмову скидаємо не тут, а коли екран доїхав
+   * (onExitComplete нижче): інакше вміст зник би раніше, ніж екран устиг виїхати.
+   */
   const closeThread = () => {
     setMobileThreadOpen(false);
     setDetailsOpen(false);
-    chat.closeConversation();
   };
+
+  // Пішли з вкладки чату, не повернувшись до списку: розмова не має лишитись «відкритою» —
+  // інакше нові повідомлення в ній зараховувались би прочитаними, хоч її не видно
+  useEffect(() => () => { if (mobile) chat.closeConversation(); }, []);
 
   /** Кнопка «Назад» у шапці: гасимо запис в історії, який ми самі додали */
   const backToList = () => {
@@ -225,51 +239,9 @@ export default function ChatView({ chat, mobile = false }: Props) {
   const activeNotify = active?.notify ?? 'all';
   const replyAuthor = replyTo ? userById.get(replyTo.authorId)?.name ?? 'Невідомий' : '';
 
-  return (
-    // flex-1 + min-h-0, а не h-full: батьківський <main> — колонка, і без
-    // min-h-0 стрічка розпирала б сторінку замість того, щоб прокручуватись
-    <div className={`flex-1 min-h-0 flex bg-white overflow-hidden ${mobile ? '' : 'rounded-xl shadow-sm border border-gray-200'}`}>
-
-      {/* ── Бічна панель ── */}
-      <aside className={`${showList ? 'flex' : 'hidden'} ${mobile ? 'w-full' : 'w-64 lg:w-72 border-r border-gray-200 shrink-0'} flex-col bg-gray-50/60 min-h-0`}>
-        <div className="px-3 py-3 border-b border-gray-200 bg-white shrink-0">
-          {!mobile && (
-            <div className="flex items-center justify-between mb-2.5 px-1">
-              <h2 className="text-sm font-bold text-gray-800 flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 text-blue-500" />
-                Чат
-                <ConnectionDot state={chat.connection} />
-              </h2>
-            </div>
-          )}
-          <div className="relative">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Пошук розмови…"
-              className={`w-full pl-9 pr-3 ${mobile ? 'py-2.5' : 'py-1.5'} text-sm bg-gray-100 rounded-lg outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 transition`}
-            />
-          </div>
-          {mobile && chat.connection !== 'online' && (
-            <p className="mt-2 text-[11px] text-amber-600 flex items-center gap-1">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              {chat.connection === 'connecting' ? 'Підключення…' : 'Немає зв’язку — перепідключаємось'}
-            </p>
-          )}
-        </div>
-
-        <div className="flex-1 overflow-y-auto overscroll-contain hidden-scrollbar py-1">
-          {renderSection('channels', 'Канали', sections.channels, () => setIsNewChannelOpen(true), 'Створити канал')}
-          {renderSection('dms', 'Особисті', sections.dms, () => setIsPeoplePickerOpen(true), 'Написати колезі')}
-        </div>
-      </aside>
-
-      {/* ── Стрічка ── */}
-      <section
-        className={`${showThread ? 'flex' : 'hidden'} flex-1 flex-col min-w-0 min-h-0 ${mobile ? 'fixed inset-x-0 top-0 z-30 bg-white' : ''}`}
-        style={mobile ? { height: viewport ? viewport.height : '100%', top: viewport ? viewport.top : 0 } : undefined}
-      >
+  // Вміст екрана розмови: однаковий для комп'ютера (колонка) і телефона (екран, що виїжджає)
+  const threadInner = (
+    <>
         {!active ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
             <MessageSquare className="w-10 h-10 text-gray-200 mb-3" />
@@ -378,7 +350,96 @@ export default function ChatView({ chat, mobile = false }: Props) {
             </div>
           </>
         )}
-      </section>
+    </>
+  );
+
+  return (
+    // flex-1 + min-h-0, а не h-full: батьківський <main> — колонка, і без
+    // min-h-0 стрічка розпирала б сторінку замість того, щоб прокручуватись
+    <div className={`flex-1 min-h-0 flex bg-white overflow-hidden ${mobile ? '' : 'rounded-xl shadow-sm border border-gray-200'}`}>
+
+      {/* ── Бічна панель ── */}
+      {/* На телефоні список лишається під екраном розмови й трохи відсувається та затемнюється:
+          так видно, що розмова «лежить» поверх нього, а не замінила його */}
+      <motion.aside
+        className={`flex ${mobile ? 'w-full' : 'w-64 lg:w-72 border-r border-gray-200 shrink-0'} flex-col bg-gray-50/60 min-h-0`}
+        initial={false}
+        animate={mobile ? { x: mobileThreadOpen ? -56 : 0, opacity: mobileThreadOpen ? 0.55 : 1 } : undefined}
+        transition={SPRING.push}
+        // Поки поверх лежить розмова, список не має ловити ні фокус, ні дотики, ні читач екрана
+        inert={mobile && mobileThreadOpen ? true : undefined}
+      >
+        <div className="px-3 py-3 border-b border-gray-200 bg-white shrink-0">
+          {!mobile && (
+            <div className="flex items-center justify-between mb-2.5 px-1">
+              <h2 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-blue-500" />
+                Чат
+                <ConnectionDot state={chat.connection} />
+              </h2>
+            </div>
+          )}
+          <div className="relative">
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Пошук розмови…"
+              className={`w-full pl-9 pr-3 ${mobile ? 'py-2.5' : 'py-1.5'} text-sm bg-gray-100 rounded-lg outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 transition`}
+            />
+          </div>
+          {mobile && chat.connection !== 'online' && (
+            <p className="mt-2 text-[11px] text-amber-600 flex items-center gap-1">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              {chat.connection === 'connecting' ? 'Підключення…' : 'Немає зв’язку — перепідключаємось'}
+            </p>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto overscroll-contain hidden-scrollbar py-1">
+          {renderSection('channels', 'Канали', sections.channels, () => setIsNewChannelOpen(true), 'Створити канал')}
+          {renderSection('dms', 'Особисті', sections.dms, () => setIsPeoplePickerOpen(true), 'Написати колезі')}
+        </div>
+      </motion.aside>
+
+      {/* ── Стрічка ── */}
+      {mobile ? (
+        <AnimatePresence onExitComplete={() => chat.closeConversation()}>
+          {mobileThreadOpen && (
+            <motion.section
+              key="thread"
+              className="flex flex-col min-w-0 min-h-0 fixed inset-x-0 top-0 z-30 bg-white shadow-[-12px_0_32px_rgba(0,0,0,0.12)]"
+              style={{ height: viewport ? viewport.height : '100%', top: viewport ? viewport.top : 0 }}
+              // Екран виїжджає справа, як у месенджерах; при закритті їде назад так само
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={SPRING.push}
+              // Потягнути від лівого краю вправо → назад до списку
+              drag="x"
+              dragListener={false}
+              dragControls={backDrag}
+              dragConstraints={{ left: 0, right: 0 }}
+              dragElastic={{ left: 0, right: 0.9 }}
+              onDragEnd={(_, info) => { if (shouldDismiss(info.offset.x, info.velocity.x, 90, 480)) backToList(); }}
+            >
+              {/* Смужка біля лівого краю: з неї починається жест «назад» (touch-action: none, інакше
+                  браузер забере рух собі). Вузька, щоб не заважати прокрутці й виділенню тексту. */}
+              <div
+                className="absolute left-0 inset-y-0 w-5 z-40"
+                style={{ touchAction: 'none' }}
+                onPointerDown={e => backDrag.start(e)}
+                aria-hidden
+              />
+              {threadInner}
+            </motion.section>
+          )}
+        </AnimatePresence>
+      ) : (
+        <section className="flex flex-1 flex-col min-w-0 min-h-0">
+          {threadInner}
+        </section>
+      )}
 
       {isNewChannelOpen && (
         <NewChannelDialog

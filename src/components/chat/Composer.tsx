@@ -1,4 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { motion } from 'motion/react';
+import { SPRING } from '../../lib/motion';
 import { AtSign, CornerUpLeft, FileText, Loader2, Paperclip, Send, X } from 'lucide-react';
 import { uploadFile } from '../../api';
 import { ChatAttachment, ChatMessage, User } from '../../types';
@@ -316,8 +318,10 @@ export default function Composer({
                 <kbd className="font-sans">Enter</kbd> — надіслати, <kbd className="font-sans">Shift+Enter</kbd> — новий рядок
               </span>
             )}
-            <button
+            <motion.button
               type="button"
+              whileTap={canSend ? { scale: 0.88 } : undefined}
+              transition={SPRING.ui}
               onMouseDown={keepFocus}
               onClick={submit}
               disabled={!canSend}
@@ -326,7 +330,7 @@ export default function Composer({
               className="h-10 w-10 sm:h-8 sm:w-8 flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed shrink-0"
             >
               {sending || uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            </button>
+            </motion.button>
           </div>
         </div>
       </div>

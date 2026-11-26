@@ -1,4 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { motion } from 'motion/react';
+import { DUR, EASE, SPRING, staggerDelay } from '../../lib/motion';
+import Sheet from '../chat/Sheet';
 import { CheckSquare, Circle, CheckCircle2, MessageSquare, Plus, Search, X, FolderKanban } from 'lucide-react';
 import { useAppContext } from '../../App';
 import type { Card } from '../../types';
@@ -163,8 +166,15 @@ export default function MobileTasks({ onOpenCard }: Props) {
                 {group.label} · {group.cards.length}
               </h2>
               <ul className="space-y-2">
-                {group.cards.slice(0, limit).map(card => (
-                  <li key={card.id}>
+                {group.cards.slice(0, limit).map((card, i) => (
+                  // Перші рядки з'являються по черзі (каскад), решта разом з останнім: список «збирається»,
+                  // а не вискакує цілим блоком; довгий список при цьому не розтягується в часі
+                  <motion.li
+                    key={card.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: DUR.base, ease: EASE.out, delay: staggerDelay(i) }}
+                  >
                     <TaskRow
                       card={card}
                       today={today}
@@ -176,7 +186,7 @@ export default function MobileTasks({ onOpenCard }: Props) {
                       onToggle={() => updateCard(card.id, { isCompleted: !card.isCompleted })}
                       onOpen={() => onOpenCard(card)}
                     />
-                  </li>
+                  </motion.li>
                 ))}
               </ul>
               {group.cards.length > limit && (
@@ -193,14 +203,21 @@ export default function MobileTasks({ onOpenCard }: Props) {
       </div>
 
       {hasEditRights && (
-        <button
+        <motion.button
           onClick={() => setIsAdding(true)}
           aria-label="Нова задача"
-          className="fixed right-4 z-20 w-14 h-14 rounded-full bg-blue-600 text-white shadow-lg shadow-blue-600/30 flex items-center justify-center active:scale-95 transition"
+          // Кнопка «виростає» після появи списку й стискається під пальцем. Затримка не випадкова:
+          // поки вкладка в'їжджає (0,24 с), її обгортка має transform, а position: fixed усередині
+          // такої обгортки рахується від неї, а не від екрана. З'являємось уже після переходу.
+          initial={{ scale: 0, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          whileTap={{ scale: 0.9 }}
+          transition={{ ...SPRING.ui, delay: 0.32 }}
+          className="fixed right-4 z-20 w-14 h-14 rounded-full bg-blue-600 text-white shadow-lg shadow-blue-600/30 flex items-center justify-center"
           style={{ bottom: 'calc(72px + env(safe-area-inset-bottom))' }}
         >
           <Plus className="w-6 h-6" />
-        </button>
+        </motion.button>
       )}
 
       {isAdding && <AddTaskSheet onClose={() => setIsAdding(false)} />}
@@ -223,6 +240,10 @@ function TaskRow({
   onToggle: () => void;
   onOpen: () => void;
 }) {
+  // «Галочка» грає появу лише при перемиканні, а не коли рядок щойно намалювався разом зі списком
+  const rowShown = useRef(false);
+  useEffect(() => { rowShown.current = true; }, []);
+
   const bucket = bucketOf(card, today);
   const label = deadlineLabel(card.deadline, today);
   const subDone = (card.subtasks || []).filter(s => s.completed).length;
@@ -235,23 +256,39 @@ function TaskRow({
     : 'bg-gray-100 text-gray-600';
 
   return (
-    <div className="flex items-stretch bg-white border border-gray-200 rounded-xl overflow-hidden">
+    <motion.div
+      className="flex items-stretch bg-white border border-gray-200 rounded-xl overflow-hidden"
+      // Картка трохи «втискається» під пальцем: видно, що її натиснули, ще до відкриття
+      whileTap={{ scale: 0.985 }}
+      transition={SPRING.ui}
+    >
       {canToggle ? (
-        <button
+        <motion.button
           onClick={onToggle}
+          whileTap={{ scale: 0.82 }}
+          transition={SPRING.ui}
           aria-label={card.isCompleted ? `Повернути в роботу: ${card.title}` : `Позначити виконаною: ${card.title}`}
           className="w-12 shrink-0 flex items-center justify-center text-gray-400"
         >
-          {card.isCompleted
-            ? <CheckCircle2 className="w-6 h-6 text-green-500" />
-            : <Circle className="w-6 h-6" />}
-        </button>
+          {/* Змінився стан — нова іконка «вискакує» з легким поворотом (key змушує її з'явитись наново) */}
+          <motion.span
+            key={card.isCompleted ? 'done' : 'open'}
+            className="flex"
+            initial={rowShown.current ? { scale: 0.4, rotate: -35 } : false}
+            animate={{ scale: 1, rotate: 0 }}
+            transition={SPRING.ui}
+          >
+            {card.isCompleted
+              ? <CheckCircle2 className="w-6 h-6 text-green-500" />
+              : <Circle className="w-6 h-6" />}
+          </motion.span>
+        </motion.button>
       ) : (
         <div className="w-3 shrink-0" />
       )}
 
       <button onClick={onOpen} className="flex-1 min-w-0 text-left py-3 pr-3 min-h-[64px]">
-        <p className={`text-[15px] leading-snug font-medium line-clamp-2 ${card.isCompleted ? 'line-through text-gray-400' : 'text-gray-900'}`}>
+        <p className={`text-[15px] leading-snug font-medium line-clamp-2 transition-colors duration-300 ${card.isCompleted ? 'line-through text-gray-400' : 'text-gray-900'}`}>
           {card.title}
         </p>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1.5 text-xs text-gray-500">
@@ -281,7 +318,7 @@ function TaskRow({
           )}
         </div>
       </button>
-    </div>
+    </motion.div>
   );
 }
 
@@ -345,21 +382,8 @@ function AddTaskSheet({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-black/40" onClick={onClose} role="presentation">
-      <form
-        onSubmit={submit}
-        onClick={e => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Нова задача"
-        className="w-full bg-white rounded-t-2xl p-4 space-y-3 pb-safe"
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-bold text-gray-900">Нова задача</h2>
-          <button type="button" onClick={onClose} aria-label="Закрити" className="w-11 h-11 -mr-2 flex items-center justify-center text-gray-500">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+    <Sheet title="Нова задача" onClose={onClose}>
+      <form onSubmit={submit} className="p-4 space-y-3">
 
         <label className="block">
           <span className="text-xs font-medium text-gray-500">Що потрібно зробити</span>
@@ -413,6 +437,6 @@ function AddTaskSheet({ onClose }: { onClose: () => void }) {
           Створити задачу
         </button>
       </form>
-    </div>
+    </Sheet>
   );
 }

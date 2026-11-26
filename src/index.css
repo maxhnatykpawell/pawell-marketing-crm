@@ -294,3 +294,22 @@
   .pw-splash-glow, .pw-splash-tagline { animation: pw-fade-in 0.3s ease 0s both; }
   .pw-splash-exit { animation-duration: 0.15s; }
 }
+
+/* ── Картка задачі на телефоні: виїзд знизу й плавне закриття ─────────────────
+   Лише на вузькому екрані (на комп'ютері картка — діалог по центру, як і була).
+   Рух: transform + opacity. Вхід довший за вихід: панель має «приземлитись», а та, що
+   зникає, не повинна затримувати. Клас .card-leaving ставить CardModal перед закриттям. */
+@keyframes card-panel-in  { from { transform: translateY(32px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes card-panel-out { from { transform: none; opacity: 1; } to { transform: translateY(40px); opacity: 0; } }
+@keyframes card-backdrop-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes card-backdrop-out { from { opacity: 1; } to { opacity: 0; } }
+@media (max-width: 639px) {
+  .card-backdrop { animation: card-backdrop-in 0.22s ease-out both; }
+  .card-panel    { animation: card-panel-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .card-backdrop.card-leaving { animation: card-backdrop-out 0.2s ease-in both; }
+  .card-backdrop.card-leaving .card-panel { animation: card-panel-out 0.2s cubic-bezier(0.4, 0, 1, 1) both; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card-backdrop, .card-panel,
+  .card-backdrop.card-leaving, .card-backdrop.card-leaving .card-panel { animation-duration: 0.01s; }
+}

@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { Bell, Check, ChevronLeft, ListChecks, MessageSquare, User as UserIcon } from 'lucide-react';
 import { useAppContext } from '../../App';
 import type { Card, NotificationItem } from '../../types';
@@ -10,10 +11,13 @@ import MobileTasks from './MobileTasks';
 import { setUiMode } from '../../hooks/useIsMobile';
 import { PushPrompt } from '../PushSettings';
 import { PawellBadge } from '../brand/PawellLogo';
+import { DUR, EASE, SPRING, tabDirection } from '../../lib/motion';
 
 type Tab = 'tasks' | 'chat' | 'profile';
 
 const TITLES: Record<Tab, string> = { tasks: 'Задачі', chat: 'Чат', profile: 'Кабінет' };
+/** Порядок вкладок у нижній навігації: за ним визначаємо, з якого боку «приїжджає» нова */
+const TAB_ORDER: readonly Tab[] = ['tasks', 'chat', 'profile'];
 
 interface Props {
   chat: UseChat;
@@ -58,14 +62,39 @@ export default function MobileShell({ chat, notifications, unreadCount, isOfflin
 
   const me = state.users.find(u => u.id === currentUser?.userId);
 
+  // З якого боку «приїжджає» нова вкладка. Оновлюємо лише при зміні, тож повторний рендер
+  // (у тому числі подвійний у StrictMode) напрямок не скидає
+  const prevTab = useRef<Tab>(tab);
+  const direction = useRef<-1 | 0 | 1>(0);
+  if (prevTab.current !== tab) {
+    direction.current = tabDirection(TAB_ORDER, prevTab.current, tab);
+    prevTab.current = tab;
+  }
+  // Перший показ без анімації: оболонка не повинна «в'їжджати» одразу після заставки
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; }, []);
+
   return (
+    // reducedMotion="user": якщо в системі вимкнено рух, зміщення зникають, лишається лише проявлення
+    <MotionConfig reducedMotion="user">
     <div className="mobile-shell fixed inset-0 flex flex-col bg-slate-50 text-gray-900 font-sans">
       {/* Верхня панель */}
       <header className="shrink-0 bg-white border-b border-gray-200 pt-safe">
         <div className="h-14 px-4 flex items-center justify-between">
           <div className="flex items-center gap-3 min-w-0">
             <PawellBadge size="sm" />
-            <h1 className="text-lg font-bold text-gray-900 truncate">{TITLES[tab]}</h1>
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.h1
+                key={tab}
+                className="text-lg font-bold text-gray-900 truncate"
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: DUR.fast, ease: EASE.out }}
+              >
+                {TITLES[tab]}
+              </motion.h1>
+            </AnimatePresence>
           </div>
           <div className="flex items-center gap-1">
             {isOffline && (
@@ -76,11 +105,26 @@ export default function MobileShell({ chat, notifications, unreadCount, isOfflin
               aria-label={unreadCount > 0 ? `Сповіщення, нових: ${unreadCount}` : 'Сповіщення'}
               className="relative w-11 h-11 flex items-center justify-center text-gray-600 rounded-xl active:bg-gray-100"
             >
-              <Bell className="w-5 h-5" />
+              {/* Нове сповіщення: дзвіночок похитується, бейдж «вистрибує» */}
+              <motion.span
+                key={`bell-${unreadCount}`}
+                className="inline-flex origin-top"
+                initial={mounted.current && unreadCount > 0 ? { rotate: -16 } : false}
+                animate={{ rotate: 0 }}
+                transition={{ type: 'spring', stiffness: 260, damping: 6, mass: 0.6 }}
+              >
+                <Bell className="w-5 h-5" />
+              </motion.span>
               {unreadCount > 0 && (
-                <span className="absolute top-1.5 right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white">
+                <motion.span
+                  key={unreadCount}
+                  initial={mounted.current ? { scale: 0.4 } : false}
+                  animate={{ scale: 1 }}
+                  transition={SPRING.ui}
+                  className="absolute top-1.5 right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white"
+                >
                   {unreadCount > 9 ? '9+' : unreadCount}
-                </span>
+                </motion.span>
               )}
             </button>
           </div>
@@ -91,19 +135,29 @@ export default function MobileShell({ chat, notifications, unreadCount, isOfflin
 
       {/* Екран. Чат сам керує прокруткою (стрічка + поле вводу), решта прокручується тут */}
       <main className={`flex-1 min-h-0 ${tab === 'chat' ? 'flex flex-col' : 'overflow-y-auto'}`}>
-        {tab === 'tasks' && <MobileTasks onOpenCard={setOpenCard} />}
-        {tab === 'chat' && <ChatView chat={chat} mobile />}
-        {tab === 'profile' && (
-          <div className="p-4 pb-8">
-            <MyProfileView mobile />
-            <button
-              onClick={() => setUiMode('desktop')}
-              className="w-full h-12 mt-6 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-xl"
-            >
-              Відкрити повну версію
-            </button>
-          </div>
-        )}
+        {/* Нова вкладка з'являється з того боку, де вона стоїть у навігації (зміщення невелике:
+            це підказка напрямку, а не «пролітання» екрана) */}
+        <motion.div
+          key={tab}
+          className={tab === 'chat' ? 'flex-1 min-h-0 flex flex-col' : undefined}
+          initial={mounted.current ? { opacity: 0, x: direction.current * 28 } : false}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: DUR.base, ease: EASE.out }}
+        >
+          {tab === 'tasks' && <MobileTasks onOpenCard={setOpenCard} />}
+          {tab === 'chat' && <ChatView chat={chat} mobile />}
+          {tab === 'profile' && (
+            <div className="p-4 pb-8">
+              <MyProfileView mobile />
+              <button
+                onClick={() => setUiMode('desktop')}
+                className="w-full h-12 mt-6 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-xl"
+              >
+                Відкрити повну версію
+              </button>
+            </div>
+          )}
+        </motion.div>
       </main>
 
       {/* Нижня навігація */}
@@ -123,20 +177,24 @@ export default function MobileShell({ chat, notifications, unreadCount, isOfflin
         </ul>
       </nav>
 
-      {isNotifOpen && (
-        <NotificationsScreen
-          items={notifications}
-          onClose={() => setIsNotifOpen(false)}
-          onRead={markNotificationAsRead}
-          onOpenCard={cardId => {
-            const card = state.cards.find(c => c.id === cardId);
-            if (card) { setTab('tasks'); setOpenCard(card); setIsNotifOpen(false); }
-          }}
-        />
-      )}
+      <AnimatePresence>
+        {isNotifOpen && (
+          <NotificationsScreen
+            key="notifications"
+            items={notifications}
+            onClose={() => setIsNotifOpen(false)}
+            onRead={markNotificationAsRead}
+            onOpenCard={cardId => {
+              const card = state.cards.find(c => c.id === cardId);
+              if (card) { setTab('tasks'); setOpenCard(card); setIsNotifOpen(false); }
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       {liveOpenCard && <CardModal card={liveOpenCard} onClose={() => setOpenCard(null)} />}
     </div>
+    </MotionConfig>
   );
 }
 
@@ -145,22 +203,43 @@ function TabButton({ active, label, badge, onClick, children }: {
 }) {
   return (
     <li className="contents">
-      <button
+      <motion.button
         onClick={onClick}
         aria-current={active ? 'page' : undefined}
         aria-label={badge && badge > 0 ? `${label}, непрочитаних: ${badge}` : label}
-        className={`relative flex flex-col items-center justify-center gap-0.5 ${active ? 'text-blue-600' : 'text-gray-500'}`}
+        whileTap={{ scale: 0.92 }}
+        transition={SPRING.ui}
+        className={`relative flex flex-col items-center justify-center gap-0.5 transition-colors duration-200 ${active ? 'text-blue-600' : 'text-gray-500'}`}
       >
-        <span className="relative">
+        {/* Активна вкладка: «таблетка» під іконкою перетікає від попередньої до нової */}
+        {active && (
+          <motion.span
+            layoutId="nav-pill"
+            aria-hidden
+            className="absolute top-2 inset-x-0 mx-auto w-14 h-8 rounded-full bg-blue-50"
+            transition={SPRING.ui}
+          />
+        )}
+        <motion.span
+          className="relative"
+          animate={{ scale: active ? 1.08 : 1, y: active ? -1 : 0 }}
+          transition={SPRING.ui}
+        >
           {children}
           {badge !== undefined && badge > 0 && (
-            <span className="absolute -top-1 -right-2 min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white">
+            <motion.span
+              key={badge}
+              initial={{ scale: 0.4 }}
+              animate={{ scale: 1 }}
+              transition={SPRING.ui}
+              className="absolute -top-1 -right-2 min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white"
+            >
               {badge > 99 ? '99+' : badge}
-            </span>
+            </motion.span>
           )}
-        </span>
-        <span className="text-[11px] font-medium">{label}</span>
-      </button>
+        </motion.span>
+        <span className="relative text-[11px] font-medium">{label}</span>
+      </motion.button>
     </li>
   );
 }
@@ -172,7 +251,16 @@ function NotificationsScreen({ items, onClose, onRead, onOpenCard }: {
   onOpenCard: (cardId: string) => void;
 }) {
   return (
-    <div className="fixed inset-0 z-40 flex flex-col bg-slate-50" role="dialog" aria-modal="true" aria-label="Сповіщення">
+    <motion.div
+      className="fixed inset-0 z-40 flex flex-col bg-slate-50"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Сповіщення"
+      initial={{ x: '100%' }}
+      animate={{ x: 0 }}
+      exit={{ x: '100%' }}
+      transition={SPRING.push}
+    >
       <header className="shrink-0 bg-white border-b border-gray-200 pt-safe">
         <div className="h-14 px-2 flex items-center">
           <button onClick={onClose} aria-label="Назад" className="w-11 h-11 flex items-center justify-center text-gray-600">
@@ -207,7 +295,7 @@ function NotificationsScreen({ items, onClose, onRead, onOpenCard }: {
           </ul>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }
 

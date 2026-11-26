@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import {
   ArrowDown, Check, ChevronUp, Copy, CornerUpLeft, FileText, Loader2, Pencil, SmilePlus, Trash2, X,
 } from 'lucide-react';
+import { motion } from 'motion/react';
 import { useAppContext } from '../../App';
+import { DUR, EASE, SPRING } from '../../lib/motion';
 import { ChatMessage, User } from '../../types';
 import type { UseChat } from '../../hooks/useChat';
 import { dayKey, dayLabel, startsNewGroup } from '../../lib/chat';
@@ -30,6 +32,26 @@ export default function MessageFeed({ chat, myId, isAdmin, userById, mobile, unr
   const { confirmAction } = useAppContext();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Нове повідомлення: з'явилось ПІСЛЯ того, як розмову відкрили, і пізніше за все, що вже було.
+   * Тоді воно плавно виїжджає знизу. Історія, що підвантажилась при відкритті чи через «Показати
+   * давніші», не анімується: сотня повідомлень, що одночасно «вискакують», — це шум, а не рух.
+   */
+  const knownIds = useRef<Set<string> | null>(null);
+  const newestKnown = useRef('');
+  if (knownIds.current === null && chat.messages.length > 0) {
+    knownIds.current = new Set(chat.messages.map(m => m.id));
+    newestKnown.current = chat.messages[chat.messages.length - 1].createdAt;
+  }
+  const isFresh = (m: ChatMessage) =>
+    knownIds.current !== null && !knownIds.current.has(m.id) && m.createdAt > newestKnown.current;
+  useEffect(() => {
+    if (knownIds.current === null) return;
+    for (const m of chat.messages) knownIds.current.add(m.id);
+    const last = chat.messages[chat.messages.length - 1];
+    if (last && last.createdAt > newestKnown.current) newestKnown.current = last.createdAt;
+  }, [chat.messages]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
@@ -218,6 +240,7 @@ export default function MessageFeed({ chat, myId, isAdmin, userById, mobile, unr
 
               <MessageRow
                 m={m}
+                animateIn={isFresh(m)}
                 newGroup={newGroup}
                 authorName={author?.name ?? 'Невідомий'}
                 authorAvatar={author?.avatar}
@@ -312,6 +335,8 @@ function MenuItem({ icon, label, onClick, danger }: {
 
 interface RowProps {
   m: ChatMessage;
+  /** Повідомлення щойно прийшло: показати його плавним виїздом знизу */
+  animateIn: boolean;
   newGroup: boolean;
   authorName: string;
   authorAvatar?: string;
@@ -340,6 +365,11 @@ interface RowProps {
 
 function MessageRow(p: RowProps) {
   const { m, newGroup, userById, myId } = p;
+  // Чи грати появу — вирішуємо один раз, при створенні рядка: пізніші рендери його не «перезапускають»
+  const enter = useRef(p.animateIn).current;
+  // Реакції, що зʼявились уже після показу рядка, «вискакують»; ті, що були, — ні
+  const shown = useRef(false);
+  useEffect(() => { shown.current = true; }, []);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const start = useRef<{ x: number; y: number } | null>(null);
 
@@ -367,8 +397,11 @@ function MessageRow(p: RowProps) {
   const reactions = Object.entries(m.reactions ?? {}).filter(([, ids]) => ids.length > 0);
 
   return (
-    <div
+    <motion.div
       id={`msg-${m.id}`}
+      initial={enter ? { opacity: 0, y: 14 } : false}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: DUR.base, ease: EASE.out }}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={cancel}
@@ -477,17 +510,25 @@ function MessageRow(p: RowProps) {
                 {reactions.map(([emoji, ids]) => {
                   const mine = ids.includes(myId);
                   return (
-                    <button
+                    <motion.button
                       key={emoji}
+                      // Нова реакція «вискакує», решта на місці; тап дає відчутний відгук
+                      initial={shown.current ? { scale: 0.5, opacity: 0 } : false}
+                      animate={{ scale: 1, opacity: 1 }}
+                      whileTap={{ scale: 0.88 }}
+                      transition={SPRING.ui}
                       onClick={() => p.onReact(emoji)}
                       title={ids.map(id => userById.get(id)?.name ?? '?').join(', ')}
-                      className={`inline-flex items-center gap-1 h-7 px-2 rounded-full border text-xs font-medium transition ${
+                      className={`inline-flex items-center gap-1 h-7 px-2 rounded-full border text-xs font-medium transition-colors ${
                         mine ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-gray-50 border-gray-200 text-gray-600 hover:border-gray-300'
                       }`}
                     >
                       <span className="text-sm leading-none">{emoji}</span>
-                      {ids.length}
-                    </button>
+                      {/* Число «підстрибує», коли хтось додав свою реакцію */}
+                      <motion.span key={ids.length} initial={shown.current ? { y: -4, opacity: 0 } : false} animate={{ y: 0, opacity: 1 }} transition={SPRING.ui}>
+                        {ids.length}
+                      </motion.span>
+                    </motion.button>
                   );
                 })}
                 <button
@@ -529,7 +570,7 @@ function MessageRow(p: RowProps) {
           </div>
         </>
       )}
-    </div>
+    </motion.div>
   );
 }
 
