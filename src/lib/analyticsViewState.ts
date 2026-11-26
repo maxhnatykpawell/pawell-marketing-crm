@@ -9,6 +9,10 @@
 import {
   ClientFilters, EMPTY_FILTERS, SortKey, SortDir, TierId, CustomerKind, CUSTOMER_KINDS,
 } from './clientAnalytics';
+import type { PowerTier } from './clientPower';
+
+/** Фокус за тіруванням Pawell Power: тір 1–3 або «потребують оцінки» (ручні ознаки не заповнені) */
+export type PowerFocus = PowerTier | 'incomplete';
 
 const STORAGE_KEY = 'pawell_ltv_analytics_view';
 
@@ -24,6 +28,8 @@ export interface AnalyticsView {
   tierFocus: TierId | null;
   /** Показувати лише нових або лише постійних; null = усі */
   kindFocus: CustomerKind | null;
+  /** Показувати лише цей тір Pawell Power; null = усі */
+  powerFocus: PowerFocus | null;
 }
 
 export const DEFAULT_VIEW: AnalyticsView = {
@@ -35,9 +41,11 @@ export const DEFAULT_VIEW: AnalyticsView = {
   tab: 'clients',
   tierFocus: null,
   kindFocus: null,
+  powerFocus: null,
 };
 
-const SORT_KEYS: SortKey[] = ['revenue', 'deals', 'avgCheck', 'recency', 'name', 'cohort'];
+const SORT_KEYS: SortKey[] = ['revenue', 'deals', 'avgCheck', 'recency', 'name', 'cohort', 'power'];
+const POWER_FOCUSES: PowerFocus[] = [1, 2, 3, 'incomplete'];
 const TABS: AnalyticsView['tab'][] = ['clients', 'funnel', 'cohorts', 'activity', 'monthly'];
 const TIER_IDS: TierId[] = [1, 2, 3, 4];
 
@@ -87,6 +95,8 @@ export function parseView(raw: unknown): AnalyticsView {
     tab: TABS.includes(v.tab) ? v.tab : DEFAULT_VIEW.tab,
     tierFocus: TIER_IDS.includes(v.tierFocus) ? v.tierFocus : null,
     kindFocus: CUSTOMER_KINDS.includes(v.kindFocus) ? v.kindFocus : null,
+    // Збережене до появи тірування цього поля не має — це не помилка, а просто «без фокуса»
+    powerFocus: POWER_FOCUSES.includes(v.powerFocus) ? v.powerFocus : null,
   };
 }
 

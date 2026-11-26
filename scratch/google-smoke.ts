@@ -398,9 +398,11 @@ const save = (c: any) => { db.cards[c.id] = c; };
   assert.equal((await api('u1', 'DELETE', '/api/google/connection')).status, 200, 'повторне відключення безпечне');
 
   console.log('google smoke: усе пройшло');
-  server.close();
   fs.rmSync(dir, { recursive: true, force: true });
-  process.exit(0);
+  (server as any).closeAllConnections?.();
+  server.close();
+  // Пауза перед виходом: миттєвий exit під час закриття сокетів на Windows дає службову помилку libuv
+  setTimeout(() => process.exit(0), 200);
 })().catch(e => {
   console.error('FAIL:', e);
   server.close();

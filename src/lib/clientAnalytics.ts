@@ -5,6 +5,8 @@
  * модалка лишалась про рендер, а не про математику.
  */
 
+import type { PowerResult } from './clientPower';
+
 export interface MonthStats {
   revenue: number;
   deals: number;
@@ -153,6 +155,11 @@ export interface EnrichedClient extends ClientRecord {
   /** Новий чи постійний — відносно початку періоду; див. classifyCustomer */
   customerKind: CustomerKind;
   rfm: RfmSegment;
+  /**
+   * Тірування Pawell Power (5 питань, 5–15 балів). Заповнюється окремим кроком
+   * (attachPower), бо залежить від ручних оцінок, яких enrichClients не знає.
+   */
+  power?: PowerResult;
 }
 
 // ── RFM ───────────────────────────────────────────────────────────────────────
@@ -486,7 +493,7 @@ export function applyFilters(clients: EnrichedClient[], f: ClientFilters): Enric
 
 // ── Сортування ────────────────────────────────────────────────────────────────
 
-export type SortKey = 'revenue' | 'deals' | 'avgCheck' | 'recency' | 'name' | 'cohort';
+export type SortKey = 'revenue' | 'deals' | 'avgCheck' | 'recency' | 'name' | 'cohort' | 'power';
 export type SortDir = 'asc' | 'desc';
 
 export const SORT_LABELS: Record<SortKey, string> = {
@@ -496,6 +503,7 @@ export const SORT_LABELS: Record<SortKey, string> = {
   recency:  'Давність покупки',
   name:     'Назва',
   cohort:   'Когорта',
+  power:    'Pawell Power',
 };
 
 export function sortClients(clients: EnrichedClient[], key: SortKey, dir: SortDir): EnrichedClient[] {
@@ -514,6 +522,16 @@ export function sortClients(clients: EnrichedClient[], key: SortKey, dir: SortDi
         if (a.recencyDays === null) return 1;
         if (b.recencyDays === null) return -1;
         return (a.recencyDays - b.recencyDays) * sign;
+      }
+      case 'power': {
+        // Клієнти без тіру (без обороту) — в кінці в будь-якому напрямку. За рівної суми
+        // вище той, хто більше купив: інакше порядок усередині тіру був би випадковим.
+        const pa = a.power?.tier ? a.power.score : null;
+        const pb = b.power?.tier ? b.power.score : null;
+        if (pa === null && pb === null) return 0;
+        if (pa === null) return 1;
+        if (pb === null) return -1;
+        return (pa - pb || a.periodRevenue - b.periodRevenue) * sign;
       }
       case 'cohort': {
         if (!a.cohortMonth && !b.cohortMonth) return 0;
@@ -980,6 +998,8 @@ export function clientsToCsv(clients: (EnrichedClient & { tier?: TierId | null }
     'Клієнт', 'Tier', 'Дохід за період', 'Угод за період', 'Середній чек',
     'Дохід за весь час', 'Угод за весь час',
     'Остання покупка', 'Днів тому', 'Когорта', 'Тип клієнта', 'RFM', 'Теги',
+    'Pawell Power', 'Power: сума балів', 'Power: оцінка повна',
+    'Бал: оборот', 'Бал: потенціал', 'Бал: частота', 'Бал: контракт', 'Бал: глибина акаунта',
   ];
   const rows = clients.map(c => [
     c.name,
@@ -995,6 +1015,14 @@ export function clientsToCsv(clients: (EnrichedClient & { tier?: TierId | null }
     CUSTOMER_KIND_LABELS[c.customerKind],
     c.rfm.label,
     c.tags.join(', '),
+    c.power?.tier ? `Tier ${c.power.tier}${c.power.complete ? '' : ' (попередній)'}` : '',
+    c.power?.tier ? c.power.score : '',
+    c.power ? (c.power.complete ? 'так' : 'ні') : '',
+    c.power?.scores.revenue ?? '',
+    c.power?.scores.potential ?? '',
+    c.power?.scores.frequency ?? '',
+    c.power?.scores.contract ?? '',
+    c.power?.scores.depth ?? '',
   ]);
 
   return [header, ...rows].map(r => r.map(esc).join(';')).join('\r\n');

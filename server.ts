@@ -52,6 +52,7 @@ import {
 } from './src/lib/linkTitle';
 import { registerChatRoutes, chatStreamStats } from './chat-server';
 import { registerGoogleCalendar, type GoogleCalendarApi } from './google-calendar-server';
+import { registerClientPowerRoutes } from './client-power-server';
 import { registerPushRoutes, sendPushToUsers } from './push-server';
 import { parseMentions } from './src/lib/mentions';
 import { previewOf } from './src/lib/chat';
@@ -4036,6 +4037,17 @@ Reply ONLY with a number representing the estimated minutes. Do not include any 
         type === 'cards' ? x.assigneeId === userId : (x.assigneeIds || []).includes(userId));
     },
     jwtSecret: JWT_SECRET,
+    localDir: DATA_DIR,
+  });
+
+  /** Ручні оцінки для тірування Pawell Power (окрема колекція, див. client-power-server.ts) */
+  registerClientPowerRoutes(app, {
+    requireAuth,
+    getFirestore: initFirebase,
+    getUserName: async (userId) => {
+      const state = await getDb();
+      return (state.users || []).find((u: any) => u.id === userId)?.name ?? null;
+    },
     localDir: DATA_DIR,
   });
 

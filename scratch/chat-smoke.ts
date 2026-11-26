@@ -173,9 +173,11 @@ const tick = () => new Promise(r => setTimeout(r, 80));
   assert.equal((await call('u1', 'PUT', `/api/chat/messages/${m1.id}`, { conversationId: dm, text: 'знову' })).status, 400);
 
   console.log('chat smoke: усе пройшло');
-  server.close();
   fs.rmSync(dir, { recursive: true, force: true });
-  process.exit(0);
+  (server as any).closeAllConnections?.();
+  server.close();
+  // Пауза перед виходом: миттєвий exit під час закриття сокетів на Windows дає службову помилку libuv
+  setTimeout(() => process.exit(0), 200);
 })().catch(e => {
   console.error('FAIL:', e);
   server.close();

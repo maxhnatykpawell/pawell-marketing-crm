@@ -5,6 +5,7 @@ import {
   Card, TaskAutomation,
 } from './types';
 import type { FunnelSpeedResponse, FunnelSpeedState } from './lib/funnelSpeed';
+import type { ClientPowerInput } from './lib/clientPower';
 import { v4 as uuidv4 } from 'uuid';
 import {
   PendingWrites, describeQueued, writeErrorMessage,
@@ -1139,6 +1140,34 @@ export const getChatStreamTicket = async (): Promise<string> => {
   const res = await fetch('/api/chat/ticket', { method: 'POST', headers: authHeaders() });
   if (!res.ok) throw new Error('Не вдалось підключитись до чату');
   return (await res.json()).ticket;
+};
+
+// ── Тірування клієнтів Pawell Power ───────────────────────────────────────────
+
+export interface ClientPowerRecord extends ClientPowerInput {
+  updatedAt?: string;
+  updatedBy?: string | null;
+}
+
+/** Ручні оцінки всіх клієнтів: id клієнта → оцінка */
+export const getClientPower = async (): Promise<Record<string, ClientPowerRecord>> => {
+  const res = await fetch('/api/client-power', { headers: authHeaders() });
+  if (!res.ok) throw new Error('Не вдалось завантажити оцінки клієнтів');
+  return (await res.json()).items || {};
+};
+
+/** Зберегти оцінку одного клієнта; порожня оцінка видаляє запис. Повертає те, що прийняв сервер. */
+export const saveClientPower = async (clientId: string, input: ClientPowerInput): Promise<ClientPowerRecord | null> => {
+  const res = await fetch(`/api/client-power/${encodeURIComponent(clientId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Не вдалось зберегти оцінку');
+  }
+  return (await res.json()).item ?? null;
 };
 
 // ── Google Calendar ───────────────────────────────────────────────────────────

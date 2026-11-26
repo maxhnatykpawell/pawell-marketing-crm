@@ -10,6 +10,13 @@ import { LtvSnapshot, EMPTY_LTV_SNAPSHOT } from '../lib/ltvSnapshot';
 import ClientFilterBar from './analytics/ClientFilterBar';
 import RevenueDistributionCard from './analytics/RevenueDistribution';
 import ClientTiers from './analytics/ClientTiers';
+import ClientPowerCard from './analytics/ClientPowerCard';
+import ClientPowerDialog from './analytics/ClientPowerDialog';
+import { useClientPower } from '../hooks/useClientPower';
+import {
+  buildPowerContext, computePower, attachPower, summarizePower, matchesPowerFocus, POWER_TIER_BY_ID,
+  type PowerResult,
+} from '../lib/clientPower';
 import CustomerMixCard from './analytics/CustomerMix';
 import SegmentSettings from './analytics/SegmentSettings';
 import {
@@ -20,7 +27,7 @@ import {
   computeDistribution, computeCustomerMix, assignTiers, clientsToCsv, calculateCohorts,
   countByRfm, sanitizeRfmThresholds, countActiveFilters,
 } from '../lib/clientAnalytics';
-import { loadView, saveView } from '../lib/analyticsViewState';
+import { loadView, saveView, type PowerFocus } from '../lib/analyticsViewState';
 import PeriodPicker, { PeriodKey, PeriodValue, describePeriod } from './PeriodPicker';
 import AnalyticsReport from './AnalyticsReport';
 import ContactFrequency from './analytics/ContactFrequency';
@@ -91,13 +98,16 @@ function SortableTh({
  * до сотень, кожен по десятку вузлів.
  */
 const ClientRow = React.memo(function ClientRow({
-  client, index, onTagClick, onTierClick,
+  client, index, onTagClick, onTierClick, onPowerClick,
 }: {
   client: TieredClient;
   index: number;
   onTagClick: (tag: string) => void;
   onTierClick: (tier: TierId) => void;
+  onPowerClick: (clientId: string) => void;
 }) {
+  const power = client.power;
+  const powerMeta = power?.tier ? POWER_TIER_BY_ID[power.tier] : null;
   const tierMeta = client.tier !== null ? TIERS.find(t => t.id === client.tier) : undefined;
 
   return (
@@ -124,6 +134,20 @@ const ClientRow = React.memo(function ClientRow({
           </button>
         ) : (
           <span className="text-xs text-gray-300" title="Немає доходу — поза тірами">—</span>
+        )}
+      </td>
+      <td className="py-3 px-4 whitespace-nowrap">
+        {powerMeta && power ? (
+          <button
+            onClick={() => onPowerClick(client.id)}
+            title={power.complete ? 'Оцінка повна. Натисніть, щоб змінити' : `Попередній тір: бракує оцінки (${power.missing.length}). Натисніть, щоб заповнити`}
+            className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded border transition hover:brightness-95 ${powerMeta.badge}`}
+          >
+            Tier {power.tier}
+            <span className="tabular-nums opacity-80">{power.complete ? '' : '~'}{power.score}</span>
+          </button>
+        ) : (
+          <span className="text-xs text-gray-300" title="Немає обороту — поза тірами">—</span>
         )}
       </td>
       <td className="py-3 px-4 text-right">
@@ -241,6 +265,10 @@ export default function AnalyticsView() {
       фільтр: розклад «нові / постійні» має лишатись видимим повністю навіть
       тоді, коли в таблиці показано один бік. */
   const [kindFocus, setKindFocus] = useState<CustomerKind | null>(saved.kindFocus);
+  /** Тірування Pawell Power: показувати лише один тір або лише без повної оцінки */
+  const [powerFocus, setPowerFocus] = useState<PowerFocus | null>(saved.powerFocus);
+  /** Клієнт, чию оцінку Pawell Power зараз редагують */
+  const [powerEditId, setPowerEditId] = useState<string | null>(null);
 
   /**
    * Збережений командний варіант порогів. Проходить перевірку навіть прийшовши
@@ -279,8 +307,8 @@ export default function AnalyticsView() {
 
   // Зберігаємо вибір при кожній зміні
   useEffect(() => {
-    saveView({ filters, period, sortKey, sortDir, limit, tab: activeTab, tierFocus, kindFocus });
-  }, [filters, period, sortKey, sortDir, limit, activeTab, tierFocus, kindFocus]);
+    saveView({ filters, period, sortKey, sortDir, limit, tab: activeTab, tierFocus, kindFocus, powerFocus });
+  }, [filters, period, sortKey, sortDir, limit, activeTab, tierFocus, kindFocus, powerFocus]);
 
   /** Період у місяцях — саме така точність у помісячних даних */
   const monthRange = useMemo<MonthRange | null>(
@@ -352,11 +380,26 @@ export default function AnalyticsView() {
   const tagOptions = useMemo(() => collectTags(allClients), [allClients]);
   const cohortOptions = useMemo(() => collectCohortMonths(enriched), [enriched]);
 
+  // ── Pawell Power ───────────────────────────────────────────────────────────
+  // Контекст (місце в рейтингу обороту, річна виручка) рахується по ВСІХ клієнтах, а не по
+  // відфільтрованих: «топ-10 % за оборотом» — це місце в усій базі.
+  const clientPower = useClientPower();
+  const powerCtx = useMemo(() => buildPowerContext(allClients), [allClients]);
+  const powerById = useMemo(() => {
+    const m = new Map<string, PowerResult>();
+    for (const c of allClients) m.set(c.id, computePower(c, clientPower.items[c.id], powerCtx));
+    return m;
+  }, [allClients, clientPower.items, powerCtx]);
+  const enrichedP = useMemo(() => attachPower(enriched, powerById), [enriched, powerById]);
+
   /** Вибірка після фільтрів — те, що рахується в картці тірів і таблиці */
   const filteredClients = useMemo(
-    () => sortClients(applyFilters(enriched, filters), sortKey, sortDir),
-    [enriched, filters, sortKey, sortDir],
+    () => sortClients(applyFilters(enrichedP, filters), sortKey, sortDir),
+    [enrichedP, filters, sortKey, sortDir],
   );
+
+  /** Зведення Pawell Power — до фокусів, щоб між тірами можна було перемикатись */
+  const powerSummary = useMemo(() => summarizePower(filteredClients), [filteredClients]);
 
   /**
    * Картка тірів рахується ДО фокуса на тірі, а не після.
@@ -379,10 +422,16 @@ export default function AnalyticsView() {
     [tiered, tierFocus],
   );
 
-  /** Вибірка після обох фокусів — на ній рахуються метрики, CSV і таблиця */
+  /** Після фокуса на тірі доходу й на тірі Pawell Power, але ДО фокуса на типі клієнта */
+  const powerFocused = useMemo(
+    () => (powerFocus === null ? tierFocused : tierFocused.filter(c => matchesPowerFocus(c.power, powerFocus))),
+    [tierFocused, powerFocus],
+  );
+
+  /** Вибірка після всіх фокусів — на ній рахуються метрики, CSV і таблиця */
   const selectedClients = useMemo(
-    () => (kindFocus === null ? tierFocused : tierFocused.filter(c => c.customerKind === kindFocus)),
-    [tierFocused, kindFocus],
+    () => (kindFocus === null ? powerFocused : powerFocused.filter(c => c.customerKind === kindFocus)),
+    [powerFocused, kindFocus],
   );
 
   /** Зріз лише для показу в таблиці */
@@ -400,7 +449,7 @@ export default function AnalyticsView() {
     setTierFocus(prev => (prev === tier ? null : tier));
   }, []);
 
-  const resetFocus = useCallback(() => { setTierFocus(null); setKindFocus(null); }, []);
+  const resetFocus = useCallback(() => { setTierFocus(null); setKindFocus(null); setPowerFocus(null); }, []);
 
   /**
    * Фокуси в тому ж вигляді, що й фільтри.
@@ -414,17 +463,23 @@ export default function AnalyticsView() {
   const focusChips = useMemo(() => {
     const out: { label: string; clear: () => void }[] = [];
     if (tierFocus !== null) out.push({ label: `лише Tier ${tierFocus}`, clear: () => setTierFocus(null) });
+    if (powerFocus !== null) {
+      out.push({
+        label: powerFocus === 'incomplete' ? 'Power: без повної оцінки' : `лише Tier ${powerFocus} Power`,
+        clear: () => setPowerFocus(null),
+      });
+    }
     if (kindFocus !== null) {
       out.push({ label: `лише ${CUSTOMER_KIND_LABELS[kindFocus].toLowerCase()}`, clear: () => setKindFocus(null) });
     }
     return out;
-  }, [tierFocus, kindFocus]);
+  }, [tierFocus, kindFocus, powerFocus]);
 
   const distribution = useMemo(() => computeDistribution(selectedClients), [selectedClients]);
 
   const customerMix = useMemo(
-    () => computeCustomerMix(tierFocused, monthRange),
-    [tierFocused, monthRange],
+    () => computeCustomerMix(powerFocused, monthRange),
+    [powerFocused, monthRange],
   );
 
   const toggleSort = (key: SortKey) => {
@@ -723,9 +778,10 @@ export default function AnalyticsView() {
 
             {/* Розподіл і тіри поруч: на широкому екрані вони читаються як одна
                 відповідь — «наскільки перекошено» і «хто саме зверху». */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+            <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6 items-start">
               <RevenueDistributionCard dist={distribution} />
               <ClientTiers breakdown={tiered} focus={tierFocus} onFocus={setTierFocus} />
+              <ClientPowerCard summary={powerSummary} focus={powerFocus} onFocus={setPowerFocus} />
             </div>
 
             {/* Таблиця */}
@@ -735,7 +791,8 @@ export default function AnalyticsView() {
                   <thead>
                     <tr className="border-b border-gray-200 bg-white">
                       <SortableTh label="Клієнт / RFM" sortKey="name"     active={sortKey} dir={sortDir} onSort={toggleSort} />
-                      <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]">Tier</th>
+                      <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 bg-white z-10 shadow-[0_1px_0_0_#e5e7eb]" title="Тір за доходом у гривнях">Tier (дохід)</th>
+                      <SortableTh label="Power"        sortKey="power"    active={sortKey} dir={sortDir} onSort={toggleSort} />
                       <SortableTh label="Дохід"        sortKey="revenue"  active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
                       <SortableTh label="Угод"         sortKey="deals"    active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
                       <SortableTh label="Середній чек" sortKey="avgCheck" active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
@@ -752,12 +809,15 @@ export default function AnalyticsView() {
                         index={index}
                         onTagClick={addTagFilter}
                         onTierClick={focusTier}
+                        onPowerClick={setPowerEditId}
                       />
                     ))}
                     {selectedClients.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="py-12 text-center text-gray-400 text-sm">
-                          {tierFocus !== null
+                        <td colSpan={9} className="py-12 text-center text-gray-400 text-sm">
+                          {powerFocus !== null
+                            ? 'За цими фільтрами немає клієнтів у вибраному тірі Pawell Power'
+                            : tierFocus !== null
                             ? `У Tier ${tierFocus} за цими фільтрами нікого немає`
                             : kindFocus !== null
                               ? `${CUSTOMER_KIND_STYLES[kindFocus].title} за цими фільтрами відсутні`
@@ -1115,6 +1175,21 @@ export default function AnalyticsView() {
       так Ctrl+P зі сторінки дає той самий документ, що й кнопка «PDF»,
       а не знімок інтерфейсу з фільтрами й кнопками.
     */}
+    {powerEditId && (() => {
+      const target = allClients.find(c => c.id === powerEditId);
+      if (!target) return null;
+      return (
+        <ClientPowerDialog
+          client={target}
+          ctx={powerCtx}
+          initial={clientPower.items[target.id] ?? {}}
+          meta={clientPower.items[target.id]}
+          onClose={() => setPowerEditId(null)}
+          onSave={input => clientPower.save(target.id, input)}
+        />
+      );
+    })()}
+
     {preparingPdf && (
       <div ref={reportRef} className="hidden print:block">
         <AnalyticsReport
