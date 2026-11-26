@@ -108,7 +108,7 @@ assert.equal(monthsBetween('2025-12', '2026-11'), 11);
   assert.equal(computePower(legacy, { potentialUah: 5000 }, ctx).scores.potential, null);
 }
 
-// ── Контракт і глибина ───────────────────────────────────────────────────────
+// ── Контракт ─────────────────────────────────────────────────────────────────
 {
   const c = client('c', 100, { '2026-05': 100 });
   const ctx = buildPowerContext([c], NOW);
@@ -118,26 +118,38 @@ assert.equal(monthsBetween('2025-12', '2026-11'), 11);
   assert.equal(r({ contractSize: 'small' }).contract, 1);
   assert.equal(r({ contractSize: 'none' }).contract, 1);
   assert.equal(r({}).contract, null);
-  assert.equal(r({ contacts: 0 }).depth, 1);
-  assert.equal(r({ contacts: 1 }).depth, 1);
-  assert.equal(r({ contacts: 2 }).depth, 2);
-  assert.equal(r({ contacts: 4 }).depth, 2);
-  assert.equal(r({ contacts: 5 }).depth, 3);
-  assert.equal(r({}).depth, null);
+}
+
+// ── Кількість контактів — лише довідка: на бали й тір не впливає ─────────────
+{
+  const c = client('c', 100, { '2026-05': 100 });
+  const ctx = buildPowerContext([c], NOW);
+  const base = { potentialUah: 50_000, contractSize: 'medium' as const };
+  const a = computePower(c, { ...base }, ctx);
+  for (const contacts of [0, 1, 4, 5, 50]) {
+    const b = computePower(c, { ...base, contacts }, ctx);
+    assert.equal(b.score, a.score, `${contacts} контактів не змінюють суму`);
+    assert.equal(b.tier, a.tier);
+    assert.deepEqual(b.missing, a.missing);
+    assert.deepEqual(Object.keys(b.scores), ['revenue', 'potential', 'frequency', 'contract'], 'жодного критерію про контакти');
+  }
 }
 
 // ── Тір за сумою ─────────────────────────────────────────────────────────────
-assert.equal(tierOfScore(15, true), 1);
+assert.equal(tierOfScore(12, true), 1);
 assert.equal(tierOfScore(TIER1_MIN, true), 1);
 assert.equal(tierOfScore(TIER1_MIN, false), 2, 'без повного акаунта Tier 1 недоступний');
 assert.equal(tierOfScore(TIER1_MIN - 1, true), 2, 'повний акаунт без суми — теж не Tier 1');
 assert.equal(tierOfScore(TIER2_MIN, false), 2);
 assert.equal(tierOfScore(TIER2_MIN - 1, false), 3);
-assert.equal(tierOfScore(5, false), 3);
+assert.equal(tierOfScore(4, false), 3);
+assert.equal(tierOfScore(TIER1_MIN, true), 1, 'межі з документа: 10–12 — Tier 1');
+assert.equal(TIER1_MIN, 10);
+assert.equal(TIER2_MIN, 7);
 
 // ── Повний сценарій і попередній тір ─────────────────────────────────────────
 {
-  // Топ-клієнт, що купує щомісяця: оборот 3 + частота 3 = 6, решта ще не оцінена (по 1) → 9 → Tier 2 попередньо
+  // Топ-клієнт, що купує щомісяця: оборот 3 + частота 3 = 6, решта ще не оцінена (по 1) → 8 → Tier 2 попередньо
   const monthly: Record<string, number> = {};
   for (let i = 0; i < 12; i++) monthly[addMonths('2026-11', -i)] = 1000;
   const star = client('star', 12000, monthly);
@@ -147,21 +159,21 @@ assert.equal(tierOfScore(5, false), 3);
 
   const prelim = computePower(star, undefined, ctx);
   assert.equal(prelim.complete, false);
-  assert.deepEqual(prelim.missing, ['potential', 'contract', 'depth']);
-  assert.equal(prelim.score, 3 + 1 + 3 + 1 + 1, 'відсутні ознаки — по 1 балу');
+  assert.deepEqual(prelim.missing, ['potential', 'contract']);
+  assert.equal(prelim.score, 3 + 1 + 3 + 1, 'відсутні ознаки — по 1 балу');
   assert.equal(prelim.tier, 2, 'попередній тір: щонайменше Tier 2');
 
-  const full = computePower(star, { potentialUah: 5_000_000, contractSize: 'large', contacts: 6, fullAccount: true }, ctx);
+  const full = computePower(star, { potentialUah: 5_000_000, contractSize: 'large', fullAccount: true }, ctx);
   assert.equal(full.complete, true);
-  assert.equal(full.score, 15);
+  assert.equal(full.score, 12);
   assert.equal(full.tier, 1);
 
   // Те саме без позначки «повний акаунт» — найвищий Tier 2
   const noFull = computePower(star, { potentialUah: 5_000_000, contractSize: 'large', contacts: 6 }, ctx);
-  assert.equal(noFull.score, 15);
-  assert.equal(noFull.tier, 2);
+  assert.equal(noFull.score, 12);
+  assert.equal(noFull.tier, 2, 'шість контактів без позначки «повний акаунт» Tier 1 не дають');
 
-  const m = computeAllPower(all, { star: { contacts: 6, fullAccount: true } }, NOW);
+  const m = computeAllPower(all, { star: { fullAccount: true } }, NOW);
   assert.equal(m.size, 10);
   assert.equal(m.get('star')!.fullAccount, true);
   assert.equal(m.get('o0')!.fullAccount, false);
@@ -172,8 +184,8 @@ assert.equal(tierOfScore(5, false), 3);
   const c = client('c', 100, { '2026-05': 100 });
   const r = computePower(c, { contacts: 3 }, buildPowerContext([c], NOW));
   assert.match(r.notes.revenue!, /топ-/);
-  assert.match(r.notes.depth!, /3 контакти/);
   assert.equal(r.notes.potential, 'Не оцінено');
+  assert.equal((r.notes as Record<string, unknown>).depth, undefined, 'пояснення про контакти більше немає');
 }
 
 // ── Санітизація ввода ────────────────────────────────────────────────────────
@@ -189,8 +201,9 @@ assert.deepEqual(sanitizePowerInput({ potentialUah: 1e15 }), {});
 assert.deepEqual(sanitizePowerInput({ contractSize: 'huge' }), {});
 assert.deepEqual(sanitizePowerInput({ contacts: 2.5 }), {});
 assert.deepEqual(sanitizePowerInput({ contacts: 9999 }), {});
-assert.deepEqual(sanitizePowerInput({ fullAccount: true, contacts: 3 }), { contacts: 3 }, 'повний акаунт без 5 контактів не приймається');
-assert.deepEqual(sanitizePowerInput({ fullAccount: true, contacts: 5 }), { contacts: 5, fullAccount: true });
+assert.deepEqual(sanitizePowerInput({ fullAccount: true, contacts: 3 }), { contacts: 3, fullAccount: true }, 'позначка не залежить від числа контактів');
+assert.deepEqual(sanitizePowerInput({ fullAccount: true }), { fullAccount: true });
+assert.deepEqual(sanitizePowerInput({ fullAccount: false }), {});
 assert.deepEqual(sanitizePowerInput({ framework: false, evil: '<script>' }), {}, 'зайві поля не проходять');
 assert.equal(isEmptyPowerInput({}), true);
 assert.equal(isEmptyPowerInput({ contacts: 0 }), false, 'нуль контактів — це відповідь, а не порожнеча');

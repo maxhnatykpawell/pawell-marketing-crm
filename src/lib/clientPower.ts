@@ -1,52 +1,52 @@
 /**
- * Тірування клієнтів Pawell Power: 5 питань по 1–3 бали, сума визначає тір.
+ * Тірування клієнтів Pawell Power: 4 питання по 1–3 бали (4–12), сума визначає тір.
  *
  * Методика з документа «Тірування клієнтів Pawell Power». Окремо від старих
  * «Тірів клієнтів» (clientAnalytics.TIERS), які ділять клієнтів за ДОХОДОМ у
- * гривнях, — тут тір складається з п'яти ознак, і дохід лише одна з них.
+ * гривнях, — тут тір складається з чотирьох ознак, і дохід лише одна з них.
  *
  * ── Звідки беруться бали ─────────────────────────────────────────────────────
  *  • Оборот за весь час     — рахується сам: місце клієнта серед усіх клієнтів.
  *  • Як часто купує         — рахується сам із помісячної історії покупок.
  *  • Потенціал на рік       — вводиться вручну (у CRM його немає).
  *  • Контракт               — вводиться вручну.
- *  • Глибина акаунта        — вводиться вручну (кількість контактів).
+ *
+ * Кількість контактів у бали НЕ входить: це довідкове поле. Окремо вводиться позначка
+ * «повний акаунт», яку документ вимагає для Tier 1, — вона теж не дає балів.
  *
  * Поки ручні ознаки не заповнені, тір усе одно показується, але як ПОПЕРЕДНІЙ:
  * відсутні ознаки рахуються мінімумом (1 бал). Тобто попередній тір — це
  * «щонайменше стільки», і заповнення ознак його лише підвищує.
  *
  * ── Межі ─────────────────────────────────────────────────────────────────────
- * Документ обіцяє «4 питання, 4–12 балів», а в таблиці їх п'ять. Прийнято п'ять,
- * тож сума 5–15, а межі перераховано (див. TIER1_MIN / TIER2_MIN нижче).
+ * Як у документі: 4–6 — Tier 3, 7–9 — Tier 2, 10–12 — Tier 1 (за умови повного акаунта).
  *
  * Чиста логіка без React і мережі: clientPower.test.ts.
  */
 
 import type { ClientRecord } from './clientAnalytics';
 
-export type PowerCriterion = 'revenue' | 'potential' | 'frequency' | 'contract' | 'depth';
+export type PowerCriterion = 'revenue' | 'potential' | 'frequency' | 'contract';
 export type PowerScore = 1 | 2 | 3;
 export type PowerTier = 1 | 2 | 3;
 
-export const POWER_CRITERIA: PowerCriterion[] = ['revenue', 'potential', 'frequency', 'contract', 'depth'];
+export const POWER_CRITERIA: PowerCriterion[] = ['revenue', 'potential', 'frequency', 'contract'];
 
 export const POWER_CRITERION_LABELS: Record<PowerCriterion, string> = {
   revenue: 'Оборот за весь час',
   potential: 'Потенціал на рік',
   frequency: 'Як часто купує',
   contract: 'Контракт',
-  depth: 'Глибина акаунта',
 };
 
 /** Які ознаки вводяться вручну */
-export const MANUAL_CRITERIA: PowerCriterion[] = ['potential', 'contract', 'depth'];
+export const MANUAL_CRITERIA: PowerCriterion[] = ['potential', 'contract'];
 
-/** Сума балів (5–15): від якої межі починається тір */
-export const TIER1_MIN = 12;
-export const TIER2_MIN = 9;
-export const MAX_SCORE = 15;
-export const MIN_SCORE = 5;
+/** Сума балів (4–12): від якої межі починається тір */
+export const TIER1_MIN = 10;
+export const TIER2_MIN = 7;
+export const MAX_SCORE = 12;
+export const MIN_SCORE = 4;
 
 /** Частки клієнтів за оборотом: топ-10 % — 3 бали, до 40 % — 2, решта — 1 */
 export const REVENUE_TOP_SHARE = 0.10;
@@ -75,9 +75,15 @@ export interface ClientPowerInput {
   /** Скільки клієнт може купувати на рік, ₴ */
   potentialUah?: number | null;
   contractSize?: ContractSize | null;
-  /** Контакти, з якими в нас добрі стосунки (знають нас, відповідають, спілкувались за 3 місяці) */
+  /**
+   * Контакти, з якими в нас добрі стосунки (знають нас, відповідають, спілкувались за 3 місяці).
+   * ЛИШЕ ДЛЯ ІНФОРМАЦІЇ: у бали й тір не входить.
+   */
   contacts?: number | null;
-  /** Повний акаунт: 5+ контактів щонайменше з 3 ланок (керівництво, технічна, закупівлі/експлуатація) */
+  /**
+   * Повний акаунт: 5+ контактів щонайменше з 3 ланок (керівництво, технічна, закупівлі/експлуатація).
+   * Бали не дає, але без цієї позначки найвищий тір — Tier 2 (вимога документа до Tier 1).
+   */
   fullAccount?: boolean;
   /** Купує за рамковим договором — це «щомісяця» незалежно від історії покупок */
   framework?: boolean;
@@ -89,7 +95,7 @@ export interface PowerResult {
   missing: PowerCriterion[];
   /** Сума балів; відсутні ознаки враховано як 1 */
   score: number;
-  /** Усі п'ять ознак оцінено — тір остаточний */
+  /** Усі чотири ознаки оцінено — тір остаточний */
   complete: boolean;
   /** null — клієнт без обороту: ранжувати нема за чим */
   tier: PowerTier | null;
@@ -227,14 +233,6 @@ function scoreContract(input: ClientPowerInput): { s: PowerScore | null; note: s
   }
 }
 
-function scoreDepth(input: ClientPowerInput): { s: PowerScore | null; note: string } {
-  const n = input.contacts;
-  if (n === null || n === undefined || !(n >= 0)) return { s: null, note: 'Не оцінено' };
-  if (n >= 5) return { s: 3, note: `${n} контактів` };
-  if (n >= 2) return { s: 2, note: `${n} контакти` };
-  return { s: 1, note: n === 1 ? '1 контакт' : 'Немає добрих контактів' };
-}
-
 // ── Підсумок ──────────────────────────────────────────────────────────────────
 
 export function tierOfScore(score: number, fullAccount: boolean): PowerTier {
@@ -252,13 +250,12 @@ export function computePower(
   const freq = scoreFrequency(client, ctx, inp);
   const pot = scorePotential(inp, ctx);
   const con = scoreContract(inp);
-  const dep = scoreDepth(inp);
 
   const scores: Record<PowerCriterion, PowerScore | null> = {
-    revenue: rev.s, potential: pot.s, frequency: freq.s, contract: con.s, depth: dep.s,
+    revenue: rev.s, potential: pot.s, frequency: freq.s, contract: con.s,
   };
   const notes: PowerResult['notes'] = {
-    revenue: rev.note, potential: pot.note, frequency: freq.note, contract: con.note, depth: dep.note,
+    revenue: rev.note, potential: pot.note, frequency: freq.note, contract: con.note,
   };
   const missing = POWER_CRITERIA.filter(k => scores[k] === null);
   const score = POWER_CRITERIA.reduce((sum, k) => sum + (scores[k] ?? 1), 0);
@@ -347,8 +344,8 @@ export function sanitizePowerInput(raw: unknown): ClientPowerInput {
     out.contacts = r.contacts;
   }
   if (r.framework === true) out.framework = true;
-  // Повний акаунт — це 5+ контактів; без них ознака нічого не означає
-  if (r.fullAccount === true && (out.contacts ?? 0) >= 5) out.fullAccount = true;
+  // Позначка «повний акаунт» не залежить від числа контактів: контакти — довідка, а це вимога до Tier 1
+  if (r.fullAccount === true) out.fullAccount = true;
   return out;
 }
 

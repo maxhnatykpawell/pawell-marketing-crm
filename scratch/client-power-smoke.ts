@@ -39,9 +39,9 @@ async function call(method: string, url: string, body?: any) {
   assert.equal(r.json.item.evil, undefined);
   assert.equal(r.json.item.fullAccount, true);
 
-  // Повний акаунт без 5 контактів не проходить
+  // Контакти — довідка, а «повний акаунт» — окрема позначка, що від них не залежить
   r = await call('PUT', '/api/client-power/c2', { contacts: 3, fullAccount: true });
-  assert.equal(r.json.item.fullAccount, undefined);
+  assert.equal(r.json.item.fullAccount, true);
   assert.equal(r.json.item.contacts, 3);
 
   // Некоректні значення відкидаються, а не стають нулем

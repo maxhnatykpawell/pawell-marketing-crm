@@ -38,7 +38,7 @@ export default function ClientPowerDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Порожнє поле — «не оцінено», а не нуль: різниця принципова (0 контактів — це відповідь)
+  // Порожнє поле — «не оцінено», а не нуль: різниця принципова (0 контактів — це відповідь, а не відсутність)
   const draft = useMemo<ClientPowerInput>(() => sanitizePowerInput({
     potentialUah: potential.trim() === '' ? undefined : Number(potential.replace(/\s/g, '').replace(',', '.')),
     contractSize: contract ?? undefined,
@@ -49,9 +49,6 @@ export default function ClientPowerDialog({
 
   const result = useMemo(() => computePower(client, draft, ctx), [client, draft, ctx]);
   const tierMeta = result.tier ? POWER_TIER_BY_ID[result.tier] : null;
-
-  const contactsNum = contacts.trim() === '' ? null : Number(contacts);
-  const canFull = contactsNum !== null && contactsNum >= 5;
 
   const potentialInvalid = potential.trim() !== '' && draft.potentialUah === undefined;
   const contactsInvalid = contacts.trim() !== '' && draft.contacts === undefined;
@@ -109,12 +106,12 @@ export default function ClientPowerDialog({
 
         {result.score >= TIER1_MIN && !result.fullAccount && tierMeta?.id === 2 && (
           <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            Балів достатньо для Tier 1, але акаунт не повний. Щоб потрапити в Tier 1, потрібно 5+ контактів
-            щонайменше з трьох ланок: керівництво, технічна, закупівлі чи експлуатація.
+            Балів достатньо для Tier 1, але акаунт не позначено як повний. Для Tier 1 потрібен повний акаунт:
+            5+ контактів щонайменше з трьох ланок (керівництво, технічна, закупівлі чи експлуатація).
           </p>
         )}
 
-        {/* П'ять ознак */}
+        {/* Чотири ознаки, з яких складається тір */}
         <ul className="divide-y divide-gray-100 border border-gray-100 rounded-xl">
           {POWER_CRITERIA.map(k => {
             const s = result.scores[k];
@@ -168,31 +165,6 @@ export default function ClientPowerDialog({
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Контактів із добрими стосунками</label>
-            <input
-              inputMode="numeric"
-              value={contacts}
-              onChange={e => {
-                setContacts(e.target.value);
-                // Повний акаунт без 5 контактів не буває — знімаємо позначку, а не лишаємо суперечність
-                const n = Number(e.target.value);
-                if (e.target.value.trim() === '' || !(n >= 5)) setFullAccount(false);
-              }}
-              placeholder="Знають нас, відповідають, спілкувались за 3 місяці"
-              className={`w-full px-3 py-2.5 sm:py-2 text-sm border rounded-lg outline-none focus:ring-2 ${contactsInvalid ? 'border-red-300 focus:ring-red-100' : 'border-gray-200 focus:border-indigo-400 focus:ring-indigo-100'}`}
-            />
-            {contactsInvalid && <p className="text-xs text-red-500 mt-1">Ціле число від 0 до 500</p>}
-          </div>
-
-          <label className={`flex items-start gap-3 min-h-[44px] ${canFull ? 'cursor-pointer' : 'opacity-50'}`}>
-            <input type="checkbox" checked={fullAccount} disabled={!canFull} onChange={e => setFullAccount(e.target.checked)} className="mt-1 w-4 h-4" />
-            <span>
-              <span className="block text-sm text-gray-800">Повний акаунт</span>
-              <span className="block text-xs text-gray-500">5+ контактів щонайменше з трьох ланок: керівництво, технічна, закупівлі чи експлуатація. Потрібне для Tier 1.</span>
-            </span>
-          </label>
-
           <label className="flex items-start gap-3 min-h-[44px] cursor-pointer">
             <input type="checkbox" checked={framework} onChange={e => setFramework(e.target.checked)} className="mt-1 w-4 h-4" />
             <span>
@@ -200,6 +172,29 @@ export default function ClientPowerDialog({
               <span className="block text-xs text-gray-500">Купує за рамковим договором: частота вважається «щомісяця» незалежно від історії.</span>
             </span>
           </label>
+
+          <label className="flex items-start gap-3 min-h-[44px] cursor-pointer">
+            <input type="checkbox" checked={fullAccount} onChange={e => setFullAccount(e.target.checked)} className="mt-1 w-4 h-4" />
+            <span>
+              <span className="block text-sm text-gray-800">Повний акаунт <span className="text-[10px] font-semibold text-gray-400 uppercase ml-1">умова Tier 1</span></span>
+              <span className="block text-xs text-gray-500">5+ контактів щонайменше з трьох ланок: керівництво, технічна, закупівлі чи експлуатація. Бали не дає, але без неї найвищий тір — Tier 2.</span>
+            </span>
+          </label>
+
+          <div className="border-t border-gray-100 pt-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              Контактів із добрими стосунками
+              <span className="ml-1.5 text-[10px] font-semibold text-gray-400 uppercase">довідково · у бали не входить</span>
+            </label>
+            <input
+              inputMode="numeric"
+              value={contacts}
+              onChange={e => setContacts(e.target.value)}
+              placeholder="Знають нас, відповідають, спілкувались за 3 місяці"
+              className={`w-full px-3 py-2.5 sm:py-2 text-sm border rounded-lg outline-none focus:ring-2 ${contactsInvalid ? 'border-red-300 focus:ring-red-100' : 'border-gray-200 focus:border-indigo-400 focus:ring-indigo-100'}`}
+            />
+            {contactsInvalid && <p className="text-xs text-red-500 mt-1">Ціле число від 0 до 500</p>}
+          </div>
         </div>
 
         {meta?.updatedAt && (

@@ -156,7 +156,7 @@ export interface EnrichedClient extends ClientRecord {
   customerKind: CustomerKind;
   rfm: RfmSegment;
   /**
-   * Тірування Pawell Power (5 питань, 5–15 балів). Заповнюється окремим кроком
+   * Тірування Pawell Power (4 питання, 4–12 балів). Заповнюється окремим кроком
    * (attachPower), бо залежить від ручних оцінок, яких enrichClients не знає.
    */
   power?: PowerResult;
@@ -999,7 +999,7 @@ export function clientsToCsv(clients: (EnrichedClient & { tier?: TierId | null }
     'Дохід за весь час', 'Угод за весь час',
     'Остання покупка', 'Днів тому', 'Когорта', 'Тип клієнта', 'RFM', 'Теги',
     'Pawell Power', 'Power: сума балів', 'Power: оцінка повна',
-    'Бал: оборот', 'Бал: потенціал', 'Бал: частота', 'Бал: контракт', 'Бал: глибина акаунта',
+    'Бал: оборот', 'Бал: потенціал', 'Бал: частота', 'Бал: контракт',
   ];
   const rows = clients.map(c => [
     c.name,
@@ -1022,7 +1022,6 @@ export function clientsToCsv(clients: (EnrichedClient & { tier?: TierId | null }
     c.power?.scores.potential ?? '',
     c.power?.scores.frequency ?? '',
     c.power?.scores.contract ?? '',
-    c.power?.scores.depth ?? '',
   ]);
 
   return [header, ...rows].map(r => r.map(esc).join(';')).join('\r\n');
