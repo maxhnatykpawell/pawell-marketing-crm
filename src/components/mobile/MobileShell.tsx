@@ -35,6 +35,11 @@ export default function MobileShell({ chat, notifications, unreadCount, isOfflin
   const [openCard, setOpenCard] = useState<Card | null>(null);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
 
+  // Посилання зі сповіщення (?view=chat) приходить, коли оболонка вже намальована
+  useEffect(() => {
+    if (activeView === 'chat') setTab('chat');
+  }, [activeView]);
+
   // Картка за посиланням чи зі сповіщення (openCardId ставить App) — відкриваємо одразу
   useEffect(() => {
     if (!openCardId) return;

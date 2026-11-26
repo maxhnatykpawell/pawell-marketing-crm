@@ -1,7 +1,7 @@
 import {
   AppState, Attachment, AuthUser, KeepInCRMSnapshot, KeepInCRMHistoryResponse,
   ContactActivityResponse,
-  ChatConversation, ChatConversationView, ChatMessage,
+  ChatConversation, ChatConversationView, ChatMessage, ChatAttachment, ChatNotifyLevel,
   Card, TaskAutomation,
 } from './types';
 import type { FunnelSpeedResponse, FunnelSpeedState } from './lib/funnelSpeed';
@@ -808,11 +808,15 @@ export const getChatMessages = async (
   return res.json();
 };
 
-export const sendChatMessage = async (conversationId: string, text: string): Promise<ChatMessage> => {
+export const sendChatMessage = async (
+  conversationId: string,
+  text: string,
+  extra: { replyToId?: string; attachments?: ChatAttachment[] } = {},
+): Promise<ChatMessage> => {
   const res = await fetch('/api/chat/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ conversationId, text }),
+    body: JSON.stringify({ conversationId, text, ...extra }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -850,6 +854,69 @@ export const markChatRead = async (conversationId: string, at?: string): Promise
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ conversationId, at: at ?? new Date().toISOString() }),
   }).catch(() => { /* позначка прочитання не варта помилки в інтерфейсі */ });
+};
+
+async function chatJson<T>(res: Response, fallback: string): Promise<T> {
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || fallback);
+  }
+  return res.json();
+}
+
+export const toggleChatReaction = async (conversationId: string, id: string, emoji: string): Promise<ChatMessage> => {
+  const res = await fetch(`/api/chat/messages/${encodeURIComponent(id)}/reactions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ conversationId, emoji }),
+  });
+  return (await chatJson<{ message: ChatMessage }>(res, 'Не вдалось поставити реакцію')).message;
+};
+
+export const updateChatChannel = async (
+  id: string,
+  patch: { title?: string; topic?: string },
+): Promise<ChatConversation> => {
+  const res = await fetch(`/api/chat/conversations/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(patch),
+  });
+  return (await chatJson<{ conversation: ChatConversation }>(res, 'Не вдалось зберегти канал')).conversation;
+};
+
+export const addChatMembers = async (id: string, userIds: string[]): Promise<ChatConversation> => {
+  const res = await fetch(`/api/chat/conversations/${encodeURIComponent(id)}/members`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ userIds }),
+  });
+  return (await chatJson<{ conversation: ChatConversation }>(res, 'Не вдалось додати учасників')).conversation;
+};
+
+export const removeChatMember = async (id: string, userId: string): Promise<ChatConversation> => {
+  const res = await fetch(`/api/chat/conversations/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  return (await chatJson<{ conversation: ChatConversation }>(res, 'Не вдалось прибрати учасника')).conversation;
+};
+
+export const archiveChatChannel = async (id: string): Promise<void> => {
+  const res = await fetch(`/api/chat/conversations/${encodeURIComponent(id)}/archive`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  await chatJson(res, 'Не вдалось архівувати канал');
+};
+
+export const setChatNotify = async (id: string, level: ChatNotifyLevel): Promise<void> => {
+  const res = await fetch(`/api/chat/conversations/${encodeURIComponent(id)}/notify`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ level }),
+  });
+  await chatJson(res, 'Не вдалось змінити сповіщення');
 };
 
 /**

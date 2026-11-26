@@ -1,6 +1,7 @@
 import {
   dmConversationId, dmMembers, canAccess, recipientsOf, parseMentions, previewOf,
   unreadCount, startsNewGroup, dayLabel, mergeMessage, sortConversations,
+  listTimeLabel, dayKey, badgeCount, filterByNotify, toggleReaction, isOwnUploadUrl, isImageName, splitSections,
 } from './chat';
 
 let failures = 0;
@@ -114,6 +115,50 @@ console.log('\nsortConversations');
     { id: 'c', createdAt: '2026-01-01T00:00:00Z', lastMessageAt: '2026-08-19T00:00:00Z' },
   ];
   check('свіжі розмови вгорі', sortConversations(list).map(c => c.id), ['c', 'a', 'b']);
+}
+
+// ── Нове: сповіщення, реакції, вкладення ─────────────────────────────────────
+{
+  console.log('\nbadgeCount');
+  check('all — усе непрочитане', badgeCount({ kind: 'channel', unread: 5, mentionUnread: 1, notify: 'all' }), 5);
+  check('mentions — лише згадки', badgeCount({ kind: 'channel', unread: 5, mentionUnread: 2, notify: 'mentions' }), 2);
+  check('mentions у dm — усе', badgeCount({ kind: 'dm', unread: 3, mentionUnread: 0, notify: 'mentions' }), 3);
+  check('none — нічого', badgeCount({ kind: 'dm', unread: 3, notify: 'none' }), 0);
+  check('без notify — як all', badgeCount({ kind: 'channel', unread: 4 }), 4);
+
+  console.log('\nfilterByNotify');
+  const lv: Record<string, any> = { a: 'all', b: 'mentions', c: 'none' };
+  check('канал: лише all', filterByNotify(['a', 'b', 'c'], id => lv[id], false), ['a']);
+  check('dm: all і mentions', filterByNotify(['a', 'b', 'c'], id => lv[id], true), ['a', 'b']);
+
+  console.log('\ntoggleReaction');
+  const r1 = toggleReaction(undefined, '👍', 'u1');
+  check('додає', r1, { '👍': ['u1'] });
+  check('другий додається', toggleReaction(r1, '👍', 'u2'), { '👍': ['u1', 'u2'] });
+  check('повтор знімає, порожнє зникає', toggleReaction(r1, '👍', 'u1'), {});
+  check('вхід не мутується', r1, { '👍': ['u1'] });
+
+  console.log('\nattachments');
+  check('own upload', isOwnUploadUrl('/uploads/a.png'), true);
+  check('чужа адреса', isOwnUploadUrl('https://evil.test/a.png'), false);
+  check('вихід нагору', isOwnUploadUrl('/uploads/../server.ts'), false);
+  check('зображення', isImageName('Фото.JPG'), true);
+  check('не зображення', isImageName('звіт.pdf'), false);
+
+  console.log('\nsplitSections');
+  const s = splitSections([{ kind: 'dm' as const, id: 1 }, { kind: 'channel' as const, id: 2 }]);
+  check('канали окремо', s.channels.map(x => x.id), [2]);
+  check('dm окремо', s.dms.map(x => x.id), [1]);
+}
+
+console.log('\nlistTimeLabel / dayKey');
+{
+  const now = new Date(2026, 7, 19, 15, 0); // локальний час
+  check('вчора', listTimeLabel(new Date(2026, 7, 18, 9, 0).toISOString(), now), 'Вчора');
+  check('сьогодні — година', /^\d{2}:\d{2}$/.test(listTimeLabel(new Date(2026, 7, 19, 9, 5).toISOString(), now)), true);
+  check('порожньо', listTimeLabel(undefined, now), '');
+  // пів на другу ночі за локальним часом — це вже сьогоднішній день, а не вчорашній за UTC
+  check('день за локальним часом', dayKey(new Date(2026, 7, 19, 0, 30).toISOString()), '2026-08-19');
 }
 
 console.log(failures === 0 ? '\n✅ Усі перевірки пройдено\n' : `\n❌ Провалено: ${failures}\n`);

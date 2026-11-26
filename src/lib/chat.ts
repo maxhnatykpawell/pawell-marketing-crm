@@ -99,7 +99,10 @@ export function startsNewGroup(
 
 /** Мітка дня для роздільника в стрічці */
 export function dayKey(iso: string): string {
-  return iso.slice(0, 10);
+  // Локальна дата, а не зріз UTC-рядка: інакше повідомлення між північчю й 03:00 за
+  // Києвом потрапляло б у «вчора» і день у стрічці розривався посеред ночі
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso.slice(0, 10) : toKey(d);
 }
 
 export function dayLabel(iso: string, today = new Date()): string {
@@ -150,4 +153,109 @@ export function sortConversations<T extends { lastMessageAt?: string; createdAt:
   return [...list].sort(
     (a, b) => (b.lastMessageAt ?? b.createdAt).localeCompare(a.lastMessageAt ?? a.createdAt),
   );
+}
+
+// ── Сповіщення та лічильники ─────────────────────────────────────────────────
+
+export type NotifyLevel = 'all' | 'mentions' | 'none';
+
+export function isNotifyLevel(v: unknown): v is NotifyLevel {
+  return v === 'all' || v === 'mentions' || v === 'none';
+}
+
+/**
+ * Скільки показувати на значку розмови.
+ *
+ * «none» — нічого; «mentions» — лише згадки (в особистому листуванні кожне
+ * повідомлення адресоване людині, тож воно рахується як згадка).
+ */
+export function badgeCount(
+  c: { kind: ChatConversationKind; unread: number; mentionUnread?: number; notify?: NotifyLevel },
+): number {
+  const level = c.notify ?? 'all';
+  if (level === 'none') return 0;
+  if (level === 'mentions') return c.kind === 'dm' ? c.unread : Math.min(c.mentionUnread ?? 0, c.unread);
+  return c.unread;
+}
+
+/** Кому слати пуш про повідомлення, враховуючи вибір кожного для цієї розмови */
+export function filterByNotify(
+  userIds: string[],
+  levelOf: (userId: string) => NotifyLevel,
+  isDm: boolean,
+): string[] {
+  return userIds.filter(id => {
+    const level = levelOf(id);
+    if (level === 'none') return false;
+    if (level === 'mentions') return isDm;
+    return true;
+  });
+}
+
+// ── Реакції ──────────────────────────────────────────────────────────────────
+
+/** Скільки різних емодзі дозволено на одному повідомленні */
+export const MAX_REACTION_KINDS = 20;
+
+/** Додати/зняти реакцію людини; порожні емодзі прибираємо, щоб не копичити сміття */
+export function toggleReaction(
+  reactions: Record<string, string[]> | undefined,
+  emoji: string,
+  userId: string,
+): Record<string, string[]> {
+  const next: Record<string, string[]> = {};
+  for (const [e, ids] of Object.entries(reactions ?? {})) next[e] = [...ids];
+  const list = next[emoji] ?? [];
+  next[emoji] = list.includes(userId) ? list.filter(id => id !== userId) : [...list, userId];
+  if (next[emoji].length === 0) delete next[emoji];
+  return next;
+}
+
+// ── Вкладення ────────────────────────────────────────────────────────────────
+
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp)$/i;
+
+export function isImageName(name: string): boolean {
+  return IMAGE_EXT.test(name);
+}
+
+/** Вкладенням може бути лише наш файл: чужу адресу в чаті ніхто не підсовує */
+export function isOwnUploadUrl(url: unknown): url is string {
+  return typeof url === 'string'
+    && url.startsWith('/uploads/')
+    && !url.includes('..')
+    && url.length < 500;
+}
+
+// ── Чернетки ─────────────────────────────────────────────────────────────────
+
+export function draftKey(conversationId: string): string {
+  return 'pawell_chat_draft_' + conversationId;
+}
+
+/** Розділ списку: канали й особисте листування лежать окремо, як у Slack */
+export function splitSections<T extends { kind: ChatConversationKind }>(list: T[]): { channels: T[]; dms: T[] } {
+  return {
+    channels: list.filter(c => c.kind === 'channel'),
+    dms: list.filter(c => c.kind === 'dm'),
+  };
+}
+
+/**
+ * Підпис часу в списку розмов: сьогодні — година, вчора — «Вчора»,
+ * протягом тижня — день тижня, давніше — дата.
+ */
+export function listTimeLabel(iso: string | undefined, now = new Date()): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  if (dayKey(iso) === toKey(now)) {
+    return d.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (dayKey(iso) === toKey(yesterday)) return 'Вчора';
+  const days = (now.getTime() - d.getTime()) / 86400000;
+  if (days < 6) return d.toLocaleDateString('uk-UA', { weekday: 'short' });
+  return d.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit' });
 }

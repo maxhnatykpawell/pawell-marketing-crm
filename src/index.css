@@ -211,3 +211,16 @@
 @media (prefers-reduced-motion: reduce) {
   .profile-aurora, .profile-aurora::before, .profile-aurora::after { animation: none; }
 }
+
+/* Чат: вікно виїжджає знизу на телефоні; плавна поява панелі деталей */
+@keyframes sheet-up {
+  from { transform: translateY(24px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+@keyframes chat-flash {
+  0%, 60% { background-color: rgb(254 243 199); }
+  100%    { background-color: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  @keyframes sheet-up { from { opacity: 0; } to { opacity: 1; } }
+}

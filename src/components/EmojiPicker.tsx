@@ -70,11 +70,13 @@ interface Props {
   onPick: (emoji: string) => void;
   /** Куди розкривати панель — щоб вона не вилазила за межі модалки. */
   align?: 'left' | 'right';
+  /** Куди розкривати по вертикалі: поле вводу внизу екрана розкриває панель вгору */
+  direction?: 'down' | 'up';
   className?: string;
   title?: string;
 }
 
-export default function EmojiPicker({ onPick, align = 'left', className, title = 'Емодзі' }: Props) {
+export default function EmojiPicker({ onPick, align = 'left', direction = 'down', className, title = 'Емодзі' }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
 
@@ -105,7 +107,7 @@ export default function EmojiPicker({ onPick, align = 'left', className, title =
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
           <div
-            className={`absolute top-full mt-1 z-40 w-64 bg-white rounded-xl shadow-xl border border-gray-200 p-2 ${
+            className={`absolute ${direction === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'} z-40 w-64 bg-white rounded-xl shadow-xl border border-gray-200 p-2 ${
               align === 'right' ? 'right-0' : 'left-0'
             }`}
             onClick={e => e.stopPropagation()}

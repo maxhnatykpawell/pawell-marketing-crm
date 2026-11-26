@@ -31,12 +31,14 @@ import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import type admin from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 
 import {
   canAccess, recipientsOf, parseMentions, previewOf, dmMembers, dmConversationId,
-  sortConversations,
+  sortConversations, filterByNotify, isNotifyLevel, toggleReaction, isOwnUploadUrl, isImageName,
+  MAX_REACTION_KINDS, type NotifyLevel,
 } from './src/lib/chat';
-import type { ChatConversation, ChatMessage } from './src/types';
+import type { ChatConversation, ChatMessage, ChatAttachment, ChatReplyRef } from './src/types';
 import { chatPushTargets, chatPushPayload, type PushPayload } from './src/lib/push';
 
 // ── Залежності, які дає server.ts ─────────────────────────────────────────────
@@ -143,6 +145,17 @@ interface LocalChatFile {
   conversations: ChatConversation[];
   messages: Record<string, ChatMessage[]>;
   reads: Record<string, Record<string, string>>;
+  /** userId → розмова → скільки згадок цієї людини ще не прочитано */
+  mentions?: Record<string, Record<string, number>>;
+  /** userId → розмова → що сповіщати */
+  notify?: Record<string, Record<string, NotifyLevel>>;
+}
+
+/** Усе, що сервер пам'ятає про те, як саме ця людина читає чат */
+export interface UserChatState {
+  reads: Record<string, string>;
+  mentions: Record<string, number>;
+  notify: Record<string, NotifyLevel>;
 }
 
 /**
@@ -239,13 +252,17 @@ function makeStore(deps: ChatDeps) {
       return (readLocal().messages[conversationId] ?? []).find(m => m.id === id) ?? null;
     },
 
-    async saveMessage(msg: ChatMessage): Promise<void> {
+    async saveMessage(msg: ChatMessage, opts: { replaceAll?: boolean } = {}): Promise<void> {
       assertSafeId(msg.conversationId, 'розмови');
       assertSafeId(msg.id, 'повідомлення');
       const db = deps.getFirestore();
       if (db) {
-        await db.collection(CONVERSATIONS).doc(msg.conversationId)
-          .collection(MESSAGES).doc(msg.id).set(msg, { merge: true });
+        const ref = db.collection(CONVERSATIONS).doc(msg.conversationId)
+          .collection(MESSAGES).doc(msg.id);
+        // merge зливає вкладені мапи, тож знята реакція «воскресала» б. Для
+        // реакцій пишемо повний документ — вони стають рівно такими, як у msg.
+        if (opts.replaceAll) await ref.set(msg);
+        else await ref.set(msg, { merge: true });
         return;
       }
       const data = readLocal();
@@ -279,32 +296,102 @@ function makeStore(deps: ChatDeps) {
         .filter(m => m.createdAt > since && m.authorId !== exceptAuthor).length;
     },
 
-    async getReads(userId: string): Promise<Record<string, string>> {
+    async getUserState(userId: string): Promise<UserChatState> {
       assertSafeId(userId, 'користувача');
       const db = deps.getFirestore();
       if (db) {
         const doc = await db.collection(READS).doc(userId).get();
-        return doc.exists ? ((doc.data()?.lastReadAt as Record<string, string>) ?? {}) : {};
+        const d = doc.exists ? doc.data() ?? {} : {};
+        return {
+          reads: (d.lastReadAt as Record<string, string>) ?? {},
+          mentions: (d.mentionUnread as Record<string, number>) ?? {},
+          notify: (d.notify as Record<string, NotifyLevel>) ?? {},
+        };
       }
-      return readLocal().reads[userId] ?? {};
+      const f = readLocal();
+      return {
+        reads: f.reads[userId] ?? {},
+        mentions: f.mentions?.[userId] ?? {},
+        notify: f.notify?.[userId] ?? {},
+      };
     },
 
+    /** Позначити розмову прочитаною: зсуває мітку й обнуляє лічильник згадок */
     async setRead(userId: string, conversationId: string, at: string): Promise<void> {
       assertSafeId(userId, 'користувача');
       assertSafeId(conversationId, 'розмови');
       const db = deps.getFirestore();
       if (db) {
         await db.collection(READS).doc(userId).set(
-          { userId, lastReadAt: { [conversationId]: at } },
+          { userId, lastReadAt: { [conversationId]: at }, mentionUnread: { [conversationId]: 0 } },
           { merge: true },
         );
         return;
       }
       const data = readLocal();
       data.reads[userId] = { ...(data.reads[userId] ?? {}), [conversationId]: at };
+      data.mentions = { ...(data.mentions ?? {}), [userId]: { ...(data.mentions?.[userId] ?? {}), [conversationId]: 0 } };
+      writeLocal(data);
+    },
+
+    /** +1 непрочитана згадка. У Firestore — атомарно: двоє можуть згадати одного водночас */
+    async addMention(userId: string, conversationId: string): Promise<void> {
+      assertSafeId(userId, 'користувача');
+      assertSafeId(conversationId, 'розмови');
+      const db = deps.getFirestore();
+      if (db) {
+        await db.collection(READS).doc(userId).set(
+          { userId, mentionUnread: { [conversationId]: FieldValue.increment(1) } },
+          { merge: true },
+        );
+        return;
+      }
+      const data = readLocal();
+      const mine = { ...(data.mentions?.[userId] ?? {}) };
+      mine[conversationId] = (mine[conversationId] ?? 0) + 1;
+      data.mentions = { ...(data.mentions ?? {}), [userId]: mine };
+      writeLocal(data);
+    },
+
+    async setNotify(userId: string, conversationId: string, level: NotifyLevel): Promise<void> {
+      assertSafeId(userId, 'користувача');
+      assertSafeId(conversationId, 'розмови');
+      const db = deps.getFirestore();
+      if (db) {
+        await db.collection(READS).doc(userId).set(
+          { userId, notify: { [conversationId]: level } },
+          { merge: true },
+        );
+        return;
+      }
+      const data = readLocal();
+      data.notify = { ...(data.notify ?? {}), [userId]: { ...(data.notify?.[userId] ?? {}), [conversationId]: level } };
       writeLocal(data);
     },
   };
+}
+
+/** Підпис вкладень для превʼю: «📎 звіт.pdf +2» */
+function attachmentLabel(files?: ChatAttachment[]): string {
+  if (!files?.length) return '';
+  const first = files[0];
+  const more = files.length > 1 ? ` +${files.length - 1}` : '';
+  return `${first.isImage ? '🖼' : '📎'} ${first.name}${more}`;
+}
+
+/**
+ * Вкладення приходять від клієнта, тож довіряти їм не можна: лишаємо лише
+ * файли з нашого /uploads, а ознаку «зображення» виводимо самі з імені.
+ */
+function sanitizeAttachments(raw: unknown): ChatAttachment[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ChatAttachment[] = [];
+  for (const a of raw.slice(0, 10)) {
+    if (!a || !isOwnUploadUrl(a.url)) continue;
+    const name = String(a.name ?? '').slice(0, 200) || 'файл';
+    out.push({ name, url: a.url, isImage: isImageName(name) });
+  }
+  return out;
 }
 
 // ── Реєстрація маршрутів ──────────────────────────────────────────────────────
@@ -378,7 +465,7 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
     try {
       const { userId } = me(req);
       const convs = await visibleConversations(userId);
-      const reads = await store.getReads(userId);
+      const { reads, mentions, notify } = await store.getUserState(userId);
 
       const withUnread = await Promise.all(convs.map(async c => {
         const lastRead = reads[c.id];
@@ -390,7 +477,14 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
           ? await store.countSince(c.id, lastRead ?? '', userId)
           : 0;
         const peers = c.kind === 'dm' ? (c.memberIds ?? []).filter(id => id !== userId) : [];
-        return { ...c, unread, peerId: peers[0] ?? null };
+        return {
+          ...c,
+          unread,
+          // Згадок не може бути більше, ніж непрочитаного (мітку могли зсунути з іншого пристрою)
+          mentionUnread: Math.min(mentions[c.id] ?? 0, unread),
+          notify: notify[c.id] ?? 'all',
+          peerId: peers[0] ?? null,
+        };
       }));
 
       res.json({ conversations: sortConversations(withUnread) });
@@ -490,9 +584,11 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
   app.post('/api/chat/messages', requireAuth, async (req, res) => {
     try {
       const author = me(req);
-      const { conversationId, text } = req.body ?? {};
+      const { conversationId, text, replyToId, attachments } = req.body ?? {};
       const body = String(text ?? '').trim();
-      if (!body) {
+      const files = sanitizeAttachments(attachments);
+      // Текст може бути порожнім, лише якщо є що показати — файл
+      if (!body && files.length === 0) {
         res.status(400).json({ error: 'Порожнє повідомлення' });
         return;
       }
@@ -509,20 +605,39 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
 
       const users = await deps.getUsers();
       const now = new Date().toISOString();
+
+      // Цитату беремо з бази, а не від клієнта: інакше можна було б «процитувати»
+      // те, чого людина ніколи не писала
+      let replyTo: ChatReplyRef | undefined;
+      if (replyToId) {
+        const original = await store.getMessage(conv.id, String(replyToId)).catch(() => null);
+        if (original) {
+          replyTo = {
+            id: original.id,
+            authorId: original.authorId,
+            preview: original.deletedAt
+              ? 'Повідомлення видалено'
+              : previewOf(original.text || attachmentLabel(original.attachments), 100),
+          };
+        }
+      }
+
       const msg: ChatMessage = {
         id: randomUUID(),
         conversationId: conv.id,
         authorId: author.userId,
         text: body,
         createdAt: now,
-        mentions: parseMentions(body, users),
+        mentions: parseMentions(body, users).filter(id => canAccess(conv, id)),
+        ...(replyTo ? { replyTo } : {}),
+        ...(files.length ? { attachments: files } : {}),
       };
 
       await store.saveMessage(msg);
       await store.saveConversation({
         ...conv,
         lastMessageAt: now,
-        lastMessagePreview: previewOf(body),
+        lastMessagePreview: previewOf(body || attachmentLabel(files)),
         lastMessageAuthorId: author.userId,
       });
       // Автор щойно все бачив — інакше він сам собі створить непрочитане
@@ -534,6 +649,13 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
       // userId, email і роль — імені там немає
       const authorName = users.find(u => u.id === author.userId)?.name ?? 'Колега';
 
+      // Лічильник згадок — щоб у списку розмов було видно, де кличуть саме вас
+      for (const id of msg.mentions ?? []) {
+        if (id !== author.userId) {
+          store.addMention(id, conv.id).catch(err => console.error('[chat] mention counter:', err));
+        }
+      }
+
       // Сповіщення — лише тим, кого назвали поіменно (рішення: без шуму)
       notifyMentions(msg, conv, { userId: author.userId, name: authorName }, users).catch(err =>
         console.error('[chat] mention notify failed:', err),
@@ -542,19 +664,28 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
       // Пуш про нове повідомлення всім учасникам, крім автора. Згаданих тут нема:
       // вони отримують власне сповіщення про згадку (через saveNotification).
       if (deps.pushToUsers) {
-        const targets = chatPushTargets({
+        const candidates = chatPushTargets({
           recipients: recipientsOf(conv),
           allUserIds: users.map(u => u.id),
           authorId: author.userId,
-          mentioned: (msg.mentions ?? []).filter(id => canAccess(conv, id)),
+          mentioned: msg.mentions ?? [],
         });
-        void deps.pushToUsers(targets, chatPushPayload({
-          conversationId: conv.id,
-          kind: conv.kind === 'dm' ? 'dm' : 'channel',
-          channelTitle: conv.title,
-          authorName,
-          text: body,
-        }));
+        // Кожен сам вирішив, що йому слати з цієї розмови: усе, лише згадки чи нічого
+        void (async () => {
+          const levels = new Map<string, NotifyLevel>();
+          await Promise.all(candidates.map(async id => {
+            const st = await store.getUserState(id).catch(() => null);
+            levels.set(id, st?.notify[conv.id] ?? 'all');
+          }));
+          const targets = filterByNotify(candidates, id => levels.get(id) ?? 'all', conv.kind === 'dm');
+          await deps.pushToUsers!(targets, chatPushPayload({
+            conversationId: conv.id,
+            kind: conv.kind === 'dm' ? 'dm' : 'channel',
+            channelTitle: conv.title,
+            authorName,
+            text: body || attachmentLabel(files),
+          }));
+        })().catch(err => console.error('[chat] push failed:', err));
       }
 
       res.json({ message: msg });
@@ -568,10 +699,6 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
       const { userId } = me(req);
       const { conversationId, text } = req.body ?? {};
       const body = String(text ?? '').trim();
-      if (!body) {
-        res.status(400).json({ error: 'Порожнє повідомлення' });
-        return;
-      }
 
       const conv = await store.getConversation(String(conversationId));
       if (!conv || !canAccess(conv, userId)) {
@@ -581,6 +708,14 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
       const existing = await store.getMessage(conv.id, req.params.id);
       if (!existing) {
         res.status(404).json({ error: 'Повідомлення не знайдено' });
+        return;
+      }
+      if (existing.deletedAt) {
+        res.status(400).json({ error: 'Повідомлення видалено' });
+        return;
+      }
+      if (!body && !existing.attachments?.length) {
+        res.status(400).json({ error: 'Порожнє повідомлення' });
         return;
       }
       // Редагувати чуже не може ніхто, включно з адміністратором: підміна слів
@@ -595,7 +730,7 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
         ...existing,
         text: body.slice(0, MAX_TEXT_LENGTH),
         editedAt: new Date().toISOString(),
-        mentions: parseMentions(body, users),
+        mentions: parseMentions(body, users).filter(id => canAccess(conv, id)),
       };
       await store.saveMessage(updated);
       publish(recipientsOf(conv), 'message', updated);
@@ -660,6 +795,197 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
     }
   });
 
+  // ── Реакції ─────────────────────────────────────────────────────────────────
+
+  app.post('/api/chat/messages/:id/reactions', requireAuth, async (req, res) => {
+    try {
+      const { userId } = me(req);
+      const { conversationId, emoji } = req.body ?? {};
+      const e = String(emoji ?? '');
+      // Емодзі — це кілька кодових точок (прапори, відтінки), але не абзац тексту
+      if (!e || e.length > 16) {
+        res.status(400).json({ error: 'Некоректна реакція' });
+        return;
+      }
+      const conv = await store.getConversation(String(conversationId));
+      if (!conv || !canAccess(conv, userId)) {
+        res.status(403).json({ error: 'Немає доступу до цієї розмови' });
+        return;
+      }
+      const existing = await store.getMessage(conv.id, req.params.id);
+      if (!existing || existing.deletedAt) {
+        res.status(404).json({ error: 'Повідомлення не знайдено' });
+        return;
+      }
+      const next = toggleReaction(existing.reactions, e, userId);
+      if (Object.keys(next).length > MAX_REACTION_KINDS) {
+        res.status(400).json({ error: 'Забагато різних реакцій' });
+        return;
+      }
+      const updated: ChatMessage = { ...existing, reactions: next };
+      await store.saveMessage(updated, { replaceAll: true });
+      // Окрема подія: реакція не є новим повідомленням і не має додавати непрочитане
+      publish(recipientsOf(conv), 'reaction', updated);
+      res.json({ message: updated });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Керування каналом ───────────────────────────────────────────────────────
+
+  /** Хто може змінювати канал: той, хто його створив, або адміністратор */
+  const canManage = (conv: ChatConversation, user: { userId: string; role: string }) =>
+    user.role === 'admin' || conv.createdBy === user.userId;
+
+  async function loadChannel(req: Request, res: Response): Promise<ChatConversation | null> {
+    const conv = await store.getConversation(String(req.params.id));
+    const user = me(req);
+    if (!conv || !canAccess(conv, user.userId)) {
+      res.status(403).json({ error: 'Немає доступу до цієї розмови' });
+      return null;
+    }
+    if (conv.kind !== 'channel') {
+      res.status(400).json({ error: 'Це не канал' });
+      return null;
+    }
+    return conv;
+  }
+
+  /** Назва й тема каналу */
+  app.patch('/api/chat/conversations/:id', requireAuth, async (req, res) => {
+    try {
+      const conv = await loadChannel(req, res);
+      if (!conv) return;
+      const user = me(req);
+      const { title, topic } = req.body ?? {};
+      // Тему може поставити будь-який учасник (як у Slack); перейменувати — власник
+      if (title !== undefined) {
+        if (!canManage(conv, user) || conv.id === GENERAL.id) {
+          res.status(403).json({ error: 'Перейменувати канал може лише його власник' });
+          return;
+        }
+        const name = String(title).trim();
+        if (!name) {
+          res.status(400).json({ error: 'Потрібна назва каналу' });
+          return;
+        }
+        conv.title = name.slice(0, 80);
+      }
+      if (topic !== undefined) conv.topic = String(topic).trim().slice(0, 250);
+      await store.saveConversation(conv);
+      publish(recipientsOf(conv), 'conversation', conv);
+      res.json({ conversation: conv });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** Додати учасників у закритий канал */
+  app.post('/api/chat/conversations/:id/members', requireAuth, async (req, res) => {
+    try {
+      const conv = await loadChannel(req, res);
+      if (!conv) return;
+      if (conv.memberIds === null) {
+        res.status(400).json({ error: 'Відкритий канал і так бачить уся команда' });
+        return;
+      }
+      const known = new Set((await deps.getUsers()).map(u => u.id));
+      const add: string[] = (Array.isArray(req.body?.userIds) ? req.body.userIds : [])
+        .map(String)
+        .filter((id: string) => known.has(id));
+      if (add.length === 0) {
+        res.status(400).json({ error: 'Нікого додавати' });
+        return;
+      }
+      conv.memberIds = [...new Set([...conv.memberIds, ...add])];
+      await store.saveConversation(conv);
+      publish(conv.memberIds, 'conversation', conv);
+      res.json({ conversation: conv });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * Прибрати учасника або вийти самому (userId === я).
+   * Видаляти інших може лише власник; вийти з закритого каналу може будь-хто.
+   */
+  app.delete('/api/chat/conversations/:id/members/:userId', requireAuth, async (req, res) => {
+    try {
+      const conv = await loadChannel(req, res);
+      if (!conv) return;
+      const user = me(req);
+      const target = String(req.params.userId);
+      if (conv.memberIds === null) {
+        res.status(400).json({ error: 'З відкритого каналу не виходять — його можна лише вимкнути в сповіщеннях' });
+        return;
+      }
+      if (target !== user.userId && !canManage(conv, user)) {
+        res.status(403).json({ error: 'Прибирати учасників може лише власник каналу' });
+        return;
+      }
+      if (!conv.memberIds.includes(target)) {
+        res.status(404).json({ error: 'Такого учасника немає' });
+        return;
+      }
+      const before = [...conv.memberIds];
+      conv.memberIds = conv.memberIds.filter(id => id !== target);
+      // Останній пішов — канал нікому не потрібен
+      if (conv.memberIds.length === 0) conv.archived = true;
+      await store.saveConversation(conv);
+      // Той, кого прибрали, теж має дізнатись, що розмова зникла
+      publish(before, 'conversation', conv);
+      res.json({ conversation: conv });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** Архівація: канал зникає зі списків, історія лишається в базі */
+  app.post('/api/chat/conversations/:id/archive', requireAuth, async (req, res) => {
+    try {
+      const conv = await loadChannel(req, res);
+      if (!conv) return;
+      if (conv.id === GENERAL.id) {
+        res.status(400).json({ error: 'Загальний канал архівувати не можна' });
+        return;
+      }
+      if (!canManage(conv, me(req))) {
+        res.status(403).json({ error: 'Архівувати канал може лише його власник' });
+        return;
+      }
+      conv.archived = true;
+      await store.saveConversation(conv);
+      publish(recipientsOf(conv), 'conversation', conv);
+      res.json({ conversation: conv });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Сповіщення з розмови ────────────────────────────────────────────────────
+
+  app.put('/api/chat/conversations/:id/notify', requireAuth, async (req, res) => {
+    try {
+      const { userId } = me(req);
+      const conv = await store.getConversation(String(req.params.id));
+      if (!conv || !canAccess(conv, userId)) {
+        res.status(403).json({ error: 'Немає доступу до цієї розмови' });
+        return;
+      }
+      const level = req.body?.level;
+      if (!isNotifyLevel(level)) {
+        res.status(400).json({ error: 'Невідомий режим сповіщень' });
+        return;
+      }
+      await store.setNotify(userId, conv.id, level);
+      res.json({ success: true, level });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Згадки ──────────────────────────────────────────────────────────────────
 
   async function notifyMentions(
@@ -684,7 +1010,7 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
         userId,
         title: `${author.name} згадав(ла) вас у чаті`,
         message: previewOf(msg.text, 140),
-        link: '/?view=chat',
+        link: `/?view=chat&chat=${encodeURIComponent(conv.id)}`,
         read: false,
         createdAt: new Date().toISOString(),
       });

@@ -29,7 +29,7 @@ const dm = chatPushPayload({ conversationId: 'c1', kind: 'dm', authorName: 'Ір
 assert.equal(dm.title, 'Ірина');
 assert.equal(dm.body, 'Привіт! Зазирни в задачу');   // переноси згладжено
 assert.equal(dm.tag, 'chat-c1');
-assert.equal(dm.url, '/?view=chat');
+assert.equal(dm.url, '/?view=chat&chat=c1');
 const ch = chatPushPayload({ conversationId: 'general', kind: 'channel', channelTitle: 'Загальний', authorName: 'Марек', text: 'x'.repeat(300) });
 assert.equal(ch.title, 'Марек · Загальний');
 assert.equal(ch.body.length, 120);

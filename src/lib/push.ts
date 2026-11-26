@@ -62,7 +62,8 @@ export function chatPushPayload(opts: {
   return {
     title: opts.kind === 'dm' ? opts.authorName : `${opts.authorName} · ${opts.channelTitle || 'канал'}`,
     body: previewOf(opts.text, 120),
-    url: '/?view=chat',
+    // chat=<id> відкриває саме цю розмову, а не лише розділ
+    url: `/?view=chat&chat=${encodeURIComponent(opts.conversationId)}`,
     // Серія повідомлень з однієї розмови замінює одне одного замість стосу
     tag: `chat-${opts.conversationId}`,
   };

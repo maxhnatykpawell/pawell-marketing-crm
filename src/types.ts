@@ -72,6 +72,8 @@ export interface ChatConversation {
   createdBy: string;
   createdAt: string;
   archived?: boolean;
+  /** Про що канал — показується в шапці й у «Деталях» */
+  topic?: string;
   /** Оновлюються при кожному повідомленні — з них будується список розмов */
   lastMessageAt?: string;
   lastMessagePreview?: string;
@@ -92,11 +94,35 @@ export interface ChatMessage {
   deletedAt?: string;
   /** id користувачів, згаданих через @ — за ними йдуть сповіщення */
   mentions?: string[];
+  /** Емодзі → id тих, хто поставив */
+  reactions?: Record<string, string[]>;
+  /** Відповідь на інше повідомлення: цитату зберігаємо, щоб вона жила й після видалення оригіналу */
+  replyTo?: ChatReplyRef;
+  attachments?: ChatAttachment[];
 }
+
+export interface ChatReplyRef {
+  id: string;
+  authorId: string;
+  preview: string;
+}
+
+export interface ChatAttachment {
+  name: string;
+  /** Завжди /uploads/... — сервер інших адрес не приймає */
+  url: string;
+  isImage: boolean;
+}
+
+/** Що сповіщати з розмови: усе / лише згадки / нічого */
+export type ChatNotifyLevel = 'all' | 'mentions' | 'none';
 
 /** Розмова в тому вигляді, в якому її віддає сервер конкретній людині */
 export interface ChatConversationView extends ChatConversation {
   unread: number;
+  /** Скільки з непрочитаного — згадки саме цієї людини */
+  mentionUnread: number;
+  notify: ChatNotifyLevel;
   /** Для особистих — з ким саме розмова */
   peerId?: string | null;
 }
