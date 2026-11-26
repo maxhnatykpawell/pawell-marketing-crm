@@ -16,6 +16,7 @@ import ClientTiers from './analytics/ClientTiers';
 import ClientPowerCard, { type PowerQueueItem } from './analytics/ClientPowerCard';
 import ClientPowerDialog from './analytics/ClientPowerDialog';
 import ClientNamesBanner from './analytics/ClientNamesBanner';
+import ClientDetailDrawer from './analytics/ClientDetailDrawer';
 import { countFallbackNames } from '../lib/clientNames';
 import { useClientPower } from '../hooks/useClientPower';
 import {
@@ -113,13 +114,14 @@ function SortableTh({
  * до сотень, кожен по десятку вузлів.
  */
 const ClientRow = React.memo(function ClientRow({
-  client, index, onTagClick, onTierClick, onPowerClick,
+  client, index, onTagClick, onTierClick, onPowerClick, onOpenClient,
 }: {
   client: TieredClient;
   index: number;
   onTagClick: (tag: string) => void;
   onTierClick: (tier: TierId) => void;
   onPowerClick: (clientId: string) => void;
+  onOpenClient: (clientId: string) => void;
 }) {
   const power = client.power;
   const powerMeta = power?.tier ? POWER_TIER_BY_ID[power.tier] : null;
@@ -131,7 +133,13 @@ const ClientRow = React.memo(function ClientRow({
         <div className="flex items-center gap-3">
           <span className="text-xs font-bold text-gray-300 w-6 flex-shrink-0">{index + 1}</span>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-gray-800 truncate" title={client.name}>{client.name}</p>
+            <button
+              onClick={() => onOpenClient(client.id)}
+              title={`Відкрити картку клієнта: ${client.name}`}
+              className="block max-w-full text-left text-sm font-semibold text-gray-800 truncate hover:text-purple-700 hover:underline underline-offset-2 focus-visible:outline-none focus-visible:text-purple-700 focus-visible:underline"
+            >
+              {client.name}
+            </button>
             <span className={`inline-flex items-center gap-1 mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${client.rfm.color}`}>
               <span>{client.rfm.icon}</span> {client.rfm.label}
             </span>
@@ -284,6 +292,8 @@ export default function AnalyticsView() {
   const [powerFocus, setPowerFocus] = useState<PowerFocus | null>(saved.powerFocus);
   /** Клієнт, чию оцінку Pawell Power зараз редагують */
   const [powerEditId, setPowerEditId] = useState<string | null>(null);
+  /** Клієнт, чию картку з деталями відкрито */
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   /**
    * Збережений командний варіант порогів. Проходить перевірку навіть прийшовши
@@ -847,6 +857,7 @@ export default function AnalyticsView() {
                         onTagClick={addTagFilter}
                         onTierClick={focusTier}
                         onPowerClick={setPowerEditId}
+                        onOpenClient={setDetailId}
                       />
                     ))}
                     {selectedClients.length === 0 && (
@@ -1307,6 +1318,20 @@ export default function AnalyticsView() {
       так Ctrl+P зі сторінки дає той самий документ, що й кнопка «PDF»,
       а не знімок інтерфейсу з фільтрами й кнопками.
     */}
+    {detailId && (() => {
+      const target = enrichedP.find(c => c.id === detailId);
+      if (!target) return null;
+      return (
+        <ClientDetailDrawer
+          client={target}
+          powerInput={clientPower.items[target.id] ?? {}}
+          powerMeta={clientPower.items[target.id]}
+          onEditPower={() => setPowerEditId(target.id)}
+          onClose={() => setDetailId(null)}
+        />
+      );
+    })()}
+
     {powerEditId && (() => {
       const target = allClients.find(c => c.id === powerEditId);
       if (!target) return null;

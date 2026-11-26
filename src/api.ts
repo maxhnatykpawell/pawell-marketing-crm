@@ -6,6 +6,7 @@ import {
 } from './types';
 import type { FunnelSpeedResponse, FunnelSpeedState } from './lib/funnelSpeed';
 import type { ClientPowerInput } from './lib/clientPower';
+import type { ClientDetails } from './lib/clientContacts';
 import { v4 as uuidv4 } from 'uuid';
 import {
   PendingWrites, describeQueued, writeErrorMessage,
@@ -1168,6 +1169,25 @@ export const saveClientPower = async (clientId: string, input: ClientPowerInput)
     throw new Error(err.error || 'Не вдалось зберегти оцінку');
   }
   return (await res.json()).item ?? null;
+};
+
+// ── Відповідальний і контакти клієнта ─────────────────────────────────────────
+
+export interface ClientDetailsResponse extends ClientDetails {
+  /** Назви полів відповіді CRM без значень — для діагностики, коли щось не знайдено */
+  shape?: unknown;
+  fetchedAt?: string;
+  cached?: boolean;
+}
+
+/** Іде в KeepInCRM наживо (сервер кешує на кілька хвилин), бо в нашій базі цих даних немає */
+export const getClientDetails = async (clientId: string): Promise<ClientDetailsResponse> => {
+  const res = await fetch(`/api/keepincrm/clients/${encodeURIComponent(clientId)}/details`, { headers: authHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Не вдалось завантажити дані клієнта');
+  }
+  return res.json();
 };
 
 // ── Назви клієнтів з KeepInCRM ────────────────────────────────────────────────

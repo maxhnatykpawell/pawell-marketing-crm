@@ -54,6 +54,7 @@ import { registerChatRoutes, chatStreamStats } from './chat-server';
 import { registerGoogleCalendar, type GoogleCalendarApi } from './google-calendar-server';
 import { registerClientPowerRoutes } from './client-power-server';
 import { pickClientName, fallbackName, isFallbackName, applyClientNames, describeShape } from './src/lib/clientNames';
+import { normalizeClientDetails } from './src/lib/clientContacts';
 import { registerPushRoutes, sendPushToUsers } from './push-server';
 import { parseMentions } from './src/lib/mentions';
 import { previewOf } from './src/lib/chat';
@@ -1984,6 +1985,65 @@ async function startClientNamesSync(trigger: 'manual' | 'auto'): Promise<boolean
   return true;
 }
 
+// ── Відповідальний і контакти клієнта (на вимогу) ─────────────────────────────
+//
+// Відповідального менеджера й людей із їхніми ролями та номерами в знімку LTV немає, а
+// вивантажувати їх для всіх клієнтів (тисячі запитів, персональні дані в нашій базі) не варто.
+// Тому беремо їх із CRM лише тоді, коли відкривають картку клієнта: один запит, кеш на кілька
+// хвилин. Номери телефонів у нашій базі не осідають.
+
+const CLIENT_DETAILS_TTL_MS = 10 * 60_000;
+const CLIENT_DETAILS_MAX = 500;
+const clientDetailsCache = new Map<string, { at: number; value: any }>();
+/** Паралельні відкриття однієї картки діляться одним запитом до CRM */
+const clientDetailsInflight = new Map<string, Promise<any>>();
+
+/** Довідник «id користувача CRM → імʼя»: у картці клієнта менеджер нерідко лише id */
+let keepinUsersCache: { at: number; map: Map<string, string> } | null = null;
+
+async function keepinUsersMap(): Promise<Map<string, string>> {
+  if (keepinUsersCache && Date.now() - keepinUsersCache.at < 30 * 60_000) return keepinUsersCache.map;
+  const items = await keepinFetchAll('/users', {});
+  const map = new Map<string, string>();
+  for (const u of items) {
+    const name = pickClientName(u);
+    if (u?.id != null && name) map.set(String(u.id), name);
+  }
+  keepinUsersCache = { at: Date.now(), map };
+  return map;
+}
+
+async function loadClientDetails(id: string): Promise<any> {
+  const hit = clientDetailsCache.get(id);
+  if (hit && Date.now() - hit.at < CLIENT_DETAILS_TTL_MS) return { ...hit.value, cached: true };
+
+  const running = clientDetailsInflight.get(id);
+  if (running) return running;
+
+  const job = (async () => {
+    const body = await keepinGet(`${keepinCRMBaseUrl()}/clients/${encodeURIComponent(id)}`, `/clients/${id}`);
+    const client = body?.client ?? body;
+    // Довідник користувачів — необов'язковий: без нього покажемо менеджера, якщо його імʼя вже в картці
+    const users = await keepinUsersMap().catch(() => new Map<string, string>());
+    const value = {
+      ...normalizeClientDetails(client, users),
+      // Лише назви полів (без значень): якщо щось не знайдено, за цим видно, де воно лежить
+      shape: describeShape(client),
+      fetchedAt: new Date().toISOString(),
+    };
+
+    clientDetailsCache.set(id, { at: Date.now(), value });
+    if (clientDetailsCache.size > CLIENT_DETAILS_MAX) {
+      const oldest = [...clientDetailsCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+      if (oldest) clientDetailsCache.delete(oldest[0]);
+    }
+    return { ...value, cached: false };
+  })().finally(() => clientDetailsInflight.delete(id));
+
+  clientDetailsInflight.set(id, job);
+  return job;
+}
+
 /** Журнал оплат (src/lib/paidLedger.ts) — частинами, як і клієнти */
 const PAID_LEDGER_COLLECTION = 'crm_keepincrm_paid_ledger';
 /** Службовий документ журналу — поруч із частинами, але не число */
@@ -3392,6 +3452,25 @@ async function startServer() {
   app.post('/api/keepincrm/sync-client-names', requireAuth, requireAdmin, async (_req, res) => {
     const started = await startClientNamesSync('manual');
     res.status(started ? 202 : 409).json({ started, state: clientNamesState });
+  });
+
+  /**
+   * GET /api/keepincrm/clients/:id/details — відповідальний і контакти клієнта.
+   * Іде в CRM наживо (з кешем на 10 хв), бо в нашій базі цих даних навмисно немає.
+   */
+  app.get('/api/keepincrm/clients/:id/details', requireAuth, async (req, res) => {
+    const id = String(req.params.id);
+    // id йде в адресу запиту до CRM: пропускаємо лише звичайні ідентифікатори
+    if (!/^[A-Za-z0-9_-]{1,40}$/.test(id)) {
+      res.status(400).json({ error: 'Некоректний ідентифікатор клієнта' });
+      return;
+    }
+    try {
+      res.json(await loadClientDetails(id));
+    } catch (e: any) {
+      console.error(`❌ Деталі клієнта ${id}:`, e?.message || e);
+      res.status(502).json({ error: 'KeepInCRM не віддав дані клієнта. Спробуйте за хвилину.' });
+    }
   });
 
   /** GET /api/keepincrm/client-names/status — хід прогону назв (для індикатора й опитування) */

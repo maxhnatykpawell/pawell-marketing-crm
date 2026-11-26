@@ -48,6 +48,22 @@ window.fetch = async (input: any, init?: any) => {
   const json = (b: any, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
   if (!url.startsWith('/api/')) return realFetch(input, init);
   await new Promise(r => setTimeout(r, 120));
+  const dm = url.match(/^\/api\/keepincrm\/clients\/([^/]+)\/details/);
+  if (dm) {
+    // c1 — компанія з різними людьми й ролями; c2 — нічого не знайдено (покаже діагностику); решта — один менеджер
+    if (dm[1] === 'c1') return json({
+      responsible: { id: '7', name: 'Ірина Блюс' },
+      companyPhones: ['+38 044 111-22-33'], companyEmails: ['office@ukrzaliznytsia.ua'],
+      contacts: [
+        { name: 'Петро Директоров', role: 'Директор', phones: ['+38 050 111 22 33'], emails: ['director@uz.ua'], primary: true },
+        { name: 'Ольга Технолог', role: 'Головний технолог · Технічний', phones: ['067 444 55 66', '063 777 88 99'], emails: [], primary: false },
+        { name: 'Відділ закупівель', role: 'Закупівлі', phones: ['044 999 00 11'], emails: ['buy@uz.ua'], primary: false },
+      ],
+      shape: { id: 'number', title: 'string' }, fetchedAt: new Date().toISOString(), cached: false,
+    });
+    if (dm[1] === 'c2') return json({ responsible: null, companyPhones: [], companyEmails: [], contacts: [], shape: { id: 'number', title: 'string', extra: { kind: 'string', items: [{ label: 'string' }] } }, fetchedAt: new Date().toISOString() });
+    return json({ responsible: { id: '9', name: 'Марек Новак' }, companyPhones: ['+38 044 000-11-22'], companyEmails: [], contacts: [], shape: {}, fetchedAt: new Date().toISOString() });
+  }
   if (url.startsWith('/api/keepincrm/ltv/clients')) return json(clientsForResponse());
   if (url.startsWith('/api/keepincrm/client-names/status')) {
     const running = !!namesJob && Date.now() - namesJob.startedAt < 3500;
