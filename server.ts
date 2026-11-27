@@ -19,6 +19,8 @@ import admin from 'firebase-admin';
 import { buildCohortLtv } from './src/lib/cohortLtv';
 import { chunkBySize } from './src/lib/clientAnalytics';
 import { kyivMonthOf, kyivDayBounds } from './src/lib/kyivTime';
+import { buildReconcileReport, previousMonthRange, type ReconcileReport } from './src/lib/reconcile';
+import { aggregateCash, bucketPayments, extractPaymentAmount, type CashDay, type RawCashPayment } from './src/lib/cashPayments';
 import { dedupeById } from './src/lib/dedupeById';
 import { createSlotLimiter } from './src/lib/rateLimiter';
 import { decideStartupLtv, LtvMeta } from './src/lib/startupSync';
@@ -3004,7 +3006,7 @@ function setupKeepInCRMLTVCron() {
 
 interface SyncState {
   running: boolean;
-  type: 'history' | 'snapshot' | 'cohort' | null; // що саме синхронізується
+  type: 'history' | 'snapshot' | 'cohort' | 'reconcile' | null; // що саме синхронізується
   total: number;          // скільки днів загалом (для history)
   done: number;           // скільки вже оброблено
   currentDate: string;    // яка дата зараз обробляється
@@ -3065,6 +3067,236 @@ async function resyncCohortWindow(days: number): Promise<{ done: number; failed:
   }
 
   return { done, failed };
+}
+
+// ── Оплати за фактичною датою платежу ─────────────────────────────────────────
+//
+// Знімки угод (crm_keepincrm) прив'язані до дати СТВОРЕННЯ угоди. Гроші ж належать дню,
+// коли платіж надійшов, — це окрема вісь, тож і зберігається окремо: по документу на день.
+// Платежів небагато (сотні-тисячі), тому щоразу беремо їх УСІ й переписуємо сховище цілком:
+// так перенесений датою чи скасований платіж не залишає після себе слідів, а повтор нічого
+// не дублює.
+
+const CASH_COLLECTION = 'crm_keepincrm_cash';
+const CASH_META_DOC = 'meta';
+
+interface CashMeta {
+  syncedAt: string;
+  payments: number;
+  /** Платежів без суми / без дати: якщо > 0, суми занижені і інтерфейс має про це сказати */
+  noAmount: number;
+  noDate: number;
+  /** Назви полів першого платежу (лише назви, без значень) — щоб звірити з очікуваним */
+  sampleFields: string[];
+}
+
+let cashSyncRunning = false;
+
+async function loadCash(from?: string, to?: string): Promise<{ days: CashDay[]; meta: CashMeta | null }> {
+  const inRange = (d: CashDay) => (!from || d.date >= from) && (!to || d.date <= to);
+  const db = initFirebase();
+  if (!db) {
+    const st = await getDb();
+    const saved = st.keepincrmCash;
+    return { days: ((saved?.days ?? []) as CashDay[]).filter(inRange), meta: saved?.meta ?? null };
+  }
+  const snap = await db.collection(CASH_COLLECTION).get();
+  const days: CashDay[] = [];
+  let meta: CashMeta | null = null;
+  for (const d of snap.docs) {
+    if (d.id === CASH_META_DOC) { meta = d.data() as CashMeta; continue; }
+    const day = d.data() as CashDay;
+    if (inRange(day)) days.push(day);
+  }
+  days.sort((a, b) => a.date.localeCompare(b.date));
+  return { days, meta };
+}
+
+async function writeCash(days: CashDay[], meta: CashMeta): Promise<void> {
+  const db = initFirebase();
+  if (!db) {
+    const st = await getDb();
+    st.keepincrmCash = { days, meta };
+    await saveDb(st);
+    return;
+  }
+  const col = db.collection(CASH_COLLECTION);
+  const keep = new Set(days.map(d => d.date));
+  // Чергами по 400: ліміт пакета Firestore — 500 операцій
+  for (let i = 0; i < days.length; i += 400) {
+    const batch = db.batch();
+    for (const d of days.slice(i, i + 400)) batch.set(col.doc(d.date), d);
+    await batch.commit();
+  }
+  await col.doc(CASH_META_DOC).set(meta);
+  // Дні, яких більше немає (платіж скасовано чи перенесено), прибираємо
+  const stale = (await col.listDocuments()).filter(d => d.id !== CASH_META_DOC && !keep.has(d.id));
+  for (let i = 0; i < stale.length; i += 400) {
+    const batch = db.batch();
+    for (const d of stale.slice(i, i + 400)) batch.delete(d);
+    await batch.commit();
+  }
+}
+
+/**
+ * Перетягнути всі надходження з KeepInCRM і перебудувати оплати за датою платежу.
+ * Надходження — це debit без позначки «заплановано», з прив'язкою до угоди; те саме правило,
+ * що й у швидкості воронки, щоб ці дві звітні картини не розходились у тому, що є оплатою.
+ */
+async function syncCash(): Promise<{ ok: boolean; error?: string; meta?: CashMeta }> {
+  if (!KEEPINCRM_API_KEY()) return { ok: false, error: 'missing_api_key' };
+  if (cashSyncRunning) return { ok: false, error: 'cash_sync_running' };
+  cashSyncRunning = true;
+  try {
+    let sampleFields: string[] = [];
+    const res = await keepinFetchPages<RawCashPayment>('/payments', {}, p => {
+      if (sampleFields.length === 0 && p && typeof p === 'object') sampleFields = Object.keys(p).sort();
+      if (!(p?.kind === 'debit' && !p.planned && p.parent_id)) return null;
+      return {
+        clientId: p.client?.id != null ? String(p.client.id) : null,
+        at: String(p.at || ''),
+        amount: extractPaymentAmount(p),
+      };
+    }, () => {});
+
+    // Джерело платежу — джерело клієнта; беремо з сховища швидкості воронки, якщо воно є
+    const funnel = await loadFunnelSpeed().catch(() => null);
+    const sourceById = new Map<string, string>();
+    for (const r of funnel?.records ?? []) sourceById.set(r.id, r.source);
+
+    const { days, noDate, noAmount } = bucketPayments(res.items, id => sourceById.get(id));
+
+    // Захист від порожньої відповіді: збій API не повинен стерти всю історію оплат
+    if (res.items.length === 0 && res.expected > 0) {
+      return { ok: false, error: 'KeepInCRM повернув 0 оплат при ненульовому очікуванні — сховище не змінено' };
+    }
+
+    const meta: CashMeta = { syncedAt: new Date().toISOString(), payments: res.items.length, noAmount, noDate, sampleFields };
+    await writeCash(days, meta);
+    console.log(`💰 Оплати за датою платежу: ${res.items.length} платежів, ${days.length} днів${noAmount ? `, без суми: ${noAmount}` : ''}`);
+    return { ok: true, meta };
+  } catch (err: any) {
+    const message = err.message || String(err);
+    console.error('❌ Синхронізація оплат впала:', message);
+    return { ok: false, error: message };
+  } finally {
+    cashSyncRunning = false;
+  }
+}
+
+/** Максимум днів за один запуск звірки: кожен день — це кілька запитів до KeepInCRM з обмеженням частоти */
+const RECONCILE_MAX_DAYS = 93;
+const RECONCILE_DOC = 'keepincrm_reconcile_last';
+
+/**
+ * Звірка: перераховує знімки днів [from, to] напряму з KeepInCRM і повертає звіт «було → стало».
+ *
+ * Безпечна до повторів: знімок дня перезаписується за ключем-датою, а не додається,
+ * тож дублів вона не створює. День, який не вдалось оновити, лишається зі старим
+ * знімком і потрапляє у failedDays, а не видається за успішний.
+ * Виклик має сам тримати syncState (див. startReconcile).
+ */
+async function runReconcile(from: string, to: string): Promise<ReconcileReport> {
+  const dates = dateRange(from, to);
+  const before = await loadEntriesForRange(from, to);
+  const sourceNames = (await keepinFetchAll('/sources', {})).map(s => s.name);
+
+  const failed: string[] = [];
+  for (const d of dates) {
+    syncState.currentDate = d;
+    const res = await syncKeepInCRM(d, { sourceNames });
+    if (!res.ok) failed.push(d);
+    syncState.done++;
+  }
+
+  const after = await loadEntriesForRange(from, to);
+  const report = buildReconcileReport(dates, before, after, failed);
+
+  // Оплати за датою платежу перебудовуються разом зі звіркою: інакше суми «за створенням» і
+  // «за оплатою» у звіті розійшлись би за часом
+  const cashBefore = aggregateCash((await loadCash(from, to)).days);
+  const cash = await syncCash();
+  const cashAfter = aggregateCash((await loadCash(from, to)).days);
+
+  const doc = {
+    ...report,
+    cash: {
+      ok: cash.ok,
+      error: cash.ok ? null : cash.error ?? null,
+      before: { count: cashBefore.count, sum: cashBefore.sum },
+      after: { count: cashAfter.count, sum: cashAfter.sum },
+    },
+    finishedAt: new Date().toISOString(),
+  };
+  const db = initFirebase();
+  if (db) {
+    await db.collection(CRM_COLLECTION).doc(RECONCILE_DOC).set(doc);
+  } else {
+    const state = await getDb();
+    state.keepincrmReconcile = doc;
+    await saveDb(state);
+  }
+  return report;
+}
+
+/** Запустити звірку у фоні під спільним замком syncState. Повертає false, якщо вже щось виконується. */
+function startReconcile(from: string, to: string, trigger: 'manual' | 'cron'): boolean {
+  if (syncState.running) return false;
+  const days = dateRange(from, to).length;
+
+  syncState.running     = true;
+  syncState.type        = 'reconcile';
+  syncState.total       = days;
+  syncState.done        = 0;
+  syncState.currentDate = '';
+  syncState.startedAt   = new Date().toISOString();
+  syncState.finishedAt  = null;
+  syncState.error       = null;
+
+  (async () => {
+    try {
+      const r = await runReconcile(from, to);
+      resetSyncState(r.failedDays.length ? `Не вдалось оновити ${r.failedDays.length} дн.: ${r.failedDays.join(', ')}` : undefined);
+      console.log(`✅ Звірка (${trigger}) ${from}…${to}: змінились ${r.changedDays} з ${r.days} днів, сума угод ${r.totalsDelta.agreementsSum >= 0 ? '+' : ''}${r.totalsDelta.agreementsSum}`);
+    } catch (err: any) {
+      resetSyncState(err.message || String(err));
+      console.error('❌ Звірка впала:', err.message || err);
+    }
+  })();
+  return true;
+}
+
+let keepinCRMCashCronTask: any = null;
+
+/** Щодоби о 03:30: оплат небагато, а свіжі платежі мають потрапляти в звіти наступного ранку */
+function setupKeepInCRMCashCron() {
+  if (keepinCRMCashCronTask) {
+    keepinCRMCashCronTask.stop();
+    keepinCRMCashCronTask = null;
+  }
+  keepinCRMCashCronTask = cron.schedule('30 3 * * *', async () => {
+    if (!KEEPINCRM_API_KEY()) return;
+    await syncCash();
+  }, { timezone: 'Europe/Kyiv' });
+  console.log('💰 KeepInCRM оплати за датою платежу: щодоби о 03:30');
+}
+
+let keepinCRMReconcileCronTask: any = null;
+
+/** 1-го числа о 05:00 звіряє попередній повний місяць (на той момент усі правки в KeepInCRM вже внесені) */
+function setupKeepInCRMReconcileCron() {
+  if (keepinCRMReconcileCronTask) {
+    keepinCRMReconcileCronTask.stop();
+    keepinCRMReconcileCronTask = null;
+  }
+  keepinCRMReconcileCronTask = cron.schedule('0 5 1 * *', () => {
+    if (!KEEPINCRM_API_KEY()) return;
+    const { from, to } = previousMonthRange(todayKyiv());
+    if (!startReconcile(from, to, 'cron')) {
+      console.log('⏭️ Місячну звірку пропущено: інша синхронізація вже виконується.');
+    }
+  }, { timezone: 'Europe/Kyiv' });
+  console.log('📈 KeepInCRM звірка: 1-го числа кожного місяця о 05:00 (попередній місяць)');
 }
 
 let keepinCRMCohortCronTask: any = null;
@@ -3175,6 +3407,8 @@ async function startServer() {
   setupKeepInCRMCron();
   setupKeepInCRMLTVCron();
   setupKeepInCRMCohortCron();
+  setupKeepInCRMReconcileCron();
+  setupKeepInCRMCashCron();
   setupKeepInCRMContactsCron();
   setupFunnelSpeedCron();
   // Перший запуск — коли даних ще немає. Далі їх оновлює нічний cron: повний прохід
@@ -3696,6 +3930,76 @@ async function startServer() {
       if (!res.headersSent) {
         res.status(500).json({ success: false, error: e.message });
       }
+    }
+  });
+
+  /**
+   * POST /api/keepincrm/reconcile  { from, to }  (YYYY-MM-DD, до 93 днів)
+   * Звірка за період: перерахунок знімків із KeepInCRM і звіт «було → стало».
+   * Без параметрів — попередній повний місяць.
+   */
+  app.post('/api/keepincrm/reconcile', requireAuth, requireAdmin, (req, res) => {
+    let { from, to } = (req.body || {}) as { from?: string; to?: string };
+    if (!from && !to) ({ from, to } = previousMonthRange(todayKyiv()));
+    if (!from || !to || !ISO_DATE.test(from) || !ISO_DATE.test(to) || from > to) {
+      return res.status(400).json({ success: false, error: 'bad_range', message: 'Вкажіть період: from і to у форматі YYYY-MM-DD, from не пізніше to.' });
+    }
+    if (to > todayKyiv()) to = todayKyiv();
+    const days = dateRange(from, to).length;
+    if (days > RECONCILE_MAX_DAYS) {
+      return res.status(400).json({ success: false, error: 'range_too_long', message: `За один запуск — не більше ${RECONCILE_MAX_DAYS} днів. Розбийте період на частини.` });
+    }
+    if (!startReconcile(from, to, 'manual')) {
+      return res.status(409).json({
+        success: false,
+        error: 'sync_already_running',
+        message: `Синхронізація вже виконується (${syncState.done}/${syncState.total}). Зачекайте завершення.`,
+      });
+    }
+    res.json({ success: true, message: `Звірку ${from} — ${to} запущено у фоні`, from, to, days });
+  });
+
+  /**
+   * GET /api/keepincrm/cash?from=&to=
+   * Оплати за ФАКТИЧНОЮ датою платежу: дні, підсумок, джерела, місяці.
+   * Без параметрів — останні 30 днів.
+   */
+  app.get('/api/keepincrm/cash', requireAuth, async (req, res) => {
+    try {
+      const to = (req.query.to as string) || todayKyiv();
+      const from = (req.query.from as string) || addDaysToYmd(to, -29);
+      if (!ISO_DATE.test(from) || !ISO_DATE.test(to) || from > to) {
+        return res.status(400).json({ error: 'bad_range' });
+      }
+      const { days, meta } = await loadCash(from, to);
+      res.json({ days, aggregated: aggregateCash(days), period: { from, to }, meta });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** POST /api/keepincrm/sync-cash — перебудувати оплати з KeepInCRM зараз (адмін) */
+  app.post('/api/keepincrm/sync-cash', requireAuth, requireAdmin, async (_req, res) => {
+    const r = await syncCash();
+    if (!r.ok) {
+      const busy = r.error === 'cash_sync_running';
+      return res.status(busy ? 409 : 500).json({ success: false, error: r.error });
+    }
+    res.json({ success: true, meta: r.meta });
+  });
+
+  /** GET /api/keepincrm/reconcile/last — звіт останньої звірки (null, якщо ще не було) */
+  app.get('/api/keepincrm/reconcile/last', requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const db = initFirebase();
+      if (db) {
+        const snap = await db.collection(CRM_COLLECTION).doc(RECONCILE_DOC).get();
+        return res.json({ report: snap.exists ? snap.data() : null });
+      }
+      const state = await getDb();
+      res.json({ report: state.keepincrmReconcile ?? null });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 

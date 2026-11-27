@@ -4,7 +4,7 @@ import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, isToday, 
 import { uk } from 'date-fns/locale';
 import { TrendingUp, TrendingDown, Target, Calendar as CalendarIcon, Send, Loader2, RefreshCw, Users, Zap, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { KeepInCRMHistoryResponse } from '../types';
-import { getKeepInCRMHistory, triggerKeepInCRMSync, triggerKeepInCRMHistorySync, getKeepInCRMSyncStatus, getKeepInCRMLTV, triggerKeepInCRMSyncLTV } from '../api';
+import { getKeepInCRMCash, type KeepInCRMCashResponse, getKeepInCRMHistory, triggerKeepInCRMSync, triggerKeepInCRMHistorySync, getKeepInCRMSyncStatus, getKeepInCRMLTV, triggerKeepInCRMSyncLTV } from '../api';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { DollarSign, Gem, ExternalLink, Wallet } from 'lucide-react';
 import PeriodPicker, { PeriodKey, PeriodValue, makePeriod, describePeriod } from './PeriodPicker';
@@ -40,6 +40,8 @@ export default function DashboardView() {
   const K_PRESETS: PeriodKey[] = ['today', 'yesterday', '7d', '30d', 'month', 'custom'];
   const [kPeriod, setKPeriod]     = useState<PeriodValue>(() => makePeriod('today'));
   const [kData, setKData]         = useState<KeepInCRMHistoryResponse | null>(null);
+  /** Оплати за ФАКТИЧНОЮ датою платежу — окрема вісь від «угод за датою створення» */
+  const [cash, setCash]         = useState<KeepInCRMCashResponse | null>(null);
   const [kLoading, setKLoading]   = useState(true);
   const [kSyncing, setKSyncing]   = useState(false);
   const [kError, setKError]       = useState<string | null>(null);
@@ -78,6 +80,8 @@ export default function DashboardView() {
     try {
       const data = await getKeepInCRMHistory(p.from, p.to, true);
       setKData(data);
+      // Оплати — додаткова картка: якщо вони не завантажились, решта дашборда працює як працювала
+      getKeepInCRMCash(p.from, p.to).then(setCash).catch(() => setCash(null));
     } catch (e: any) {
       setKError(e.message || 'Не вдалось завантажити дані KeepInCRM');
     } finally {
@@ -507,6 +511,24 @@ export default function DashboardView() {
                   unit={(kData.aggregated.totalAgreements ?? 0) > 0 ? '₴' : undefined}
                   delta={avgCheckChange(kData.comparison?.agreementsSumChange, kData.comparison?.agreementsChange)}
                   note={(kData.aggregated.totalAgreements ?? 0) > 0 ? `сума ÷ ${fmtNum(kData.aggregated.totalAgreements ?? 0)} угод` : 'за період немає угод'}
+                />
+                {/* Гроші, що реально надійшли в період, — за датою платежу. «Угоди» вище рахуються за датою
+                    створення, тож угода минулого місяця, оплачена зараз, тут є, а там ні: це різні питання. */}
+                <KpiTile
+                  label="Оплачено · за датою платежу"
+                  accent="#059669"
+                  value={cash && cash.meta ? fmtNum(Math.round(cash.aggregated.sum)) : '—'}
+                  unit={cash && cash.meta ? '₴' : undefined}
+                  note={!cash || !cash.meta
+                    ? 'оплати ще не завантажені'
+                    : <>
+                        {fmtNum(cash.aggregated.count)} платежів, фактично надійшли в цей період
+                        {cash.meta.noAmount > 0 && (
+                          <span className="block mt-1 text-amber-800" title="У цих платежах API не віддав суму, тож вона не врахована">
+                            ⚠ без суми: {fmtNum(cash.meta.noAmount)} (сума занижена)
+                          </span>
+                        )}
+                      </>}
                 />
                 {/* Веде на вкладку «Аналітика»: туди ж можна зайти з меню, і обидва шляхи
                     мають приводити в одне місце. */}

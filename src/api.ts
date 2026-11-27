@@ -702,7 +702,7 @@ export interface LtvSyncStatus {
 
 export interface KeepInCRMSyncStatus {
   running: boolean;
-  type: 'history' | 'snapshot' | 'cohort' | null;
+  type: 'history' | 'snapshot' | 'cohort' | 'reconcile' | null;
   total: number;
   done: number;
   pct: number;
@@ -1366,4 +1366,58 @@ export const sendTestPush = async (): Promise<number> => {
     throw new Error(err.error || 'Не вдалося надіслати');
   }
   return (await res.json()).delivered ?? 0;
+};
+
+/** Звіт звірки з KeepInCRM: що змінилось у знімках після перерахунку (див. src/lib/reconcile.ts) */
+export type { ReconcileReport } from './lib/reconcile';
+
+/** Запустити звірку за період (адмін). Без аргументів — попередній повний місяць. */
+export const triggerKeepInCRMReconcile = async (
+  range?: { from: string; to: string },
+): Promise<{ success: boolean; message: string }> => {
+  const res = await fetch('/api/keepincrm/reconcile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(range ?? {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 409 || res.status === 400) return { success: false, message: data.message || 'Не вдалось запустити звірку' };
+  if (!res.ok) throw new Error(data.error || 'Failed to start reconcile');
+  return data;
+};
+
+/** Звіт останньої звірки; null, якщо її ще не запускали */
+export const getKeepInCRMReconcileReport = async (): Promise<(import('./lib/reconcile').ReconcileReport & { finishedAt: string }) | null> => {
+  const res = await fetch('/api/keepincrm/reconcile/last', { headers: authHeaders() });
+  if (!res.ok) throw new Error('Failed to load reconcile report');
+  return (await res.json()).report ?? null;
+};
+
+/** Оплати за ФАКТИЧНОЮ датою платежу (відмінно від угод, що рахуються за датою створення) */
+export interface KeepInCRMCashResponse {
+  days: import('./lib/cashPayments').CashDay[];
+  aggregated: import('./lib/cashPayments').CashAggregate;
+  period: { from: string; to: string };
+  /** null — оплати ще жодного разу не синхронізувались */
+  meta: {
+    syncedAt: string;
+    payments: number;
+    noAmount: number;
+    noDate: number;
+    sampleFields: string[];
+  } | null;
+}
+
+export const getKeepInCRMCash = async (from: string, to: string): Promise<KeepInCRMCashResponse> => {
+  const res = await fetch(`/api/keepincrm/cash?from=${from}&to=${to}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error('Failed to load cash payments');
+  return res.json();
+};
+
+/** Перебудувати оплати з KeepInCRM зараз (адмін) */
+export const triggerKeepInCRMCashSync = async (): Promise<{ success: boolean }> => {
+  const res = await fetch('/api/keepincrm/sync-cash', { method: 'POST', headers: authHeaders() });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to sync cash payments');
+  return data;
 };
