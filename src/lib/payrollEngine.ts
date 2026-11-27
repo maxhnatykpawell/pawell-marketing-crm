@@ -83,6 +83,11 @@ export interface PayrollModule {
 
   /** tiers: пороги, порядок не важливий — рушій сортує сам */
   tiers?: PayrollTier[];
+  /**
+   * tiers: true — між двома порогами сума росте лінійно від суми нижнього
+   * до суми верхнього. Вище найвищого порога сума лишається незмінною.
+   */
+  interpolateTiers?: boolean;
 
   /** formula: вираз, напр. `(leadsBonus + planBonus) * 0.15` */
   formula?: string;
@@ -538,11 +543,23 @@ export function hasOwnInput(m: PayrollModule): boolean {
 }
 
 /** Тарифна сітка: найвищий поріг, який не перевищує значення */
-export function tierAmount(tiers: PayrollTier[] | undefined, value: number): number {
+export function tierAmount(
+  tiers: PayrollTier[] | undefined,
+  value: number,
+  interpolate = false,
+): number {
   if (!tiers || tiers.length === 0) return 0;
   const sorted = [...tiers].sort((a, b) => num(b.from) - num(a.from));
-  const hit = sorted.find((t) => value >= num(t.from));
-  return hit ? num(hit.amount) : 0;
+  const idx = sorted.findIndex((t) => value >= num(t.from));
+  if (idx === -1) return 0;
+  const hit = sorted[idx];
+  // sorted спадає: попередній елемент — наступний, вищий поріг
+  const next = idx > 0 ? sorted[idx - 1] : undefined;
+  if (!interpolate || !next) return num(hit.amount);
+  const span = num(next.from) - num(hit.from);
+  if (span <= 0) return num(hit.amount);
+  const ratio = (value - num(hit.from)) / span;
+  return num(hit.amount) + (num(next.amount) - num(hit.amount)) * ratio;
 }
 
 /** Ключі, від яких залежить модуль (без суфікса `.n`) */
@@ -731,7 +748,7 @@ export function evaluateModules(
       case 'tiers': {
         const n = m.source ? scope(m.source) : own;
         raw[key] = n;
-        amounts[key] = tierAmount(m.tiers, n);
+        amounts[key] = tierAmount(m.tiers, n, !!m.interpolateTiers);
         break;
       }
       case 'formula': {
@@ -820,7 +837,7 @@ export function describeModule(m: PayrollModule, byKey?: Map<string, PayrollModu
     case 'tiers': {
       const count = m.tiers?.length || 0;
       const word = count === 1 ? 'поріг' : count >= 2 && count <= 4 ? 'пороги' : 'порогів';
-      return `${count} ${word}` + (m.source ? ` за «${nameOf(m.source)}»` : '');
+      return `${count} ${word}` + (m.interpolateTiers ? ', плавно' : '') + (m.source ? ` за «${nameOf(m.source)}»` : '');
     }
     case 'formula':
       return m.formula ? `= ${m.formula}` : 'Формула не задана';

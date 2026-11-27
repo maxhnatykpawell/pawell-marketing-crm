@@ -173,6 +173,15 @@ check('рівно на порозі — поріг спрацьовує', tierAm
 check('між порогами — нижчий', tierAmount(tiers, 99), 2000);
 check('порядок порогів не важливий', tierAmount(tiers, 130), 8000);
 check('порожня сітка — нуль', tierAmount([], 500), 0);
+const ipTiers = [
+  { from: 500000, amount: 3000 },
+  { from: 5000000, amount: 15000 },
+];
+check('інтерполяція: на порозі', tierAmount(ipTiers, 500000, true), 3000);
+check('інтерполяція: 550 000', Math.round(tierAmount(ipTiers, 550000, true)), 3133);
+check('інтерполяція: вище останнього — плоско', tierAmount(ipTiers, 9000000, true), 15000);
+check('інтерполяція: нижче першого — нуль', tierAmount(ipTiers, 100, true), 0);
+check('без інтерполяції — сходинка', tierAmount(ipTiers, 550000), 3000);
 check(
   'tiers читає значення з іншого модуля',
   evalOne(
