@@ -26,8 +26,8 @@ const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
 const SOURCES = ['Meta Ads', 'Google Ads', 'Рекомендації', 'Instagram', 'Сайт', 'Холодні дзвінки', 'Telegram'];
 const WEIGHTS = [0.32, 0.22, 0.16, 0.12, 0.09, 0.06, 0.03];
 
-const days = Array.from({ length: 30 }, (_, i) => {
-  const d = new Date(Date.now() - (29 - i) * 86400000).toISOString().slice(0, 10);
+const allDays = Array.from({ length: 60 }, (_, i) => {
+  const d = new Date(Date.now() - (59 - i) * 86400000).toISOString().slice(0, 10);
   const split = (n: number) => SOURCES.map((s, k) => ({ source: s, count: Math.round(n * WEIGHTS[k]) }));
   const tot = (xs: { count: number }[]) => xs.reduce((t, x) => t + x.count, 0);
   // Підсумки беремо як суму по джерелах — як і в справжніх знімках, де вони не розходяться
@@ -52,6 +52,8 @@ const days = Array.from({ length: 30 }, (_, i) => {
     lastSyncedAt: new Date().toISOString(),
   };
 });
+/** Поточні 30 днів — те, що показує головна; попередні 30 потрібні лише накладанню */
+const days = allDays.slice(30);
 
 const sum = (f: (e: any) => number) => days.reduce((s, e) => s + f(e), 0);
 const countBy = (pick: (e: any) => any[]) =>
@@ -108,7 +110,7 @@ window.fetch = ((input: any, init?: any) => {
   if (url.includes('/api/keepincrm/history')) {
     const p = new URL(url, location.origin).searchParams;
     return json({
-      entries: days,
+      entries: allDays.filter(e => e.date >= (p.get('from') ?? days[0].date) && e.date <= (p.get('to') ?? days[29].date)),
       period: { from: p.get('from') ?? days[0].date, to: p.get('to') ?? days[29].date },
       aggregated,
       comparison: p.get('compare') ? comparison : null,

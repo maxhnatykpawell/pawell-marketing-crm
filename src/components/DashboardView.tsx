@@ -13,6 +13,7 @@ import SyncActivityBanner from './SyncActivityBanner';
 import KpiTile from './dashboard/KpiTile';
 import SourceTable from './dashboard/SourceTable';
 import { avgCheckChange } from '../lib/dashboardMetrics';
+import { overlayRows, PREV } from '../lib/periodOverlay';
 import { useSyncActivity } from '../hooks/useSyncActivity';
 import {
   sumSpend, computeCac, cacBySource, previousRange,
@@ -22,6 +23,20 @@ import {
 
 /** Що кладемо в чисельник CAC — вибір зберігається між сеансами */
 const CAC_SCOPE_KEY = 'pawell_cac_scope';
+
+/** Накладання попереднього періоду на графіки: опція, за замовчуванням вимкнена */
+const OVERLAY_KEY = 'pawell_dashboard_overlay';
+
+function loadOverlay(): boolean {
+  try {
+    return localStorage.getItem(OVERLAY_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** Лінії попереднього періоду: той самий колір, що в поточного, але пунктиром і блідіше */
+const PREV_LINE = { strokeWidth: 2, strokeDasharray: '5 4', strokeOpacity: 0.55, fill: 'none', dot: false, activeDot: { r: 3, strokeWidth: 0 } } as const;
 
 function loadCacScope(): CacScope {
   try {
@@ -90,6 +105,32 @@ export default function DashboardView() {
   }, []);
 
   useEffect(() => { loadKData(kPeriod); }, [kPeriod, loadKData]);
+
+  // ── Накладання попереднього періоду (опційно) ────────────────────────────────
+  const [overlayOn, setOverlayOn] = useState<boolean>(loadOverlay);
+  const [prevData, setPrevData] = useState<KeepInCRMHistoryResponse | null>(null);
+  const [prevLoading, setPrevLoading] = useState(false);
+  const [prevError, setPrevError] = useState(false);
+  const toggleOverlay = (on: boolean) => {
+    setOverlayOn(on);
+    try { localStorage.setItem(OVERLAY_KEY, on ? '1' : '0'); } catch { /* приватний режим */ }
+  };
+
+  // Попередній період підвантажуємо лише поки накладання ввімкнене — без нього зайвого запиту немає
+  const periodFrom = kData?.period.from;
+  const periodTo = kData?.period.to;
+  useEffect(() => {
+    if (!overlayOn || !periodFrom || !periodTo) { setPrevData(null); setPrevError(false); return; }
+    const prev = previousRange(periodFrom, periodTo);
+    let cancelled = false;
+    setPrevLoading(true);
+    setPrevError(false);
+    getKeepInCRMHistory(prev.from, prev.to, false)
+      .then(d => { if (!cancelled) setPrevData(d); })
+      .catch(() => { if (!cancelled) { setPrevData(null); setPrevError(true); } })
+      .finally(() => { if (!cancelled) setPrevLoading(false); });
+    return () => { cancelled = true; };
+  }, [overlayOn, periodFrom, periodTo]);
 
   const loadLTV = useCallback(async () => {
     setLtvLoading(true);
@@ -270,13 +311,34 @@ export default function DashboardView() {
    * Дані для графіків. Знімки, зняті до переходу на когортну модель, не мають
    * totalAcquiredToday — добудовуємо його з лідів і клієнтів, це той самий набір.
    */
-  const chartData = React.useMemo(
-    () => (kData?.entries ?? []).map(e => ({
-      ...e,
-      acquired: e.totalAcquiredToday ?? ((e.totalLeadsToday || 0) + (e.totalClientsToday || 0)),
-    })),
-    [kData],
-  );
+  const withAcquired = (entries: KeepInCRMHistoryResponse['entries']) => entries.map(e => ({
+    ...e,
+    acquired: e.totalAcquiredToday ?? ((e.totalLeadsToday || 0) + (e.totalClientsToday || 0)),
+  }));
+
+  const chartBase = React.useMemo(() => withAcquired(kData?.entries ?? []), [kData]);
+
+  /** Накладання вимкнене або ще не доїхало — графік рівно такий, яким був */
+  const overlayActive = overlayOn && !!prevData && !!kData && kData.entries.length > 0;
+  const chartData = React.useMemo(() => {
+    if (!overlayOn || !prevData || !kData) return chartBase;
+    return overlayRows(
+      chartBase,
+      withAcquired(prevData.entries),
+      kData.period.from,
+      prevData.period.from,
+      ['acquired', 'totalClientsToday', 'totalAgreementsToday', 'totalAgreementsSumToday'],
+    );
+  }, [chartBase, overlayOn, prevData, kData]);
+
+  const prevLabel = prevData
+    ? `${ymdUa(prevData.period.from)} — ${ymdUa(prevData.period.to)}`
+    : '';
+  /** Підпис дати в підказці: поточний день і, якщо накладання ввімкнене, день попереднього періоду */
+  const tipLabel = (label: unknown, payload?: readonly { payload?: { prevDate?: string } }[]) => {
+    const prevDate = payload?.[0]?.payload?.prevDate;
+    return overlayActive && prevDate ? `Дата: ${label} · поп. період: ${prevDate}` : `Дата: ${label}`;
+  };
 
   const today = new Date();
   const weekStart = startOfWeek(today, { weekStartsOn: 1 });
@@ -467,7 +529,7 @@ export default function DashboardView() {
                   value={fmtNum(kData.aggregated.totalAcquired)}
                   delta={kData.comparison?.acquiredChange}
                   note="нових записів: ліди й клієнти"
-                  trend={chartData.map(e => e.acquired)}
+                  trend={chartBase.map(e => e.acquired)}
                 />
                 <KpiTile
                   label="Стали клієнтами"
@@ -475,7 +537,7 @@ export default function DashboardView() {
                   value={fmtNum(kData.aggregated.totalClients)}
                   delta={kData.comparison?.clientsChange}
                   note={`${fmtNum(kData.aggregated.totalAcquired - kData.aggregated.totalClients)} ще лідами`}
-                  trend={chartData.map(e => e.totalClientsToday || 0)}
+                  trend={chartBase.map(e => e.totalClientsToday || 0)}
                 />
                 <KpiTile
                   label="Конверсія когорти"
@@ -500,7 +562,7 @@ export default function DashboardView() {
                   value={fmtNum(kData.aggregated.totalAgreements ?? 0)}
                   delta={kData.comparison?.agreementsChange}
                   note={kData.aggregated.totalAgreementsSum ? `на ${uah(kData.aggregated.totalAgreementsSum)}` : 'без суми'}
-                  trend={chartData.map(e => e.totalAgreementsToday || 0)}
+                  trend={chartBase.map(e => e.totalAgreementsToday || 0)}
                 />
                 <KpiTile
                   label="Середній чек"
@@ -596,6 +658,32 @@ export default function DashboardView() {
           {/* Chart Section */}
           {kData && kData.entries.length > 0 && (
             <div className="bg-white rounded-[24px] shadow-sm border border-gray-100 p-6">
+              {/* Опція: за замовчуванням вимкнена. Один день порівнювати лінією нема з чим. */}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-5 pb-4 border-b border-gray-100">
+                <label
+                  className={`inline-flex items-center gap-2.5 select-none ${kData.period.from === kData.period.to ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                  title={kData.period.from === kData.period.to ? 'Оберіть період із кількох днів — для одного дня лінії накласти нема з чим' : undefined}
+                >
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    className="sr-only peer"
+                    checked={overlayOn && kData.period.from !== kData.period.to}
+                    disabled={kData.period.from === kData.period.to}
+                    onChange={e => toggleOverlay(e.target.checked)}
+                  />
+                  <span aria-hidden className="relative w-9 h-5 rounded-full bg-gray-300 transition-colors peer-checked:bg-violet-600 peer-focus-visible:ring-2 peer-focus-visible:ring-violet-500 peer-focus-visible:ring-offset-2 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:shadow after:transition-transform peer-checked:after:translate-x-4" />
+                  <span className="text-sm font-semibold text-gray-800">Порівняти з попереднім періодом</span>
+                </label>
+                {overlayOn && kData.period.from !== kData.period.to && (
+                  <span className="text-xs text-gray-600" aria-live="polite">
+                    {prevLoading ? 'Завантажую попередній період…'
+                      : prevError ? 'Не вдалось завантажити попередній період'
+                      : prevData && prevData.entries.length === 0 ? `За ${prevLabel} даних немає`
+                      : prevData ? <>Пунктир — <span className="font-semibold">{prevLabel}</span>, день до дня</> : null}
+                  </span>
+                )}
+              </div>
               <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 mb-5">
                 <div>
                   <h3 className="text-base font-bold text-gray-900">Динаміка залучення та угод</h3>
@@ -656,10 +744,17 @@ export default function DashboardView() {
                       allowDecimals={false}
                       width={76}
                     />
-                    <Tooltip 
+                    <Tooltip
                       contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', fontSize: '13px' }}
-                      labelFormatter={(label) => `Дата: ${label}`}
+                      labelFormatter={tipLabel}
                     />
+                    {overlayActive && (
+                      <>
+                        <Area type="monotone" name="Залучено (поп.)" dataKey={PREV + 'acquired'} stroke="#3b82f6" {...PREV_LINE} activeDot={{ ...PREV_LINE.activeDot, fill: '#3b82f6' }} />
+                        <Area type="monotone" name="Клієнти (поп.)" dataKey={PREV + 'totalClientsToday'} stroke="#10b981" {...PREV_LINE} activeDot={{ ...PREV_LINE.activeDot, fill: '#10b981' }} />
+                        <Area type="monotone" name="Угоди (поп.)" dataKey={PREV + 'totalAgreementsToday'} stroke="#f59e0b" {...PREV_LINE} activeDot={{ ...PREV_LINE.activeDot, fill: '#f59e0b' }} />
+                      </>
+                    )}
                     <Area
                       type="monotone"
                       name="Залучено"
@@ -739,10 +834,13 @@ export default function DashboardView() {
                     />
                     <Tooltip 
                       contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', fontSize: '13px' }}
-                      labelFormatter={(label) => `Дата: ${label}`}
-                      formatter={(value: number) => [`${value.toLocaleString('uk-UA')} ₴`, 'Дохід']}
+                      labelFormatter={tipLabel}
+                      formatter={(value: number, name: string) => [`${value.toLocaleString('uk-UA')} ₴`, name]}
                     />
-                    <Area 
+                    {overlayActive && (
+                      <Area type="monotone" name="Дохід (поп.)" dataKey={PREV + 'totalAgreementsSumToday'} stroke="#8b5cf6" {...PREV_LINE} activeDot={{ ...PREV_LINE.activeDot, fill: '#8b5cf6' }} />
+                    )}
+                    <Area
                       type="monotone" 
                       name="Дохід"
                       dataKey="totalAgreementsSumToday" 
