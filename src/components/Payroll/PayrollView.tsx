@@ -37,7 +37,17 @@ const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   assignments: {},
 };
 
-export const PayrollView: React.FC = () => {
+interface PayrollViewProps {
+  /** Показується всередині особистого кабінету: без власних відступів і висоти екрана */
+  embedded?: boolean;
+  /**
+   * Телефон: налаштування шаблонів і зведення за місяць лишаються на
+   * комп'ютері — це широкі таблиці, які на вузькому екрані не читаються.
+   */
+  mobile?: boolean;
+}
+
+export const PayrollView: React.FC<PayrollViewProps> = ({ embedded = false, mobile = false }) => {
   const {
     state,
     currentUser,
@@ -132,15 +142,19 @@ export const PayrollView: React.FC = () => {
   const selectedUser = state.users.find((u) => u.id === targetUserId);
 
   return (
-    <div className="flex-1 p-8 overflow-y-auto bg-gray-50/50 relative min-h-screen">
+    <div className={embedded ? 'relative' : 'flex-1 p-8 overflow-y-auto bg-gray-50/50 relative min-h-screen'}>
       <div className="max-w-6xl mx-auto space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Зарплатні документи</h1>
-            <p className="text-gray-500 mt-1">Керування нарахуваннями та виплатами</p>
+            <h1 className={`font-bold text-gray-900 tracking-tight ${embedded ? 'text-2xl' : 'text-3xl'}`}>
+              Зарплатні документи
+            </h1>
+            <p className="text-gray-500 mt-1">
+              {isAdmin ? 'Керування нарахуваннями та виплатами' : 'Ваші нарахування та виплати'}
+            </p>
           </div>
           <div className="flex gap-3">
-            {isAdmin && (
+            {isAdmin && !mobile && (
               <button
                 onClick={() => setIsSettingsOpen(true)}
                 className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors shadow-sm"
@@ -157,7 +171,7 @@ export const PayrollView: React.FC = () => {
                 }
                 setEditingDoc(null);
               }}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-sm shadow-blue-500/30 font-medium"
+              className="flex items-center justify-center gap-2 px-4 py-2 min-h-[44px] bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-sm shadow-blue-500/30 font-medium max-md:w-full"
             >
               <Plus size={18} />
               Створити документ
@@ -174,7 +188,7 @@ export const PayrollView: React.FC = () => {
             <select
               value={selectedUserId}
               onChange={(e) => setSelectedUserId(e.target.value)}
-              className="flex-1 max-w-sm px-4 py-2 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 bg-gray-50 hover:bg-gray-100/50 transition-colors"
+              className="flex-1 min-w-0 max-w-sm px-4 py-2 min-h-[44px] border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 bg-gray-50 hover:bg-gray-100/50 transition-colors"
             >
               <option value="">Оберіть працівника</option>
               {state.users.map((u) => (
@@ -197,7 +211,7 @@ export const PayrollView: React.FC = () => {
           </div>
         )}
 
-        {isAdmin && periods.length > 0 && (
+        {isAdmin && !mobile && periods.length > 0 && (
           <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-3 text-gray-500">
               <FileDown size={20} />
@@ -253,7 +267,7 @@ export const PayrollView: React.FC = () => {
                       e.stopPropagation();
                       setPrintDocs([doc]);
                     }}
-                    className={`absolute top-3 ${isAdmin ? 'right-11' : 'right-3'} p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100`}
+                    className={`absolute top-3 ${isAdmin ? 'right-11' : 'right-3'} p-2 md:p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors md:opacity-0 md:group-hover:opacity-100`}
                     title="Завантажити PDF"
                   >
                     <FileDown size={14} />
@@ -264,13 +278,14 @@ export const PayrollView: React.FC = () => {
                         e.stopPropagation();
                         handleDeleteDoc(doc.id);
                       }}
-                      className="absolute top-3 right-3 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                      className="absolute top-3 right-3 p-2 md:p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors md:opacity-0 md:group-hover:opacity-100"
                       title="Видалити документ"
                     >
                       <Trash2 size={14} />
                     </button>
                   )}
-                  <div className="flex justify-between items-start mb-4">
+                  {/* На телефоні кнопки в куті картки видно завжди — лишаємо їм місце */}
+                  <div className={`flex justify-between items-start mb-4 ${isAdmin ? 'max-md:pr-20' : 'max-md:pr-10'}`}>
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center group-hover:scale-110 transition-transform">
                         <FileText size={20} />

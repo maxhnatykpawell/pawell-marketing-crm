@@ -10,8 +10,10 @@ import MyPlan from './MyPlan';
 import DotFlowBanner from './DotFlowBanner';
 import PushSettings from './PushSettings';
 import GoogleCalendarCard from './GoogleCalendarCard';
+import { PayrollView } from './Payroll/PayrollView';
 import {
   Mail, FileText, CheckCircle2, AlertCircle, Lock, Eye, EyeOff, Check, LogOut, Calendar, Edit2, ArrowRight, Settings, Camera, X,
+  Wallet, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 
 /**
@@ -19,7 +21,7 @@ import {
  *               немає, тож блоки задач і контенту ховаємо, лишаючи профіль і налаштування.
  */
 export default function MyProfileView({ mobile = false }: { mobile?: boolean }) {
-  const { state, currentUser, logout, updateUser, setActiveBoardId, setActiveView } = useAppContext();
+  const { state, currentUser, logout, updateUser, setActiveBoardId, setActiveView, activeView, canView } = useAppContext();
 
   const user = state.users.find(u => u.id === currentUser?.userId);
   const avatarInputRef = useRef<HTMLInputElement>(null);
@@ -177,6 +179,32 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
 
   if (!user || !currentUser) return null;
 
+  // Зарплатні документи — підсторінка кабінету: так вони однаково доступні і на
+  // комп'ютері, і на телефоні, а окремого пункту в головному меню немає.
+  const canSeePayroll = canView('payroll');
+  if (activeView === 'payroll' && canSeePayroll) {
+    return (
+      <div className="w-full max-w-6xl mx-auto pb-8">
+        <button
+          onClick={() => setActiveView('profile')}
+          className="flex items-center gap-1 min-h-[44px] -ml-2 pr-3 pl-1 mb-1 text-sm font-medium text-gray-600 hover:text-gray-900 rounded-lg"
+        >
+          <ChevronLeft className="w-5 h-5" />
+          Кабінет
+        </button>
+        <PayrollView embedded mobile={mobile} />
+      </div>
+    );
+  }
+
+  const myPayrolls = (state.payrolls || []).filter(p => p.userId === user.id);
+  const latestPayroll = myPayrolls.map(p => p.period).sort().pop();
+  const payrollHint = currentUser.role === 'admin'
+    ? 'Нарахування й виплати всієї команди'
+    : myPayrolls.length > 0
+      ? `Документів: ${myPayrolls.length} · останній ${latestPayroll}`
+      : 'Поки немає жодного документа';
+
   const roleLabel = currentUser.role === 'admin' ? 'Адміністратор' : 'Член команди';
   const roleColor = currentUser.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700';
 
@@ -295,6 +323,22 @@ export default function MyProfileView({ mobile = false }: { mobile?: boolean }) 
           </div>
         </div>
       </div>
+
+      {canSeePayroll && (
+        <button
+          onClick={() => setActiveView('payroll')}
+          className="w-full flex items-center gap-3 bg-white rounded-2xl shadow-sm border border-gray-200 px-4 sm:px-5 py-4 min-h-[64px] text-left hover:bg-gray-50 active:bg-gray-100 transition"
+        >
+          <span className="w-10 h-10 shrink-0 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+            <Wallet className="w-5 h-5" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-bold text-gray-800">Зарплатні документи</span>
+            <span className="block text-xs text-gray-500 truncate">{payrollHint}</span>
+          </span>
+          <ChevronRight className="w-5 h-5 text-gray-400 shrink-0" />
+        </button>
+      )}
 
       <GoogleCalendarCard />
 

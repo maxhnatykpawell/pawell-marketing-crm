@@ -22,7 +22,6 @@ import OrgStructureView from './components/OrgStructureView';
 import ExpensesView from './components/ExpensesView';
 import AutomationsView from './components/AutomationsView';
 import ExpenseModal from './components/ExpenseModal';
-import { PayrollView } from './components/Payroll/PayrollView';
 import Celebration from './components/Celebration';
 import { celebrate } from './lib/celebrate';
 import AssistantPanel from './components/AssistantPanel';
@@ -35,7 +34,7 @@ import { canViewSection, ALL_VIEW_IDS, DEFAULT_ALLOWED_VIEWS } from './lib/views
 import { canAccessProject, scopeStateToUser } from './lib/projectAccess';
 import { parseDeepLink, applyDeepLink } from './lib/deepLink';
 import PawellLogo, { PawellBadge } from './components/brand/PawellLogo';
-import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet, MessageSquare, Gem, Bot, Network } from 'lucide-react';
+import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, MessageSquare, Gem, Bot, Network } from 'lucide-react';
 import { reparentOnDelete } from './lib/orgStructure';
 
 // 'gantt' і 'event-details' — не вкладки меню, а сторінки всередині «Проєктів»
@@ -1094,11 +1093,12 @@ export default function App() {
     { view: 'structure', label: 'Структура', Icon: Network },
     { view: 'automations', label: 'Автоматизації', Icon: Bot },
     { view: 'expenses', label: 'Витрати', Icon: Receipt },
-    { view: 'payroll', label: 'Зарплати', Icon: Wallet },
     { view: 'chat', label: 'Чат', Icon: MessageSquare },
   ];
 
   const navItems = allNavItems.filter(item => canView(item.view));
+  /** Кабінет і його підсторінка «Зарплатні документи» підсвічують одну кнопку профілю */
+  const isCabinetView = activeView === 'profile' || activeView === 'payroll';
 
   const myNotifications = (state.notifications || []).filter(n => n.userId === currentUser.userId).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const unreadCount = myNotifications.filter(n => !n.read).length;
@@ -1290,7 +1290,7 @@ export default function App() {
             {/* Profile */}
             <button
               onClick={() => setActiveView('profile')}
-              className={`flex items-center gap-2 pl-1 pr-2.5 py-1 rounded-lg transition ${activeView === 'profile' ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-gray-100'}`}
+              className={`flex items-center gap-2 pl-1 pr-2.5 py-1 rounded-lg transition ${isCabinetView ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-gray-100'}`}
               title={currentUser.name}
             >
               <img
@@ -1298,7 +1298,7 @@ export default function App() {
                 alt={currentUser.name}
                 className="w-6 h-6 rounded-full border border-gray-200 object-cover"
               />
-              <span className={`text-xs font-semibold hidden sm:block ${activeView === 'profile' ? 'text-blue-700' : 'text-gray-700'}`}>
+              <span className={`text-xs font-semibold hidden sm:block ${isCabinetView ? 'text-blue-700' : 'text-gray-700'}`}>
                 {currentUser.name.split(' ')[0]}
               </span>
               {currentUser.role === 'admin' && (
@@ -1323,9 +1323,8 @@ export default function App() {
           {activeView === 'regulations' && <TeamRegulationsView />}
           {activeView === 'structure' && canView('structure') && <OrgStructureView />}
           {activeView === 'automations' && canView('automations') && <AutomationsView />}
-          {activeView === 'profile' && <MyProfileView />}
+          {(activeView === 'profile' || activeView === 'payroll') && <MyProfileView />}
           {activeView === 'expenses' && canView('expenses') && <ExpensesView />}
-          {activeView === 'payroll' && <PayrollView />}
           {activeView === 'chat' && <ChatView chat={chat} />}
         </main>
         </>)}

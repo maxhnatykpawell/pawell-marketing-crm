@@ -36,13 +36,17 @@ interface Props {
 export default function MobileShell({ chat, notifications, unreadCount, isOffline }: Props) {
   const { state, currentUser, activeView, openCardId, setOpenCardId, markNotificationAsRead } = useAppContext();
 
-  const [tab, setTab] = useState<Tab>(activeView === 'chat' ? 'chat' : activeView === 'profile' ? 'profile' : 'tasks');
+  const [tab, setTab] = useState<Tab>(
+    activeView === 'chat' ? 'chat' : activeView === 'profile' || activeView === 'payroll' ? 'profile' : 'tasks'
+  );
   const [openCard, setOpenCard] = useState<Card | null>(null);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
 
   // Посилання зі сповіщення (?view=chat) приходить, коли оболонка вже намальована
   useEffect(() => {
     if (activeView === 'chat') setTab('chat');
+    // Зарплатні документи живуть у кабінеті
+    if (activeView === 'payroll') setTab('profile');
   }, [activeView]);
 
   // Картка за посиланням чи зі сповіщення (openCardId ставить App) — відкриваємо одразу
@@ -149,12 +153,12 @@ export default function MobileShell({ chat, notifications, unreadCount, isOfflin
           {tab === 'profile' && (
             <div className="p-4 pb-8">
               <MyProfileView mobile />
-              <button
+              {activeView !== 'payroll' && <button
                 onClick={() => setUiMode('desktop')}
                 className="w-full h-12 mt-6 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-xl"
               >
                 Відкрити повну версію
-              </button>
+              </button>}
             </div>
           )}
         </motion.div>

@@ -146,15 +146,15 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
     return (
       <div
         key={m.id}
-        className={`flex items-center gap-4 py-3 px-4 transition-colors hover:bg-gray-50/80 ${
+        className={`flex flex-wrap md:flex-nowrap items-center gap-x-4 gap-y-2 py-3 px-4 transition-colors hover:bg-gray-50/80 ${
           !isLast ? 'border-b border-gray-100' : ''
         }`}
       >
         {/* Назва та підказка */}
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 max-md:basis-full">
           <div className="text-sm font-medium text-gray-700 leading-snug">{m.label}</div>
           {(m.hint || m.kind !== 'input') && (
-            <div className="text-[11px] text-gray-400 leading-tight mt-0.5 truncate">
+            <div className="text-[11px] text-gray-400 leading-tight mt-0.5 md:truncate">
               {m.hint || describeModule(m, byKey)}
             </div>
           )}
@@ -166,7 +166,7 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
         </div>
 
         {/* Поле вводу */}
-        <div className="w-28 shrink-0">
+        <div className="w-28 max-md:w-auto max-md:flex-1 shrink-0">
           {showsInput ? (
             <div className="relative">
               <input
@@ -175,7 +175,7 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
                 disabled={readOnly}
                 value={values[m.key] ?? ''}
                 onChange={(e) => setValue(m.key, e.target.value)}
-                className="w-full pl-3 pr-10 py-1.5 text-right text-sm border border-gray-200 rounded-lg bg-white
+                className="w-full pl-3 pr-10 py-1.5 max-md:py-2.5 text-right text-base md:text-sm border border-gray-200 rounded-lg bg-white
                   disabled:bg-gray-50 disabled:text-gray-500
                   focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400
                   transition-all"
@@ -192,7 +192,7 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
         </div>
 
         {/* Порахована сума */}
-        <div className="w-28 text-right shrink-0">
+        <div className="w-28 text-right shrink-0 max-md:ml-auto">
           {showsAmount && (
             <span
               className={`text-sm font-semibold tabular-nums ${
@@ -214,11 +214,11 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center z-50 overflow-y-auto">
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-8 mx-4 flex flex-col"
-        style={{ maxHeight: 'calc(100vh - 4rem)' }}
+        className="bg-white shadow-2xl w-full max-w-2xl flex flex-col rounded-2xl my-8 mx-4 max-h-[calc(100vh-4rem)]
+          max-md:rounded-none max-md:my-0 max-md:mx-0 max-md:h-[100dvh] max-md:max-h-none"
       >
         {/* ─── Шапка ─────────────────────────────────────────────────── */}
-        <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-start sticky top-0 bg-white rounded-t-2xl z-10">
+        <div className="px-4 md:px-6 py-4 md:py-5 border-b border-gray-100 flex justify-between items-start sticky top-0 bg-white rounded-t-2xl max-md:rounded-none z-10">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
               <Calculator size={20} className="text-white" />
@@ -245,7 +245,8 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-colors"
+            aria-label="Закрити"
+            className="p-2 max-md:w-11 max-md:h-11 max-md:flex max-md:items-center max-md:justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-colors"
           >
             <X size={18} />
           </button>
@@ -253,7 +254,7 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
 
         {/* ─── Тіло ──────────────────────────────────────────────────── */}
         <form onSubmit={handleSubmit} className="overflow-y-auto flex-1">
-          <div className="px-6 py-5 space-y-5">
+          <div className="px-4 md:px-6 py-5 space-y-5">
             {/* Місяць */}
             <div className="flex items-center gap-3">
               <label className="text-sm font-medium text-gray-600">Місяць та рік</label>
@@ -262,7 +263,7 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
                 value={period}
                 disabled={readOnly}
                 onChange={(e) => setPeriod(e.target.value)}
-                className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg
+                className="px-3 py-1.5 max-md:py-2.5 text-base md:text-sm border border-gray-200 rounded-lg
                   focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400
                   disabled:bg-gray-50 transition-all"
                 required
@@ -271,7 +272,7 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
 
             {/* Попередження про застарілий шаблон */}
             {outdated && !readOnly && (
-              <div className="flex items-center justify-between gap-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+              <div className="flex items-center justify-between gap-4 p-4 bg-amber-50 border border-amber-200 rounded-xl max-md:flex-col max-md:items-stretch">
                 <div className="text-sm text-amber-800">
                   <span className="font-medium">
                     {isPreModular
@@ -360,10 +361,10 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
           </div>
 
           {/* ─── Підсумкова панель ────────────────────────────────── */}
-          <div className="sticky bottom-0 bg-gradient-to-t from-white via-white to-white/95 px-6 pt-3 pb-5 space-y-4">
+          <div className="sticky bottom-0 bg-gradient-to-t from-white via-white to-white/95 px-4 md:px-6 pt-3 pb-5 max-md:pb-[max(1.25rem,env(safe-area-inset-bottom))] space-y-4 max-md:border-t max-md:border-gray-100">
             {/* Зведення */}
-            <div className="flex items-stretch gap-3">
-              <div className="flex-1 rounded-xl bg-emerald-50 border border-emerald-200/60 px-4 py-3 text-center">
+            <div className="flex items-stretch gap-2 md:gap-3">
+              <div className="flex-1 rounded-xl bg-emerald-50 border border-emerald-200/60 px-2 md:px-4 py-3 text-center">
                 <div className="text-[11px] uppercase tracking-wide font-medium text-emerald-600/80">
                   Нараховано
                 </div>
@@ -371,7 +372,7 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
                   {formatMoney(result.income)} ₴
                 </div>
               </div>
-              <div className="flex-1 rounded-xl bg-rose-50 border border-rose-200/60 px-4 py-3 text-center">
+              <div className="flex-1 rounded-xl bg-rose-50 border border-rose-200/60 px-2 md:px-4 py-3 text-center">
                 <div className="text-[11px] uppercase tracking-wide font-medium text-rose-600/80">
                   Відрахування
                 </div>
@@ -379,7 +380,7 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
                   {formatMoney(result.deductions)} ₴
                 </div>
               </div>
-              <div className="flex-[1.3] rounded-xl bg-gradient-to-br from-gray-800 to-gray-900 px-4 py-3 text-center shadow-lg">
+              <div className="flex-[1.3] rounded-xl bg-gradient-to-br from-gray-800 to-gray-900 px-2 md:px-4 py-3 text-center shadow-lg">
                 <div className="text-[11px] uppercase tracking-wide font-medium text-gray-400">
                   До виплати
                 </div>
@@ -390,11 +391,11 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
             </div>
 
             {/* Кнопки */}
-            <div className="flex justify-end gap-3">
+            <div className="flex justify-end gap-2 md:gap-3">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-5 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-xl
+                className="px-4 md:px-5 py-2 max-md:min-h-[44px] text-sm text-gray-600 bg-white border border-gray-200 rounded-xl
                   hover:bg-gray-50 hover:border-gray-300 transition-all"
               >
                 {readOnly ? 'Закрити' : 'Скасувати'}
@@ -402,7 +403,7 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
               <button
                 type="button"
                 onClick={() => printPdf()}
-                className="flex items-center gap-2 px-5 py-2 text-sm text-gray-700 bg-white border border-gray-200 rounded-xl
+                className="flex items-center gap-2 px-4 md:px-5 py-2 max-md:min-h-[44px] text-sm text-gray-700 bg-white border border-gray-200 rounded-xl
                   hover:bg-gray-50 hover:border-gray-300 transition-all"
               >
                 <FileDown size={16} />
@@ -412,12 +413,12 @@ export const PayrollForm: React.FC<PayrollFormProps> = ({
                 <button
                   onClick={handleSubmit}
                   disabled={isSaving}
-                  className="flex items-center gap-2 px-5 py-2 text-sm text-white font-medium rounded-xl
+                  className="flex items-center justify-center gap-2 px-4 md:px-5 py-2 max-md:min-h-[44px] max-md:flex-1 text-sm text-white font-medium rounded-xl
                     bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700
                     shadow-lg shadow-blue-500/25 transition-all disabled:opacity-50"
                 >
                   <Save size={16} />
-                  {isSaving ? 'Збереження…' : 'Зберегти документ'}
+                  {isSaving ? 'Збереження…' : 'Зберегти'}
                 </button>
               )}
             </div>
