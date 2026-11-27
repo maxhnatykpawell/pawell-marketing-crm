@@ -313,3 +313,57 @@
   .card-backdrop, .card-panel,
   .card-backdrop.card-leaving, .card-backdrop.card-leaving .card-panel { animation-duration: 0.01s; }
 }
+
+/* ── Структура відділу: дерево посад ──────────────────────────────────────────
+   Лінії зв'язку — звичайні рамки псевдоелементів, тож дерево будь-якої ширини
+   розкладається саме, без обчислення координат. Колір ліній задає --org-line
+   на кожній гілці окремо. */
+.org-canvas { background-image: radial-gradient(circle, #e5e7eb 1px, transparent 1px); background-size: 20px 20px; }
+.org-forest { display: flex; align-items: flex-start; gap: 56px; padding: 32px; width: max-content; min-width: 100%; justify-content: center; }
+.org-tree ul { display: flex; justify-content: center; padding-top: 32px; position: relative; margin: 0; list-style: none; }
+.org-tree > ul { padding-top: 0; }
+.org-tree li { display: flex; flex-direction: column; align-items: center; position: relative; padding: 32px 10px 0; list-style: none; }
+.org-tree > ul > li { padding-top: 0; }
+.org-tree li::before, .org-tree li::after {
+  content: ''; position: absolute; top: 0; right: 50%; width: 50%; height: 32px;
+  border-top: 2px solid var(--org-line);
+}
+.org-tree li::after { right: auto; left: 50%; border-left: 2px solid var(--org-line); }
+.org-tree > ul > li::before, .org-tree > ul > li::after { display: none; }
+.org-tree li:only-child { padding-top: 0; }
+.org-tree li:only-child::before, .org-tree li:only-child::after { display: none; }
+.org-tree li:first-child::before, .org-tree li:last-child::after { border: 0 none; }
+.org-tree li:last-child::before { border-right: 2px solid var(--org-line); border-radius: 0 8px 0 0; }
+.org-tree li:first-child::after { border-radius: 8px 0 0 0; }
+.org-tree ul ul::before {
+  content: ''; position: absolute; top: 0; left: 50%; height: 32px;
+  border-left: 2px solid var(--org-line);
+}
+
+.org-card {
+  position: relative; width: 208px; cursor: pointer; background: #fff;
+  border: 1px solid #e5e7eb; border-radius: 12px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.18s ease, border-color 0.18s ease, opacity 0.15s ease;
+}
+.org-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgb(0 0 0 / 0.08); border-color: #d1d5db; }
+.org-card:focus-visible { outline: 2px solid var(--org-accent); outline-offset: 2px; }
+.org-card-selected { border-color: var(--org-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--org-accent) 30%, transparent), 0 6px 16px rgb(0 0 0 / 0.08); }
+.org-card-drop { border-color: var(--org-accent); transform: scale(1.04); box-shadow: 0 0 0 3px color-mix(in srgb, var(--org-accent) 35%, transparent); }
+
+.org-add {
+  position: absolute; left: 50%; bottom: -11px; transform: translateX(-50%) scale(0.8);
+  width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+  border-radius: 9999px; background: #fff; border: 2px solid; opacity: 0; z-index: 2;
+  transition: opacity 0.15s ease, transform 0.15s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.org-card:hover .org-add, .org-card:focus-within .org-add, .org-card-selected .org-add { opacity: 1; transform: translateX(-50%) scale(1); }
+.org-add:hover { transform: translateX(-50%) scale(1.15) !important; }
+
+@keyframes org-panel-in { from { transform: translateX(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+.org-panel { animation: org-panel-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .org-card, .org-add { transition: none; }
+  .org-card:hover { transform: none; }
+  .org-panel { animation-duration: 0.01s; }
+}

@@ -98,6 +98,9 @@ export function canViewSection(
   if (ALWAYS_ALLOWED_VIEWS.includes(view)) return true;
   if (view === 'event-details') return allowedViews.includes('events');
   if (view === 'gantt') return allowedViews.includes('projects');
+  // Структура відділу живе поруч із регламентами: ті, хто бачить регламенти,
+  // бачать і схему. Окремий прапорець зник би в усіх із налаштованими правами.
+  if (view === 'structure') return allowedViews.includes('regulations');
   if (view === 'analytics') return allowedViews.includes('dashboard');
   return allowedViews.includes(view);
 }

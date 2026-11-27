@@ -424,6 +424,35 @@ export interface Process {
   createdAt: string;
 }
 
+/** Документ, прикріплений до посади: регламент або посадова інструкція */
+export interface OrgDoc {
+  id: string;
+  name: string;
+  url: string;
+  /** 'file' — завантажено в наше сховище, 'link' — зовнішнє посилання */
+  kind: 'file' | 'link';
+}
+
+/**
+ * Посада в структурі відділу. Дерево тримається на parentId: посада без
+ * батька — корінь окремої гілки, тому гілок може бути кілька.
+ */
+export interface OrgPosition {
+  id: string;
+  title: string;
+  /** Над ким у підпорядкуванні; null — вершина гілки */
+  parentId: string | null;
+  /** Хто зараз на посаді; null — вакансія */
+  userId: string | null;
+  /** Колір гілки; у підлеглих без власного успадковується від найближчого предка */
+  color?: string;
+  /** Порядок серед посад одного рівня */
+  order: number;
+  regulations: OrgDoc[];
+  instructions: OrgDoc[];
+  createdAt: string;
+}
+
 export interface Expense {
   id: string;
   title: string;
@@ -453,6 +482,7 @@ export interface AppState {
   projects?: Project[];
   phases?: Phase[];
   processes?: Process[];
+  orgPositions?: OrgPosition[];
   aiReportSchedule?: string;
   /** Щоденний ШІ-звіт у Telegram. Лише true вмикає його; за замовчуванням вимкнено. */
   aiReportEnabled?: boolean;

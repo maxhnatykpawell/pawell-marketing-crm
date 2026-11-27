@@ -208,7 +208,7 @@ export function describeQueued(req: QueuedRequest): Omit<PendingOp, 'seq' | 'sta
 
 const WHAT: Record<string, string> = {
   cards: 'задачу', lists: 'список', tags: 'тег', users: 'користувача', contentPlans: 'контент-план',
-  userGroups: 'групу', events: 'подію', projects: 'проєкт', phases: 'фазу', processes: 'процес',
+  userGroups: 'групу', events: 'подію', projects: 'проєкт', phases: 'фазу', processes: 'процес', orgPositions: 'посаду',
   boards: 'дошку', expenses: 'витрату', payrolls: 'розрахунок', notifications: 'сповіщення', state: 'зміни',
 };
 

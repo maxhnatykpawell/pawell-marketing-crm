@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import { resyncPush } from './lib/pushClient';
-import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Project, Phase, Process, UserGroup, AccessRights, NotificationItem, Expense } from './types';
+import { AppState, AuthUser, Card, List, User, Tag, ContentPlanItem, EventItem, Project, Phase, Process, OrgPosition, UserGroup, AccessRights, NotificationItem, Expense } from './types';
 import { fetchStateMerged, onWriteError, syncState, getMe, estimateTaskTime, createEntity, updateEntity, deleteEntity, processOfflineQueue, sendCardAssignedNotification } from './api';
 import { v4 as uuidv4 } from 'uuid';
 import Board from './components/Board';
@@ -18,6 +18,7 @@ import InvitePage from './components/InvitePage';
 import ProjectsView from './components/ProjectsView';
 import ProjectGanttView from './components/ProjectGanttView';
 import ProcessTreeView from './components/ProcessTreeView';
+import OrgStructureView from './components/OrgStructureView';
 import ExpensesView from './components/ExpensesView';
 import AutomationsView from './components/AutomationsView';
 import ExpenseModal from './components/ExpenseModal';
@@ -34,12 +35,13 @@ import { canViewSection, ALL_VIEW_IDS, DEFAULT_ALLOWED_VIEWS } from './lib/views
 import { canAccessProject, scopeStateToUser } from './lib/projectAccess';
 import { parseDeepLink, applyDeepLink } from './lib/deepLink';
 import PawellLogo, { PawellBadge } from './components/brand/PawellLogo';
-import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet, MessageSquare, Gem, Bot } from 'lucide-react';
+import { Loader2, Users, Kanban, Calendar, CalendarDays, LayoutGrid, BookOpen, BarChart, User as UserIcon, LogOut, FolderKanban, GitMerge, Bell, Check, Receipt, Wallet, MessageSquare, Gem, Bot, Network } from 'lucide-react';
+import { reparentOnDelete } from './lib/orgStructure';
 
 // 'gantt' і 'event-details' — не вкладки меню, а сторінки всередині «Проєктів»
 // і «Подій»: відкриваються з картки розділу й живуть на його правах.
 // 'analytics' — вкладка меню, але право на неї теж успадковане, від «Головної».
-type ActiveView = 'dashboard' | 'analytics' | 'projects' | 'gantt' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'automations' | 'profile' | 'expenses' | 'payroll' | 'chat';
+type ActiveView = 'dashboard' | 'analytics' | 'projects' | 'gantt' | 'processes' | 'board' | 'content' | 'events' | 'calendar' | 'event-details' | 'regulations' | 'structure' | 'automations' | 'profile' | 'expenses' | 'payroll' | 'chat';
 
 interface AppContextType {
   state: AppState;
@@ -84,6 +86,11 @@ interface AppContextType {
   addProcess: (process: Omit<Process, 'id' | 'createdAt'>) => void;
   updateProcess: (id: string, updates: Partial<Process>) => void;
   deleteProcess: (id: string) => void;
+  /** Повертає створену посаду: викликач одразу відкриває її для редагування */
+  addOrgPosition: (position: Omit<OrgPosition, 'id' | 'createdAt'>) => OrgPosition;
+  updateOrgPosition: (id: string, updates: Partial<OrgPosition>) => void;
+  /** Підлеглі видаленої посади піднімаються на рівень вище */
+  deleteOrgPosition: (id: string) => void;
   addBoard: (title: string) => void;
   deleteBoard: (id: string) => void;
   activeBoardId: string | null;
@@ -885,6 +892,33 @@ export default function App() {
     deleteEntity('processes', id).catch(console.error);
   }, [state]);
 
+  const addOrgPosition = useCallback((position: Omit<OrgPosition, 'id' | 'createdAt'>): OrgPosition => {
+    const created: OrgPosition = { ...position, id: uuidv4(), createdAt: new Date().toISOString() };
+    setState(prev => prev ? { ...prev, orgPositions: [...(prev.orgPositions || []), created] } : prev);
+    createEntity('orgPositions', created).catch(console.error);
+    return created;
+  }, []);
+
+  const updateOrgPosition = useCallback((id: string, updates: Partial<OrgPosition>) => {
+    setState(prev => prev ? { ...prev, orgPositions: (prev.orgPositions || []).map(p => p.id === id ? { ...p, ...updates } : p) } : prev);
+    updateEntity('orgPositions', id, updates).catch(console.error);
+  }, []);
+
+  const deleteOrgPosition = useCallback((id: string) => {
+    if (!state) return;
+    const all = state.orgPositions || [];
+    const moves = reparentOnDelete(all, id);
+    const moved = new Map(moves.map(m => [m.id, m]));
+    setState(prev => prev ? {
+      ...prev,
+      orgPositions: (prev.orgPositions || [])
+        .filter(p => p.id !== id)
+        .map(p => moved.has(p.id) ? { ...p, parentId: moved.get(p.id)!.parentId, order: moved.get(p.id)!.order } : p),
+    } : prev);
+    deleteEntity('orgPositions', id).catch(console.error);
+    moves.forEach(m => updateEntity('orgPositions', m.id, { parentId: m.parentId, order: m.order }).catch(console.error));
+  }, [state]);
+
   const addBoard = useCallback((title: string) => {
     if (!state) return;
     const newBoard = { id: uuidv4(), title };
@@ -1057,6 +1091,7 @@ export default function App() {
     { view: 'events', label: 'Події', Icon: CalendarDays },
     { view: 'calendar', label: 'Календар', Icon: LayoutGrid },
     { view: 'regulations', label: 'Регламенти', Icon: BookOpen },
+    { view: 'structure', label: 'Структура', Icon: Network },
     { view: 'automations', label: 'Автоматизації', Icon: Bot },
     { view: 'expenses', label: 'Витрати', Icon: Receipt },
     { view: 'payroll', label: 'Зарплати', Icon: Wallet },
@@ -1077,7 +1112,7 @@ export default function App() {
       addUserGroup, updateUserGroup, deleteUserGroup, updateSettings,
       addEvent, updateEvent, deleteEvent, addProject, updateProject, deleteProject,
       addPhase, updatePhase, deletePhase,
-      addProcess, updateProcess, deleteProcess, addBoard, deleteBoard,
+      addProcess, updateProcess, deleteProcess, addOrgPosition, updateOrgPosition, deleteOrgPosition, addBoard, deleteBoard,
       activeBoardId, setActiveBoardId, activeEventId, setActiveEventId, activeProjectId, setActiveProjectId,
       activeView, setActiveView, importTrelloBoard, confirmAction,
       createNotification, markNotificationAsRead,
@@ -1274,7 +1309,7 @@ export default function App() {
         </header>
 
         {/* Main */}
-        <main className={`flex-1 p-6 h-[calc(100vh-73px)] print:h-auto print:overflow-visible print:p-0 flex flex-col ${['board', 'processes', 'chat'].includes(activeView) ? 'overflow-hidden' : 'overflow-auto hidden-scrollbar'}`}>
+        <main className={`flex-1 p-6 h-[calc(100vh-73px)] print:h-auto print:overflow-visible print:p-0 flex flex-col ${['board', 'processes', 'structure', 'chat'].includes(activeView) ? 'overflow-hidden' : 'overflow-auto hidden-scrollbar'}`}>
           {activeView === 'dashboard' && <DashboardView />}
           {activeView === 'analytics' && canView('analytics') && <AnalyticsView />}
           {activeView === 'projects' && <ProjectsView />}
@@ -1286,6 +1321,7 @@ export default function App() {
           {activeView === 'calendar' && <MasterCalendarView />}
           {activeView === 'event-details' && <EventPageView />}
           {activeView === 'regulations' && <TeamRegulationsView />}
+          {activeView === 'structure' && canView('structure') && <OrgStructureView />}
           {activeView === 'automations' && canView('automations') && <AutomationsView />}
           {activeView === 'profile' && <MyProfileView />}
           {activeView === 'expenses' && canView('expenses') && <ExpensesView />}
